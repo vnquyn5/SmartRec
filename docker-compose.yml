@@ -28,7 +28,7 @@ services:
       - smartrec-net
 
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0.0
+    image: quay.io/keycloak/keycloak:21.1.2
     container_name: smartrec-keycloak
     ports:
       - "8081:8080"
