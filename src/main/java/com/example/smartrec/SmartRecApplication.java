@@ -1,13 +1,13 @@
-package com.example.demo;
+package com.example.smartrec;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class DemoApplication {
+public class SmartRecApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(DemoApplication.class, args);
+        SpringApplication.run(SmartRecApplication.class, args);
     }
 
 }

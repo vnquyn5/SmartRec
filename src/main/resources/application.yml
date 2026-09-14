@@ -1,0 +1,52 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api/v1
+
+spring:
+  application:
+    name: smartrec-backend
+  profiles:
+    active: dev
+
+  # 1. CSDL PostgreSQL
+  datasource:
+    url: jdbc:postgresql://localhost:5432/smartrec_db
+    username: postgres
+    password: 123456
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # 2. Redis Configuration (Message Broker)
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # 3. Giới hạn upload file lớn (Chunked Upload support)
+  servlet:
+    multipart:
+      max-file-size: 2GB
+      max-request-size: 2GB
+
+  # 4. OAuth2 Resource Server (Kết nối Keycloak)
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Spring Boot sẽ tự động gọi đến URL này để lấy Public Key về xác thực Token
+          # 'smartrec' là tên Realm bạn sẽ tạo trong Keycloak
+          jwk-set-uri: http://localhost:8081/realms/smartrec/protocol/openid-connect/certs
+
+# 5. MinIO Object Storage Configuration
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket-name: smartrec-media
