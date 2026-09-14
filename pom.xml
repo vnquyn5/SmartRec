@@ -24,6 +24,9 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <minio.version>8.5.7</minio.version>
+        <!-- Khai báo version cho JWT và Hypersistence để dễ quản lý -->
+        <jjwt.version>0.11.5</jjwt.version>
+        <hypersistence.version>3.5.1</hypersistence.version>
     </properties>
 
     <dependencies>
@@ -43,6 +46,12 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- Hỗ trợ map kiểu dữ liệu JSONB trong PostgreSQL -->
+        <dependency>
+            <groupId>io.hypersistence</groupId>
+            <artifactId>hypersistence-utils-hibernate-62</artifactId>
+            <version>${hypersistence.version}</version>
+        </dependency>
 
         <!-- 3. Message Broker / Cache (Redis) -->
         <dependency>
@@ -57,24 +66,39 @@
             <version>${minio.version}</version>
         </dependency>
 
-        <!-- 5. Security & OAuth2 Resource Server (Kết nối Keycloak) -->
+        <!-- 5. Security (Giữ lại Spring Security Core) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+
+        <!-- 6. Thư viện Custom JWT (Thay thế cho OAuth2 Resource Server) -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
         </dependency>
 
-        <!-- 6. Utilities (Lombok) -->
+        <!-- 7. Utilities (Lombok) -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
 
-        <!-- 7. Testing -->
+        <!-- 8. Testing -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

@@ -35,15 +35,12 @@ spring:
       max-file-size: 2GB
       max-request-size: 2GB
 
-  # 4. OAuth2 Resource Server (Kết nối Keycloak)
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          # Spring Boot sẽ tự động gọi đến URL này để lấy Public Key về xác thực Token
-          # 'smartrec' là tên Realm bạn sẽ tạo trong Keycloak
-          jwk-set-uri: http://localhost:8081/realms/smartrec/protocol/openid-connect/certs
-
+ # 4. Custom JWT Configuration (Thay thế hoàn toàn Keycloak)
+jwt:
+  # Chuỗi khóa bí mật (Secret Key) - Dùng 1 chuỗi Hex 256-bit dài để bảo mật
+  secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+  # Thời gian sống của Token: 86400000 milliseconds = 24 giờ
+  expiration: 86400000
 # 5. MinIO Object Storage Configuration
 minio:
   endpoint: http://localhost:9000
