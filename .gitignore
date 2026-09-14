@@ -31,3 +31,21 @@ logs/
 
 # System files
 Thumbs.db
+
+# Docker & Secrets
+.env
+docker-compose.override.yml
+
+# Python / FastAPI (AI Engine)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.pytest_cache/
+
+# Node.js / ReactJS (Frontend)
+node_modules/
+dist/
+build/
+.npm

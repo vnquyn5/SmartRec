@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -5,12 +7,14 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: smartrec_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: ${POSTGRES_DB:-smartrec_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    networks:
+      - smartrec-net
 
   redis:
     image: redis:7-alpine
@@ -20,6 +24,8 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    networks:
+      - smartrec-net
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.0
@@ -31,6 +37,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
     command: start-dev
     restart: unless-stopped
+    networks:
+      - smartrec-net
 
   minio:
     image: quay.io/minio/minio:latest
@@ -39,14 +47,50 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
     restart: unless-stopped
+    networks:
+      - smartrec-net
+
+  # Script tự động khởi tạo Bucket cho MinIO
+  minio-init:
+    image: minio/mc:latest
+    container_name: smartrec-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_USER:-minioadmin} ${MINIO_PASSWORD:-minioadmin};
+      /usr/bin/mc mb myminio/${MINIO_BUCKET:-smartrec-media} --ignore-existing;
+      /usr/bin/mc policy set public myminio/${MINIO_BUCKET:-smartrec-media};
+      exit 0;
+      "
+    networks:
+      - smartrec-net
+
+  # Database Vector cho cụm AI Engine
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: smartrec-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+    networks:
+      - smartrec-net
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  chroma_data:
+
+networks:
+  smartrec-net:
+    driver: bridge

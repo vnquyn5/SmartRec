@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+celery
+redis
+minio
+chromadb
+ffmpeg-python
+faster-whisper
+pyannote.audio
+paddleocr
+opencv-python
+langchain
+google-generativeai
+pydantic-settings
