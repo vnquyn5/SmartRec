@@ -1,4 +1,4 @@
-package com.backend.smartrec;
+package com.example.smartrec;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
