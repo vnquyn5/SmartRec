@@ -7,9 +7,10 @@ import useAuth from "../../hooks/useAuth";
 import {
   validateConfirmPassword,
   validateEmail,
+  formatFullName,
+  validateFullName,
   isPasswordValid,
   validatePhone,
-  validateRequired,
 } from "../../utils/validators";
 
 const initialValues = {
@@ -31,7 +32,7 @@ const RegisterForm = () => {
 
   const validate = () => {
     const nextErrors = {
-      fullName: validateRequired(values.fullName, "Vui lòng nhập họ và tên"),
+      fullName: validateFullName(values.fullName),
       phone: validatePhone(values.phone),
       email: validateEmail(values.email),
       confirmPassword: validateConfirmPassword(
@@ -45,12 +46,21 @@ const RegisterForm = () => {
       }
     });
     setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0 && isPasswordValid(values.password);
+    return (
+      Object.keys(nextErrors).length === 0 && isPasswordValid(values.password)
+    );
   };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setValues((current) => ({ ...current, [name]: value }));
+    const nextValue =
+      name === "fullName"
+        ? formatFullName(value)
+        : name === "phone"
+          ? value.replace(/\D/g, "").slice(0, 10)
+          : value;
+
+    setValues((current) => ({ ...current, [name]: nextValue }));
     setErrors((current) => ({ ...current, [name]: "" }));
   };
 
@@ -67,7 +77,8 @@ const RegisterForm = () => {
     setLoading(false);
     navigate("/login", {
       state: {
-        authNotice: "Đăng ký tài khoản thành công. Vui lòng đăng nhập để tiếp tục.",
+        authNotice:
+          "Đăng ký tài khoản thành công. Vui lòng đăng nhập để tiếp tục.",
       },
     });
   };
@@ -83,6 +94,7 @@ const RegisterForm = () => {
         value={values.fullName}
         error={errors.fullName}
         onChange={handleChange}
+        maxLength={50}
         autoComplete="name"
       />
       <Input
@@ -94,6 +106,7 @@ const RegisterForm = () => {
         value={values.phone}
         error={errors.phone}
         onChange={handleChange}
+        maxLength={10}
         autoComplete="tel"
       />
       <Input
@@ -105,6 +118,7 @@ const RegisterForm = () => {
         value={values.email}
         error={errors.email}
         onChange={handleChange}
+        maxLength={50}
         autoComplete="email"
       />
       <Input
