@@ -61,12 +61,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
-    try { 
-      await api.post('/auth/logout'); 
-    } finally {
-      clearSession();
-      channel?.postMessage({ type: 'logout' });
-    }
+    // MOCK LOGOUT - không gọi API vì chưa có backend
+    clearSession();
+    channel?.postMessage({ type: 'logout' });
   }, [clearSession]);
 
   const value = useMemo(() => ({

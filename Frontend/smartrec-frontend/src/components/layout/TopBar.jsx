@@ -1,6 +1,6 @@
 import React from 'react';
 
-const TopBar = () => {
+const TopBar = ({ hideSearch = false }) => {
   const displayName = 'Alex Nguyen';
 
   const initials = displayName
@@ -12,13 +12,17 @@ const TopBar = () => {
 
   return (
     <header className="topbar">
-      <div className="topbar-search">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" />
-          <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-        <input type="text" placeholder="Search for meetings, transcripts..." />
-      </div>
+      {!hideSearch ? (
+        <div className="topbar-search">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <input type="text" placeholder="Search for meetings, transcripts..." />
+        </div>
+      ) : (
+        <div style={{ flex: 1 }}></div>
+      )}
 
       <div className="topbar-right">
         <div className="topbar-avatar">

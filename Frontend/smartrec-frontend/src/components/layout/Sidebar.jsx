@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../features/auth/AuthProvider';
 
 const navItems = [
   { to: '/', icon: 'dashboard', label: 'Dashboard' },
@@ -50,10 +51,11 @@ const icons = {
 
 const Sidebar = () => {
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
-  const handleLogout = () => {
-    // Navigate home or reload
-    navigate('/');
+  const handleLogout = async () => {
+    await logout(); // Xoá token, đặt status = unauthenticated
+    navigate('/login'); // Chuyển về trang đăng nhập
   };
 
   return (
