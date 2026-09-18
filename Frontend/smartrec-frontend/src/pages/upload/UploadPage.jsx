@@ -1,79 +1,56 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import TopBar from '../../components/layout/TopBar';
+import { useSmartUpload } from '../../features/files/useSmartUpload.js';
 
 const UploadPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
-  const [fileName, setFileName] = useState('');
+
   const [fileObj, setFileObj] = useState(null);
-  const [progress, setProgress] = useState(0);
-  const [uploadedBytes, setUploadedBytes] = useState(0);
+  const [meetingName, setMeetingName] = useState('');
 
-  useEffect(() => {
-    if (fileObj && progress < 100) {
-      // Estimate upload speed based on network connection (if available)
-      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-      // downlink is Mbps (Megabits per second). Default to 10 Mbps if not supported.
-      const mbps = connection && connection.downlink ? connection.downlink : 10; 
-      
-      // Convert Mbps to Bytes per second. Assume upload is ~25% of download speed.
-      let uploadBps = (mbps * 1000000 / 8) * 0.25; 
-      
-      // Ensure at least 500 KB/s so it doesn't take forever, and max 15 MB/s
-      uploadBps = Math.max(uploadBps, 500 * 1024);
-      uploadBps = Math.min(uploadBps, 15 * 1024 * 1024);
+  const { upload, cancel, phase, progress, error, setPhase, strategy, notification, setNotification, chunkInfo, reset } = useSmartUpload();
 
-      // Add a slight random jitter to simulate network fluctuation (±10%)
-      const jitter = 1 + (Math.random() * 0.2 - 0.1);
-      const currentSpeed = uploadBps * jitter;
-
-      // Update every 100ms
-      const bytesPerInterval = currentSpeed * 0.1;
-
-      const timer = setInterval(() => {
-        setUploadedBytes((prev) => {
-          const next = prev + bytesPerInterval;
-          if (next >= fileObj.size) {
-            setProgress(100);
-            return fileObj.size;
-          }
-          setProgress(Math.floor((next / fileObj.size) * 100));
-          return next;
-        });
-      }, 100);
-
-      return () => clearInterval(timer);
-    }
-  }, [fileObj, progress]);
-
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setFileObj(file);
-      setFileName(file.name);
-      setProgress(0);
-      setUploadedBytes(0);
+      reset();
+
+      // Tự động bắt đầu tải lên ngay khi chọn file
+      try {
+        await upload(file, meetingName);
+      } catch (err) {
+        console.error('Upload failed', err);
+      }
     }
   };
 
   const handleRemoveFile = () => {
-    setFileName('');
+    if (phase === 'uploading' || phase === 'chunking' || phase === 'presigning' || phase === 'confirming') {
+      cancel();
+    }
     setFileObj(null);
-    setProgress(0);
-    setUploadedBytes(0);
+    reset();
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
+  const isUploading = phase === 'presigning' || phase === 'uploading' || phase === 'chunking' || phase === 'confirming';
+  const isDone = phase === 'done';
+
+  // Xác định màu progress bar dựa trên chiến lược
+  const progressBarColor = strategy === 'chunk' ? '#f59e0b' : '#00d1ff';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--sr-bg)' }}>
       <TopBar />
-      
+
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px' }}>
         <div style={{ width: '700px', maxWidth: '100%' }}>
-          
+
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
             <h1 style={{ fontSize: '20px', fontWeight: '800', color: '#fff', marginBottom: '8px' }}>Nạp file cuộc họp</h1>
             <p style={{ fontSize: '12px', color: '#8d96aa', maxWidth: '460px', margin: '0 auto', lineHeight: '1.6' }}>
@@ -81,11 +58,34 @@ const UploadPage = () => {
             </p>
           </div>
 
-          <div style={{ 
-            border: '1px dashed rgba(255, 255, 255, 0.1)', 
-            borderRadius: '16px', 
-            padding: '30px 24px', 
-            textAlign: 'center', 
+          {/* Thông báo chuyển sang Chunked Upload */}
+          {notification && (
+            <div style={{
+              padding: '12px 16px',
+              background: 'rgba(245, 158, 11, 0.1)',
+              color: '#f59e0b',
+              borderRadius: '8px',
+              marginBottom: '16px',
+              fontSize: '13px',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <span style={{ fontWeight: '600' }}>{notification}</span>
+            </div>
+          )}
+
+          <div style={{
+            border: '1px dashed rgba(255, 255, 255, 0.1)',
+            borderRadius: '16px',
+            padding: '30px 24px',
+            textAlign: 'center',
             background: 'rgba(255, 255, 255, 0.02)',
             marginBottom: '12px'
           }}>
@@ -96,25 +96,27 @@ const UploadPage = () => {
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
             </div>
-            
+
             <h3 style={{ fontSize: '15px', color: '#fff', margin: '0 0 8px', fontWeight: '700' }}>
               Kéo thả file vào đây hoặc nhấn để chọn file
             </h3>
             <p style={{ fontSize: '13px', color: '#8d96aa', margin: '0 0 20px' }}>
               Chỉ hỗ trợ tải lên 1 file duy nhất
             </p>
-            
-            <input 
-              type="file" 
-              accept=".mp4,.mkv,.mp3" 
-              style={{ display: 'none' }} 
+
+            <input
+              type="file"
+              accept=".mp4,.mkv,.mp3"
+              style={{ display: 'none' }}
               ref={fileInputRef}
               onChange={handleFileChange}
+              disabled={isUploading}
             />
-            <button 
-              className="sr-button sr-button-primary" 
+            <button
+              className="sr-button sr-button-primary"
               style={{ minHeight: '40px', height: '40px', width: 'auto', padding: '0 24px', fontSize: '13px', display: 'inline-flex', gap: '8px' }}
               onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -133,7 +135,13 @@ const UploadPage = () => {
             </span>
           </div>
 
-          {fileName && (
+          {error && (
+            <div style={{ padding: '12px', background: 'rgba(255, 62, 62, 0.1)', color: '#ff5c5c', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', border: '1px solid rgba(255, 62, 62, 0.2)' }}>
+              Lỗi: {error.message}
+            </div>
+          )}
+
+          {fileObj && (
             <div style={{
               border: '1px solid rgba(255,255,255,0.05)',
               borderRadius: '12px',
@@ -150,9 +158,36 @@ const UploadPage = () => {
                     </svg>
                   </div>
                   <div>
-                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff', marginBottom: '4px' }}>{fileName}</div>
-                    <div style={{ fontSize: '12px', color: '#8d96aa' }}>
-                      {fileObj ? (fileObj.size / (1024 * 1024)).toFixed(1) : 0} MB - {progress < 100 ? 'Đang tải lên' : 'Đã tải lên'}
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff', marginBottom: '4px' }}>{fileObj.name}</div>
+                    <div style={{ fontSize: '12px', color: '#8d96aa', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>
+                        {(() => {
+                          const bytes = fileObj.size;
+                          if (bytes === 0) return '0 Bytes';
+                          const k = 1024;
+                          const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                          const i = Math.floor(Math.log(bytes) / Math.log(k));
+                          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                        })()}
+                      </span>
+                      <span>-</span>
+                      <span>Trạng thái: {phase}</span>
+                      {/* Badge chiến lược upload */}
+                      {strategy && (
+                        <span style={{
+                          fontSize: '10px',
+                          fontWeight: '700',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          background: strategy === 'chunk' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(0, 209, 255, 0.15)',
+                          color: strategy === 'chunk' ? '#f59e0b' : '#00d1ff',
+                          border: `1px solid ${strategy === 'chunk' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(0, 209, 255, 0.3)'}`,
+                        }}>
+                          {strategy === 'chunk' ? 'Chunked' : 'Single'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -163,29 +198,63 @@ const UploadPage = () => {
                   </svg>
                 </button>
               </div>
-              <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '99px', overflow: 'hidden', marginBottom: '8px' }}>
-                <div style={{ width: `${progress}%`, height: '100%', background: '#00d1ff', transition: 'width 0.1s linear' }}></div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#576176' }}>
-                <span>{progress}% hoàn thành</span>
-                <span>
-                  {fileObj ? (uploadedBytes / (1024 * 1024)).toFixed(1) : 0} MB / {fileObj ? (fileObj.size / (1024 * 1024)).toFixed(1) : 0} MB
-                </span>
-              </div>
+
+              {/* Progress Bar Area */}
+              {phase === 'error' ? (
+                <>
+                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,62,62,0.2)', borderRadius: '99px', overflow: 'hidden', marginBottom: '8px' }}>
+                    <div style={{ width: '100%', height: '100%', background: '#ff5c5c' }}></div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#ff5c5c' }}>
+                    <span>{error?.message || 'Xu ly tai len that bai'}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '99px', overflow: 'hidden', marginBottom: '8px' }}>
+                    <div style={{ width: `${progress}%`, height: '100%', background: progressBarColor, transition: 'width 0.15s linear' }}></div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#576176' }}>
+                    <span>
+                      {progress}% hoàn thành
+                      {/* Hiển thị thông tin chunk nếu đang dùng Chunked Upload */}
+                      {chunkInfo && (
+                        <span style={{ marginLeft: '8px', color: '#f59e0b' }}>
+                          (Chunk {chunkInfo.current}/{chunkInfo.total})
+                        </span>
+                      )}
+                    </span>
+                    <span>
+                      {(() => {
+                        const formatBytes = (bytes) => {
+                          if (bytes === 0) return '0 Bytes';
+                          const k = 1024;
+                          const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                          const i = Math.floor(Math.log(bytes) / Math.log(k));
+                          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                        };
+                        const currentBytes = fileObj.size * (progress / 100);
+                        return `${formatBytes(currentBytes)} / ${formatBytes(fileObj.size)}`;
+                      })()}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           )}
-
-
 
           <div style={{ marginBottom: '24px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#fff', marginBottom: '8px' }}>
               Đặt tên cho bản ghi (tùy chọn)
             </label>
             <div className="sr-input-wrap" style={{ minHeight: '40px' }}>
-              <input 
-                type="text" 
-                placeholder="VD: Họp Marketing Day 3 - Review chiến dịch" 
-                style={{ height: '38px', fontSize: '14px' }} 
+              <input
+                type="text"
+                placeholder="VD: Họp Marketing Day 3 - Review chiến dịch"
+                style={{ height: '38px', fontSize: '14px' }}
+                value={meetingName}
+                onChange={(e) => setMeetingName(e.target.value)}
+                disabled={isUploading}
               />
             </div>
             <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#576176' }}>
@@ -194,34 +263,38 @@ const UploadPage = () => {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-            <button 
-              className="sr-button sr-button-secondary" 
+            <button
+              className="sr-button sr-button-secondary"
               style={{ minHeight: '36px', height: '36px', width: 'auto', padding: '0 24px', fontSize: '13px' }}
-              onClick={() => navigate('/')}
+              onClick={() => {
+                if (isUploading) cancel();
+                navigate('/');
+              }}
             >
               Hủy
             </button>
-            <button 
-              className="sr-button sr-button-primary" 
-              style={{ 
-                minHeight: '36px', 
-                height: '36px', 
-                width: 'auto', 
-                padding: '0 24px', 
+            <button
+              className="sr-button sr-button-primary"
+              style={{
+                minHeight: '36px',
+                height: '36px',
+                width: 'auto',
+                padding: '0 24px',
                 fontSize: '13px',
-                opacity: (fileName && progress === 100) ? 1 : 0.5,
-                cursor: (fileName && progress === 100) ? 'pointer' : 'not-allowed',
+                opacity: (progress === 100) ? 1 : 0.5,
+                cursor: (progress === 100) ? 'pointer' : 'not-allowed',
                 display: 'inline-flex',
                 gap: '8px'
               }}
-              disabled={!fileName || progress < 100}
+              disabled={progress !== 100}
               onClick={() => {
-                if (fileName && progress === 100) {
+                if (progress === 100) {
+                  alert('Tạo bản ghi hoàn tất!');
                   navigate('/');
                 }
               }}
             >
-              {fileName ? (
+              {progress === 100 ? (
                 <>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -229,7 +302,7 @@ const UploadPage = () => {
                   Bắt đầu xử lý
                 </>
               ) : (
-                'Tiếp theo'
+                'Đang tải lên...'
               )}
             </button>
           </div>
