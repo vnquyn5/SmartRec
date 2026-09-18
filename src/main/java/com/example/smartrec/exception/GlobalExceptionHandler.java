@@ -7,8 +7,11 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -78,6 +81,37 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(errorResponseDTO);
+    }
+
+    // 413
+     @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponseDTO> handleMaxUploadSizeExceeded(
+            MaxUploadSizeExceededException ex) {
+
+        ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+
+        errorResponseDTO.setCode("ERR_FILE_TOO_LARGE");
+        errorResponseDTO.setMessage("File không vượt quá 2GB");
+        errorResponseDTO.setDetail(List.of());
+        errorResponseDTO.setTimestamp(LocalDateTime.now());
+
+        return ResponseEntity
+                .status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(errorResponseDTO);
+    }
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorResponseDTO> handleMissingPart(
+            MissingServletRequestPartException ex) {
+
+        ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+        errorResponseDTO.setCode("MISSING_PARAMETER");
+        errorResponseDTO.setMessage("Thiếu phần dữ liệu bắt buộc: " + ex.getRequestPartName());
+        errorResponseDTO.setDetail(new ArrayList<>());
+        errorResponseDTO.setTimestamp(LocalDateTime.now());
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
                 .body(errorResponseDTO);
     }
 }
