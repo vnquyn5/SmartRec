@@ -17,6 +17,7 @@ public class RegisterRequest {
     private String passWord;
 
     @NotBlank(message = " họ và tên không được để trống ")
+    
     private String full_name;
 
 }

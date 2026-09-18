@@ -7,9 +7,11 @@ import org.springframework.stereotype.Service;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.LoginRequest;
+import com.example.smartrec.model.dto.LoginResponse;
 import com.example.smartrec.model.dto.RegisterRequest;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.AuthService;
+import com.example.smartrec.service.JwtService; 
 
 import lombok.RequiredArgsConstructor;
 
@@ -18,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 public class AuthServiceImpl implements AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+     private final JwtService jwtService;
 
     @Override
     public void register(RegisterRequest request) {
@@ -57,7 +60,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public void login(LoginRequest request) {
+    public LoginResponse login(LoginRequest request) {
         User user;
 
         if (request.getEmail().contains("@")) {
@@ -90,6 +93,16 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
                     "Email hoặc mật khẩu không đúng");
         }
+         String accessToken = jwtService.generateToken(user);
+
+        // 5. Trả kết quả đăng nhập
+        return LoginResponse.builder()
+                .message("Đăng nhập thành công")
+                .accessToken(accessToken)
+                .userId(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFull_name())
+                .build();
 
     }
 }
