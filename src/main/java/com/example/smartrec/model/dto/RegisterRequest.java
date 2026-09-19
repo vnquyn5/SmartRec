@@ -17,6 +17,8 @@ public class RegisterRequest {
     private String passWord;
 
     @NotBlank(message = " họ và tên không được để trống ")
+    @Size(min = 3, max = 30, message = "Họ và tên phải từ 3 đến 30 ký tự")
+    @Pattern(regexp = "^[\\p{L} ]+$", message = "Họ và tên không được chứa số hoặc ký tự đặc biệt")
     private String full_name;
 
 }

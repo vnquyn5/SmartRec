@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.model.dto.LoginRequest;
+import com.example.smartrec.model.dto.LoginResponse;
 import com.example.smartrec.model.dto.RegisterRequest;
 
 import jakarta.validation.Valid;
@@ -30,8 +31,8 @@ public class AuthController {
     }
 
    @PostMapping("/login")
-    public ResponseEntity<String> login(@Valid @RequestBody LoginRequest request){
-        authService.login(request);
-        return ResponseEntity.ok("đăng nhập thành công");
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request){
+        LoginResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
     }
 }
