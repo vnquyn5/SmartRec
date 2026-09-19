@@ -54,6 +54,7 @@ public class FileServiceImpl implements FileService {
             minioService.upLoad(file,objectKey );
 
         } catch (Exception e) {
+            e.printStackTrace();
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "ERR_MINIO_UNAVAILABLE", "Không thể kết nối hoặc upload file lên MinIO"
             );
         }

@@ -43,7 +43,7 @@ services:
 
   # Script tự động khởi tạo Bucket cho MinIO
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: smartrec-minio-init
     depends_on:
       - minio
