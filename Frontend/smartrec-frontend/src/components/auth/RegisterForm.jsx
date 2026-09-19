@@ -1,0 +1,171 @@
+import React, { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import Button from "../common/Button";
+import Input from "../common/Input";
+import PasswordRequirements from "./PasswordRequirements";
+import useAuth from "../../hooks/useAuth";
+import {
+  validateConfirmPassword,
+  validateEmail,
+  formatFullName,
+  validateFullName,
+  isPasswordValid,
+  validatePhone,
+} from "../../utils/validators";
+
+const initialValues = {
+  fullName: "",
+  phone: "",
+  email: "",
+  password: "",
+  confirmPassword: "",
+};
+
+const RegisterForm = () => {
+  const navigate = useNavigate();
+  const { register } = useAuth();
+  const [values, setValues] = useState(initialValues);
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  const validate = () => {
+    const nextErrors = {
+      fullName: validateFullName(values.fullName),
+      phone: validatePhone(values.phone),
+      email: validateEmail(values.email),
+      confirmPassword: validateConfirmPassword(
+        values.confirmPassword,
+        values.password,
+      ),
+    };
+    Object.keys(nextErrors).forEach((key) => {
+      if (!nextErrors[key]) {
+        delete nextErrors[key];
+      }
+    });
+    setErrors(nextErrors);
+    return (
+      Object.keys(nextErrors).length === 0 && isPasswordValid(values.password)
+    );
+  };
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    const nextValue =
+      name === "fullName"
+        ? formatFullName(value)
+        : name === "phone"
+          ? value.replace(/\D/g, "").slice(0, 10)
+          : value;
+
+    setValues((current) => ({ ...current, [name]: nextValue }));
+    setErrors((current) => ({ ...current, [name]: "" }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setSubmitted(true);
+    if (!validate()) {
+      return;
+    }
+
+    setLoading(true);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await register(values);
+    setLoading(false);
+    navigate("/login", {
+      state: {
+        authNotice:
+          "Đăng ký tài khoản thành công. Vui lòng đăng nhập để tiếp tục.",
+      },
+    });
+  };
+
+  return (
+    <form className="auth-form" onSubmit={handleSubmit} noValidate>
+      <Input
+        id="register-name"
+        name="fullName"
+        type="text"
+        icon="♙"
+        placeholder="Họ và tên"
+        value={values.fullName}
+        error={errors.fullName}
+        onChange={handleChange}
+        maxLength={50}
+        autoComplete="name"
+      />
+      <Input
+        id="register-phone"
+        name="phone"
+        type="tel"
+        icon="☎"
+        placeholder="Số điện thoại"
+        value={values.phone}
+        error={errors.phone}
+        onChange={handleChange}
+        maxLength={10}
+        autoComplete="tel"
+      />
+      <Input
+        id="register-email"
+        name="email"
+        type="email"
+        icon="✉"
+        placeholder="Email"
+        value={values.email}
+        error={errors.email}
+        onChange={handleChange}
+        maxLength={50}
+        autoComplete="email"
+      />
+      <Input
+        id="register-password"
+        name="password"
+        type={showPassword ? "text" : "password"}
+        icon="123"
+        placeholder="Mật khẩu"
+        value={values.password}
+        error={errors.password}
+        onChange={handleChange}
+        autoComplete="new-password"
+        rightElement={
+          <button
+            type="button"
+            className="ghost-dot-button"
+            onClick={() => setShowPassword((current) => !current)}
+            aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+          />
+        }
+      />
+      <PasswordRequirements
+        password={values.password}
+        visible={Boolean(values.password) || submitted}
+      />
+      <Input
+        id="register-confirm-password"
+        name="confirmPassword"
+        type={showPassword ? "text" : "password"}
+        icon="123"
+        placeholder="Xác nhận mật khẩu"
+        value={values.confirmPassword}
+        error={errors.confirmPassword}
+        onChange={handleChange}
+        autoComplete="new-password"
+        rightElement={<span className="input-soft-dot" aria-hidden="true" />}
+      />
+
+      <Button type="submit" loading={loading}>
+        Đăng ký
+      </Button>
+
+      <p className="auth-switch-text">
+        Đã có tài khoản? <Link to="/login">Đăng nhập</Link>
+      </p>
+    </form>
+  );
+};
+
+export default RegisterForm;
