@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { api, API_BASE } from './client.js';
+import { api } from './client.js';
 import { tokenStore, authEvents } from '../auth/tokenStore.js';
 import { toAppError } from './errors.js';
 
@@ -26,26 +25,6 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-let refreshPromise = null;
-
-async function requestNewToken() {
-  const { data } = await axios.post(
-    `${API_BASE}/auth/refresh`,
-    null,
-    { withCredentials: true, timeout: 15000 }
-  );
-  return data.accessToken;
-}
-
-function refreshOnce() {
-  if (!refreshPromise) {
-    refreshPromise = requestNewToken()
-      .then((token) => { tokenStore.set(token); return token; })
-      .finally(() => { refreshPromise = null; });
-  }
-  return refreshPromise;
-}
-
 api.interceptors.response.use(
   (response) => {
       if (response && response.data) {
@@ -53,52 +32,16 @@ api.interceptors.response.use(
       }
       return response;
   },
-  async (error) => {
+  (error) => {
     const config = error.config;
     const status = error.response?.status;
 
-    // Handle payload too large
-    if (status === 413) {
-      alert("Lỗi: Kích thước file vượt quá giới hạn cho phép.");
-      return Promise.reject(toAppError(error));
-    }
-
-    // Handle network errors or timeout globally
-    if (!error.response && error.code === 'ECONNABORTED') {
-      alert("Lỗi: Kết nối quá hạn (Timeout).");
-    } else if (!error.response) {
-      alert("Lỗi: Không thể kết nối tới máy chủ (Connection Refused).");
-    }
-
-    const shouldRefresh =
-      status === 401 &&
-      !!config &&
-      !config._retry &&
-      !config.skipAuth;
-
-    if (!shouldRefresh) {
-      if (status === 403) authEvents.emit('forbidden');
-      // Token expiration during refresh or general 401 without refresh means session expired
-      if (status === 401) {
-        alert("Phiên làm việc hết hạn");
-        tokenStore.set(null);
-        authEvents.emit('session-expired');
-      }
-      return Promise.reject(toAppError(error));
-    }
-
-    config._retry = true;
-
-    try {
-      const token = await refreshOnce();
-      if (!config.headers) config.headers = {};
-      config.headers['Authorization'] = `Bearer ${token}`;
-      return api(config);
-    } catch {
-      alert("Phiên làm việc hết hạn");
+    if (status === 403) authEvents.emit('forbidden');
+    if (status === 401 && !config?.skipAuth) {
       tokenStore.set(null);
       authEvents.emit('session-expired');
-      return Promise.reject(toAppError(error));
     }
+
+    return Promise.reject(toAppError(error));
   }
 );

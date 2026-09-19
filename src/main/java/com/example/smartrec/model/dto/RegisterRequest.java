@@ -11,6 +11,10 @@ public class RegisterRequest {
     @Pattern(regexp = "(^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.com$)|(^0(3|5|7|8|9)[0-9]{8}$)", message = " email hoặc phone không đúng định dạng")
     private String email;
 
+    @NotBlank(message = "Số điện thoại không được để trống")
+    @Pattern(regexp = "^0(3|5|7|8|9)[0-9]{8}$", message = "Số điện thoại không đúng định dạng")
+    private String phone;
+
     @NotBlank(message = "password không được để trống ")
     @Size(min = 8, max = 16, message = "Password phải từ 8 đến 16 ký tự")
     @Pattern(regexp = "^(?=.*[A-Z])(?=.*[^a-zA-Z0-9]).*$", message = "Password phải có ít nhất 1 chữ hoa và 1 ký tự đặc biệt")

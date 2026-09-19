@@ -3,17 +3,20 @@ package com.example.smartrec.service.impl;
 import java.time.LocalDate;
 import java.util.UUID;
 
-import org.simpleframework.xml.core.Validate;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.Meetings;
+import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.FileUploadResponse;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingsRepository;
+import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.FileService;
 import com.example.smartrec.service.MinioService;
 
@@ -24,6 +27,7 @@ import lombok.AllArgsConstructor;
 public class FileServiceImpl implements FileService {
     private final MediaFileRepository mediaFileRepository;
     private  final MeetingsRepository meetingsRepository;
+    private final UserRepository userRepository;
     private final MinioService minioService;
 
     private static final long MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024;
@@ -34,8 +38,9 @@ public class FileServiceImpl implements FileService {
         String originalName = file.getOriginalFilename();
         String safeFileName = sanitizeFileName(originalName);
 
-        UUID userId = getCurrentUserId();
-        UUID workspaceId = getCurrentWorkspaceId();
+        User user = getCurrentUser();
+        UUID userId = user.getId();
+        UUID workspaceId = userId;
         LocalDate now = LocalDate.now();
         String objectKey = userId
                 + "/"
@@ -120,12 +125,19 @@ public class FileServiceImpl implements FileService {
                         "_");
     }
 
-    private UUID getCurrentUserId() {
-        return UUID.randomUUID();
-    }
+    private User getCurrentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Yêu cầu đăng nhập");
+        }
 
-    protected UUID getCurrentWorkspaceId() {
-        return UUID.randomUUID();
+        String identifier = authentication.getName();
+        return userRepository.findByEmail(identifier)
+                .or(() -> userRepository.findByPhone(identifier))
+                .orElseThrow(() -> new BusinessException(
+                        HttpStatus.UNAUTHORIZED,
+                        "USER_NOT_FOUND",
+                        "Không tìm thấy người dùng đăng nhập"));
     }
 
 }

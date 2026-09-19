@@ -1,19 +1,18 @@
 import { create } from 'zustand';
+import { tokenStore } from '../lib/auth/tokenStore.js';
 
-const TOKEN_KEY = 'token';
+export const useAuthStore = create((set) => {
+  tokenStore.subscribe((token) => {
+    set({ token, isAuthenticated: Boolean(token) });
+  });
 
-export const useAuthStore = create((set) => ({
-  token: localStorage.getItem(TOKEN_KEY),
-  isAuthenticated: Boolean(localStorage.getItem(TOKEN_KEY)),
-  setToken: (token) => {
-    localStorage.setItem(TOKEN_KEY, token);
-    set({ token, isAuthenticated: true });
-  },
-  logout: () => {
-    localStorage.removeItem(TOKEN_KEY);
-    set({ token: null, isAuthenticated: false });
-  },
-}));
+  return {
+    token: tokenStore.get(),
+    isAuthenticated: Boolean(tokenStore.get()),
+    setToken: (token) => tokenStore.set(token),
+    logout: () => tokenStore.set(null),
+  };
+});
 
 export const getAccessToken = () => useAuthStore.getState().token;
 export const logout = () => useAuthStore.getState().logout();

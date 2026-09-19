@@ -1,4 +1,5 @@
-let accessToken = null;
+const TOKEN_KEY = 'smartrec_access_token';
+let accessToken = localStorage.getItem(TOKEN_KEY);
 const listeners = new Set();
 
 export const tokenStore = {
@@ -7,6 +8,11 @@ export const tokenStore = {
   },
   set(token) {
     accessToken = token;
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+    }
     listeners.forEach((fn) => fn(token));
   },
   subscribe(fn) {

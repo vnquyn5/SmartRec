@@ -6,6 +6,7 @@ import java.util.List;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -15,6 +16,16 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+        @ExceptionHandler(BadCredentialsException.class)
+        public ResponseEntity<ErrorResponseDTO> handleBadCredentials(BadCredentialsException ex) {
+                ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+                errorResponseDTO.setCode("INVALID_CREDENTIALS");
+                errorResponseDTO.setMessage("Email hoặc số điện thoại hoặc mật khẩu không đúng");
+                errorResponseDTO.setDetail(List.of());
+                errorResponseDTO.setTimestamp(LocalDateTime.now());
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponseDTO);
+        }
 
         // 400
     @ExceptionHandler(MethodArgumentNotValidException.class)

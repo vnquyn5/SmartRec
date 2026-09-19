@@ -7,7 +7,7 @@ export const api = axios.create({
   baseURL: API_BASE,
   timeout: 30000,
   withCredentials: true,
-  headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+  headers: { Accept: 'application/json' },
 });
 
 export const storageClient = axios.create({

@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../common/Button";
+import ErrorMessage from "../common/ErrorMessage";
 import Input from "../common/Input";
 import PasswordRequirements from "./PasswordRequirements";
-import useAuth from "../../hooks/useAuth";
+import { useAuth } from "../../features/auth/AuthProvider.jsx";
 import {
   validateConfirmPassword,
   validateEmail,
@@ -29,6 +30,7 @@ const RegisterForm = () => {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const validate = () => {
     const nextErrors = {
@@ -62,6 +64,7 @@ const RegisterForm = () => {
 
     setValues((current) => ({ ...current, [name]: nextValue }));
     setErrors((current) => ({ ...current, [name]: "" }));
+    setFormError("");
   };
 
   const handleSubmit = async (event) => {
@@ -72,19 +75,25 @@ const RegisterForm = () => {
     }
 
     setLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await register(values);
-    setLoading(false);
-    navigate("/login", {
-      state: {
-        authNotice:
-          "Đăng ký tài khoản thành công. Vui lòng đăng nhập để tiếp tục.",
-      },
-    });
+    setFormError("");
+    try {
+      await register(values);
+      navigate("/login", {
+        state: {
+          authNotice:
+            "Đăng ký tài khoản thành công. Vui lòng đăng nhập để tiếp tục.",
+        },
+      });
+    } catch (error) {
+      setFormError(error.message || "Đăng ký thất bại. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <form className="auth-form" onSubmit={handleSubmit} noValidate>
+      <ErrorMessage message={formError} />
       <Input
         id="register-name"
         name="fullName"

@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../common/Button";
 import Input from "../common/Input";
-import useAuth from "../../hooks/useAuth";
+import ErrorMessage from "../common/ErrorMessage";
+import { useAuth } from "../../features/auth/AuthProvider.jsx";
 import { validateEmailOrPhone, validatePassword } from "../../utils/validators";
 
 const initialValues = {
@@ -12,7 +13,12 @@ const initialValues = {
 };
 
 const GoogleIcon = () => (
-  <svg className="google-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <svg
+    className="google-icon"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+    focusable="false"
+  >
     <path
       fill="#4285F4"
       d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.29h6.47c-.28 1.5-1.13 2.77-2.4 3.62v3.01h3.89c2.27-2.09 3.53-5.17 3.53-8.65z"
@@ -39,6 +45,7 @@ const LoginForm = () => {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const validate = () => {
     const nextErrors = {
@@ -61,6 +68,7 @@ const LoginForm = () => {
       [name]: type === "checkbox" ? checked : value,
     }));
     setErrors((current) => ({ ...current, [name]: "" }));
+    setFormError("");
   };
 
   const handleSubmit = async (event) => {
@@ -70,14 +78,20 @@ const LoginForm = () => {
     }
 
     setLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await login(values);
-    setLoading(false);
-    navigate("/");
+    setFormError("");
+    try {
+      await login(values.emailOrPhone, values.password);
+      navigate("/");
+    } catch (error) {
+      setFormError(error.message || "Đăng nhập thất bại. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <form className="auth-form login-form" onSubmit={handleSubmit} noValidate>
+      <ErrorMessage message={formError} />
       <Button variant="secondary" className="google-button">
         <GoogleIcon />
         <span>Continue with Google</span>

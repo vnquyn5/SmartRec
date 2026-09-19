@@ -1,8 +1,7 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import TopBar from '../../components/layout/TopBar';
-
-const STORAGE_KEY = 'smartrec_saved_uploads';
+import { uploadSingleFile } from '../../features/files/useSingleUpload';
 
 // Helper format bytes
 const formatBytes = (bytes) => {
@@ -14,56 +13,14 @@ const formatBytes = (bytes) => {
 };
 
 // Allowed extensions
-const ALLOWED_EXTENSIONS = ['mp4', 'mkv', 'mp3'];
+const ALLOWED_EXTENSIONS = ['mp4', 'mkv', 'mp3', 'm4a'];
 const MAX_FILES = 5;
-const CHUNK_THRESHOLD = 2 * 1024 * 1024 * 1024; // 2GB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
 
 // Kiểm tra extension hợp lệ
 const isValidExtension = (fileName) => {
   const ext = fileName.split('.').pop().toLowerCase();
   return ALLOWED_EXTENSIONS.includes(ext);
-};
-
-// Giả lập upload single file (mock)
-const mockSingleUpload = (file, signal, onProgress) => {
-  return new Promise((resolve, reject) => {
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      if (signal.aborted) {
-        clearInterval(interval);
-        reject(new Error('canceled'));
-        return;
-      }
-      currentProgress += 10;
-      if (currentProgress > 100) currentProgress = 100;
-      onProgress(currentProgress);
-      if (currentProgress === 100) {
-        clearInterval(interval);
-        setTimeout(() => resolve(), 500);
-      }
-    }, 300);
-  });
-};
-
-// Giả lập upload chunked file (mock)
-const mockChunkUpload = (file, signal, onProgress, onChunkInfo) => {
-  const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-  onChunkInfo({ current: 0, total: totalChunks });
-
-  return new Promise(async (resolve, reject) => {
-    for (let i = 0; i < totalChunks; i++) {
-      if (signal.aborted) { reject(new Error('canceled')); return; }
-      onChunkInfo({ current: i + 1, total: totalChunks });
-      await new Promise((res, rej) => {
-        const timeout = setTimeout(res, 300);
-        signal.addEventListener('abort', () => { clearTimeout(timeout); rej(new Error('canceled')); }, { once: true });
-      });
-      const overallProgress = Math.round(((i + 1) / totalChunks) * 100);
-      onProgress(overallProgress);
-    }
-    resolve();
-  });
 };
 
 const UploadPage = () => {
@@ -75,49 +32,6 @@ const UploadPage = () => {
   const [meetingName, setMeetingName] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [savedNotification, setSavedNotification] = useState(null);
-
-  // Khôi phục file đã lưu từ localStorage khi vào trang
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const savedItems = JSON.parse(stored);
-        const restoredItems = savedItems.map(item => ({
-          id: item.id,
-          file: { name: item.fileName, size: item.fileSize }, // Mock file object với name + size
-          phase: 'done',
-          progress: 100,
-          strategy: item.strategy || 'single',
-          chunkInfo: null,
-          error: null,
-          saved: true,
-          abortController: null,
-        }));
-        if (restoredItems.length > 0) {
-          setQueue(restoredItems);
-        }
-      }
-    } catch (e) {
-      console.error('Lỗi khôi phục file từ localStorage:', e);
-    }
-  }, []);
-
-  // Hàm lưu danh sách saved vào localStorage
-  const persistToStorage = useCallback((items) => {
-    const savedItems = items
-      .filter(item => item.saved)
-      .map(item => ({
-        id: item.id,
-        fileName: item.file.name,
-        fileSize: item.file.size,
-        strategy: item.strategy,
-      }));
-    if (savedItems.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedItems));
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  }, []);
 
   // Cập nhật 1 item trong queue theo id
   const updateItem = useCallback((id, updates) => {
@@ -131,35 +45,28 @@ const UploadPage = () => {
 
     setQueue(prev => prev.map(item => item.id === id ? { ...item, abortController: controller } : item));
 
-    const isChunked = fileItem.file.size > CHUNK_THRESHOLD;
-    const strategy = isChunked ? 'chunk' : 'single';
-
-    updateItem(id, { phase: 'uploading', strategy });
+    updateItem(id, { phase: 'uploading', strategy: 'single', error: null });
 
     try {
-      if (isChunked) {
-        await mockChunkUpload(
-          fileItem.file,
-          controller.signal,
-          (progress) => updateItem(id, { progress }),
-          (chunkInfo) => updateItem(id, { chunkInfo })
-        );
-      } else {
-        await mockSingleUpload(
-          fileItem.file,
-          controller.signal,
-          (progress) => updateItem(id, { progress })
-        );
-      }
-      updateItem(id, { phase: 'done', progress: 100 });
+      const uploadResponse = await uploadSingleFile(
+        fileItem.file,
+        meetingName,
+        controller.signal,
+        (event) => {
+          if (event.total) {
+            updateItem(id, { progress: Math.round((event.loaded / event.total) * 100) });
+          }
+        },
+      );
+      updateItem(id, { phase: 'success', progress: 100, uploadResponse });
     } catch (err) {
-      if (err.message === 'canceled') {
+      if (err.kind === 'canceled' || err.message === 'canceled') {
         updateItem(id, { phase: 'idle', progress: 0 });
       } else {
-        updateItem(id, { phase: 'error', error: err.message });
+        updateItem(id, { phase: 'error', error: err.message || 'Upload thất bại' });
       }
     }
-  }, [updateItem]);
+  }, [meetingName, updateItem]);
 
   // Xử lý thêm file(s) vào queue
   const addFilesToQueue = useCallback((files) => {
@@ -169,7 +76,11 @@ const UploadPage = () => {
     const validFiles = [];
     for (const file of fileArray) {
       if (!isValidExtension(file.name)) {
-        alert(`File "${file.name}" không được hỗ trợ. Chỉ chấp nhận .mp4, .mkv, .mp3`);
+        alert(`File "${file.name}" không được hỗ trợ. Chỉ chấp nhận .mp4, .mkv, .mp3, .m4a`);
+        continue;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`File "${file.name}" vượt quá giới hạn 2GB.`);
         continue;
       }
       validFiles.push(file);
@@ -185,12 +96,13 @@ const UploadPage = () => {
     const newItems = validFiles.map(file => ({
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       file,
-      phase: 'queued',
+      phase: 'idle',
       progress: 0,
-      strategy: null,
+      strategy: 'single',
       chunkInfo: null,
       error: null,
       saved: false,
+      uploadResponse: null,
       abortController: null,
     }));
 
@@ -228,36 +140,31 @@ const UploadPage = () => {
         item.abortController.abort();
       }
       const newQueue = prev.filter(i => i.id !== id);
-      // Cập nhật localStorage khi xóa file đã lưu
-      persistToStorage(newQueue);
       return newQueue;
     });
-  }, [persistToStorage]);
+  }, []);
 
-  // Lưu file đã hoàn thành + persist vào localStorage
+  // Mark a successful server upload in the local queue.
   const handleSaveFile = useCallback((id) => {
     setQueue(prev => {
       const updated = prev.map(item => item.id === id ? { ...item, saved: true } : item);
-      persistToStorage(updated);
       return updated;
     });
     setSavedNotification('Đã lưu thành công!');
     setTimeout(() => setSavedNotification(null), 3000);
-  }, [persistToStorage]);
+  }, []);
 
-  // Bắt đầu xử lý: xóa hết queue + localStorage
+  // Bắt đầu xử lý: xóa queue sau khi server đã nhận file
   const handleStartProcessing = useCallback(() => {
     alert('Bắt đầu xử lý tất cả bản ghi!');
     setQueue([]);
     setMeetingName('');
     setSavedNotification(null);
-    localStorage.removeItem(STORAGE_KEY);
     navigate('/');
   }, [navigate]);
 
-  const hasUploading = queue.some(item => item.phase === 'uploading');
   const canAddMore = queue.length < MAX_FILES;
-  const allSaved = queue.length > 0 && queue.every(item => item.saved === true);
+  const allSaved = queue.length > 0 && queue.every(item => item.phase === 'success');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--sr-bg)' }}>
@@ -362,15 +269,14 @@ const UploadPage = () => {
           {queue.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
               {queue.map((item) => {
-                const isDone = item.phase === 'done';
+                const isDone = item.phase === 'success';
                 const isError = item.phase === 'error';
-                const isQueued = item.phase === 'queued';
                 const isItemUploading = item.phase === 'uploading';
                 const progressColor = item.strategy === 'chunk' ? '#f59e0b' : '#00d1ff';
 
                 let statusText = '';
                 let statusColor = '#8d96aa';
-                if (isQueued) { statusText = 'Đang chờ trong hàng đợi'; statusColor = '#8d96aa'; }
+                if (item.phase === 'idle') { statusText = 'Sẵn sàng tải lên'; statusColor = '#8d96aa'; }
                 else if (isItemUploading) { statusText = 'Đang tải lên'; statusColor = '#3e89ff'; }
                 else if (isDone && !item.saved) { statusText = 'Hoàn thành'; statusColor = '#22c55e'; }
                 else if (isDone && item.saved) { statusText = 'Đã lưu'; statusColor = '#22c55e'; }

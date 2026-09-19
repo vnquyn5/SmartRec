@@ -1,10 +1,21 @@
 import { useCallback, useRef, useState } from 'react';
 import { toAppError } from '../../lib/http/errors.js';
+import { api } from '../../lib/http/client.js';
 
+export async function uploadSingleFile(file, meetingName = '', signal, onUploadProgress) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('title', meetingName);
+
+  return api.post('/meetings/upload', formData, {
+    signal,
+    onUploadProgress,
+  });
+}
 
 
 export function useSingleUpload() {
-  const [phase, setPhase] = useState('idle'); // 'idle' | 'presigning' | 'uploading' | 'confirming' | 'done' | 'error'
+  const [phase, setPhase] = useState('idle'); // 'idle' | 'uploading' | 'success' | 'error'
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
 
@@ -24,44 +35,29 @@ export function useSingleUpload() {
     setError(null); 
     setProgress(0);
 
-    // Không còn giới hạn dung lượng ở đây nữa vì đã gộp luồng
-
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       setPhase('uploading');
-      
-      // MOCK UPLOAD PROCESS (NO BACKEND)
-      await new Promise((resolve, reject) => {
-        let currentProgress = 0;
-        const interval = setInterval(() => {
-          if (controller.signal.aborted) {
-            clearInterval(interval);
-            reject(new Error("canceled"));
-            return;
-          }
-          currentProgress += 10;
-          if (currentProgress > 100) {
-            currentProgress = 100;
-          }
-          setProgress(currentProgress);
-          
-          if (currentProgress === 100) {
-            clearInterval(interval);
-            setTimeout(() => resolve({ meetingId: "mock-123", url: "mock-url" }), 500);
-          }
-        }, 300); // 10% mỗi 300ms
-      });
+      const response = await uploadSingleFile(
+        file,
+        meetingName,
+        controller.signal,
+        (event) => {
+          if (event.total) setProgress(Math.round((event.loaded / event.total) * 100));
+        },
+      );
 
-      setPhase('done');
-      return { meetingId: "mock-123", url: "mock-url" };
+      setProgress(100);
+      setPhase('success');
+      return response;
     } catch (err) {
-      if (err.message === 'canceled') {
+      if (err.kind === 'canceled' || err.message === 'canceled') {
         setPhase('idle');
         throw { kind: 'canceled' };
       }
-      const appErr = toAppError(err);
+      const appErr = err?.kind ? err : toAppError(err);
       setError(appErr);
       setPhase('error');
       throw appErr;

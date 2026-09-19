@@ -1,6 +1,7 @@
 package com.example.smartrec.service.impl;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -24,63 +25,37 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void register(RegisterRequest request) {
-        if (request.getEmail().contains("@")) {
-
-            if (userRepository.findByEmail(request.getEmail()).isPresent()) {
-                throw new BusinessException(
-                        HttpStatus.CONFLICT,
-                        "EMAIL_ALREADY_EXISTS",
-                        "Email đã tồn tại");
-            }
-
-        } else {
-
-            if (userRepository.findByPhone(request.getEmail()).isPresent()) {
-                throw new BusinessException(
-                        HttpStatus.CONFLICT,
-                        "PHONE_ALREADY_EXISTS",
-                        "Số điện thoại đã tồn tại");
-            }
+        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "EMAIL_ALREADY_EXISTS",
+                    "Email đã tồn tại");
+        }
+        if (userRepository.findByPhone(request.getPhone()).isPresent()) {
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "PHONE_ALREADY_EXISTS",
+                    "Số điện thoại đã tồn tại");
         }
 
         User user = User.builder()
 
                 .full_name(request.getFull_name())
+                .email(request.getEmail())
+                .phone(request.getPhone())
                 .password_hash(passwordEncoder.encode(request.getPassWord()))
                 .is_active(true)
                 .build();
-
-        if (request.getEmail().contains("@")) {
-            user.setEmail(request.getEmail());
-        } else {
-            user.setPhone(request.getEmail());
-        }
         userRepository.save(user);
 
     }
 
     @Override
     public LoginResponse login(LoginRequest request) {
-        User user;
-
-        if (request.getEmail().contains("@")) {
-
-            user = userRepository
-                    .findByEmail(request.getEmail())
-                    .orElseThrow(() -> new BusinessException(
-                            HttpStatus.UNAUTHORIZED,
-                            "INVALID_CREDENTIALS",
-                            "Email hoặc mật khẩu không đúng"));
-
-        } else {
-
-            user = userRepository
-                    .findByPhone(request.getEmail())
-                    .orElseThrow(() -> new BusinessException(
-                            HttpStatus.UNAUTHORIZED,
-                            "INVALID_CREDENTIALS",
-                            "Số điện thoại hoặc mật khẩu không đúng"));
-        }
+        String identifier = request.getEmail();
+        User user = userRepository
+            .findByEmailOrPhone(identifier, identifier)
+            .orElseThrow(() -> new BadCredentialsException("INVALID_CREDENTIALS"));
 
         if (!user.getIs_active()) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_LOCKED", "tài khoản đã bị khóa");
@@ -89,9 +64,7 @@ public class AuthServiceImpl implements AuthService {
         if (!passwordEncoder.matches(
                 request.getPassWord(),
                 user.getPassword_hash())) {
-
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-                    "Email hoặc mật khẩu không đúng");
+            throw new BadCredentialsException("INVALID_CREDENTIALS");
         }
          String accessToken = jwtService.generateToken(user);
 

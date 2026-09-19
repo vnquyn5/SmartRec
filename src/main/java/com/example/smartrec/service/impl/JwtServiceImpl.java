@@ -36,8 +36,10 @@ public class JwtServiceImpl implements JwtService {
         Date expirationDate = new Date(
                 now.getTime() + expiration);
 
+        String subject = user.getEmail() != null ? user.getEmail() : user.getPhone();
+
         return Jwts.builder()
-                .setSubject(user.getEmail())
+                .setSubject(subject)
                 .claim("userId", user.getId().toString())
                 .claim("fullName", user.getFull_name())
                 .setIssuedAt(now)
