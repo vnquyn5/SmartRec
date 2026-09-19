@@ -1,5 +1,5 @@
-import { create } from 'zustand';
-import { tokenStore } from '../lib/auth/tokenStore.js';
+import { create } from "zustand";
+import { tokenStore } from "../lib/auth/tokenStore.js";
 
 export const useAuthStore = create((set) => {
   tokenStore.subscribe((token) => {

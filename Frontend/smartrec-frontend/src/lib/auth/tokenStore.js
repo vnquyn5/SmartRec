@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'smartrec_access_token';
+const TOKEN_KEY = "smartrec_access_token";
 let accessToken = localStorage.getItem(TOKEN_KEY);
 const listeners = new Set();
 

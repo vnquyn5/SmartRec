@@ -80,10 +80,14 @@ export function AuthProvider({ children }) {
   }, [clearSession]);
 
   const login = useCallback(async (email, password) => {
-    const response = await api.post("/api/auth/login", {
-      email,
-      passWord: password,
-    }, { skipAuth: true });
+    const response = await api.post(
+      "/api/auth/login",
+      {
+        email,
+        passWord: password,
+      },
+      { skipAuth: true },
+    );
     const nextUser = {
       id: response.userId,
       name: response.fullName,
@@ -98,12 +102,16 @@ export function AuthProvider({ children }) {
   }, []);
 
   const register = useCallback(async (profile) => {
-    await api.post("/api/auth/register", {
-      email: profile.email,
-      phone: profile.phone,
-      passWord: profile.password,
-      full_name: profile.fullName,
-    }, { skipAuth: true });
+    await api.post(
+      "/api/auth/register",
+      {
+        email: profile.email,
+        phone: profile.phone,
+        passWord: profile.password,
+        full_name: profile.fullName,
+      },
+      { skipAuth: true },
+    );
     setRegisteredUser({ name: profile.fullName, email: profile.email });
     return true;
   }, []);
