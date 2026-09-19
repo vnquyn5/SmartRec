@@ -29,9 +29,10 @@ const UploadPage = () => {
 
   // Queue: mảng các file item
   const [queue, setQueue] = useState([]);
-  const [meetingName, setMeetingName] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [savedNotification, setSavedNotification] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
 
   // Cập nhật 1 item trong queue theo id
   const updateItem = useCallback((id, updates) => {
@@ -57,7 +58,7 @@ const UploadPage = () => {
       try {
         const uploadResponse = await uploadSingleFile(
           fileItem.file,
-          meetingName,
+          "",
           controller.signal,
           (event) => {
             if (event.total) {
@@ -83,56 +84,60 @@ const UploadPage = () => {
   );
 
   // Xử lý thêm file(s) vào queue
-  const addFilesToQueue = useCallback(
-    (files) => {
-      const fileArray = Array.from(files);
-      const currentCount = queue.length;
+  const addFilesToQueue = useCallback((files) => {
+    const fileArray = Array.from(files);
+    // Chỉ đếm những file chưa hoàn thành (đang queue, uploading hoặc error)
+    const activeCount = queue.filter(item => item.phase !== 'success').length;
 
-      const validFiles = [];
-      for (const file of fileArray) {
-        if (!isValidExtension(file.name)) {
-          alert(
-            `File "${file.name}" không được hỗ trợ. Chỉ chấp nhận .mp4, .mkv, .mp3, .m4a`,
-          );
-          continue;
-        }
-        if (file.size > MAX_FILE_SIZE) {
-          alert(`File "${file.name}" vượt quá giới hạn 2GB.`);
-          continue;
-        }
-        validFiles.push(file);
-      }
-
-      if (currentCount + validFiles.length > MAX_FILES) {
+    const validFiles = [];
+    for (const file of fileArray) {
+      if (!isValidExtension(file.name)) {
         alert(
-          `Chỉ được upload tối đa ${MAX_FILES} file. Hiện tại đã có ${currentCount} file trong hàng đợi.`,
+          `File "${file.name}" không được hỗ trợ. Chỉ chấp nhận .mp4, .mkv, .mp3, .m4a`,
         );
-        return;
+        continue;
       }
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`File "${file.name}" vượt quá giới hạn 2GB.`);
+        continue;
+      }
+      validFiles.push(file);
+    }
 
-      if (validFiles.length === 0) return;
+    if (activeCount >= MAX_FILES) {
+      alert(`Đã đạt tối đa ${MAX_FILES} file đang xử lý. Vui lòng chờ tải xong hoặc dọn dẹp hàng đợi để tải lên tiếp.`);
+      return;
+    }
 
-      const newItems = validFiles.map((file) => ({
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        file,
-        phase: "idle",
-        progress: 0,
-        strategy: "single",
-        chunkInfo: null,
-        error: null,
-        saved: false,
-        uploadResponse: null,
-        abortController: null,
-      }));
+    const availableSlots = MAX_FILES - activeCount;
+    const filesToAdd = validFiles.slice(0, availableSlots);
+    
+    if (validFiles.length > availableSlots) {
+      alert(`Chỉ được xử lý tối đa ${MAX_FILES} file cùng lúc. Đã tự động chọn ${availableSlots} file đầu tiên.`);
+    }
 
-      setQueue((prev) => [...prev, ...newItems]);
+    if (filesToAdd.length === 0) return;
 
-      setTimeout(() => {
-        newItems.forEach((item) => startUpload(item));
-      }, 100);
-    },
-    [queue.length, startUpload],
-  );
+    const newItems = filesToAdd.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      file,
+      customName: file.name,
+      phase: "idle",
+      progress: 0,
+      strategy: "single",
+      chunkInfo: null,
+      error: null,
+      saved: false,
+      uploadResponse: null,
+      abortController: null,
+    }));
+
+    setQueue((prev) => [...prev, ...newItems]);
+
+    setTimeout(() => {
+      newItems.forEach((item) => startUpload(item));
+    }, 100);
+  }, [queue, startUpload]);
 
   // Xử lý chọn file qua input
   const handleFileChange = (e) => {
@@ -171,30 +176,20 @@ const UploadPage = () => {
     });
   }, []);
 
-  // Mark a successful server upload in the local queue.
-  const handleSaveFile = useCallback((id) => {
-    setQueue((prev) => {
-      const updated = prev.map((item) =>
-        item.id === id ? { ...item, saved: true } : item,
-      );
-      return updated;
-    });
-    setSavedNotification("Đã lưu thành công!");
-    setTimeout(() => setSavedNotification(null), 3000);
-  }, []);
+  const handleProcessFile = useCallback((id) => {
+    alert('Tệp của bạn sẽ được xử lý. Hãy theo dõi ở Workspace.');
+    handleRemoveFile(id);
+  }, [handleRemoveFile]);
 
-  // Bắt đầu xử lý: xóa queue sau khi server đã nhận file
-  const handleStartProcessing = useCallback(() => {
-    alert("Bắt đầu xử lý tất cả bản ghi!");
-    setQueue([]);
-    setMeetingName("");
-    setSavedNotification(null);
-    navigate("/");
-  }, [navigate]);
+  const handleSaveRename = useCallback((id) => {
+    if (editName.trim()) {
+      updateItem(id, { customName: editName.trim() });
+    }
+    setEditingId(null);
+  }, [editName, updateItem]);
 
-  const canAddMore = queue.length < MAX_FILES;
-  const allSaved =
-    queue.length > 0 && queue.every((item) => item.phase === "success");
+  const activeCount = queue.filter(item => item.phase !== 'success').length;
+  const canAddMore = activeCount < MAX_FILES;
 
   return (
     <div
@@ -343,8 +338,7 @@ const UploadPage = () => {
                   margin: "0 0 20px",
                 }}
               >
-                Hỗ trợ tải lên tối đa {MAX_FILES} file ({queue.length}/
-                {MAX_FILES})
+                Hỗ trợ tải lên tối đa {MAX_FILES} file đang xử lý ({activeCount}/{MAX_FILES})
               </p>
               <input
                 type="file"
@@ -503,19 +497,32 @@ const UploadPage = () => {
                             <polyline points="14 2 14 8 20 8"></polyline>
                           </svg>
                         </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: "14px",
-                              fontWeight: "700",
-                              color: "#fff",
-                              marginBottom: "4px",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {item.file.name}
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            {editingId === item.id ? (
+                              <input
+                                autoFocus
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onBlur={() => handleSaveRename(item.id)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(item.id); }}
+                                style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid #3e89ff', color: '#fff', borderRadius: '4px', padding: '2px 8px', fontSize: '14px', fontWeight: '700', width: '100%', maxWidth: '300px' }}
+                              />
+                            ) : (
+                              <>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {item.customName || item.file.name}
+                                </div>
+                                {isDone && (
+                                  <button onClick={() => { setEditingId(item.id); setEditName(item.customName || item.file.name); }} style={{ background: 'transparent', border: 'none', color: '#8d96aa', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M12 20h9"></path>
+                                      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                                    </svg>
+                                  </button>
+                                )}
+                              </>
+                            )}
                           </div>
                           <div
                             style={{
@@ -637,53 +644,39 @@ const UploadPage = () => {
                               }}
                             ></div>
                           </div>
-                          {/* Nút Lưu - chỉ hiện khi done và chưa lưu */}
-                          {isDone && !item.saved && (
-                            <button
-                              onClick={() => handleSaveFile(item.id)}
-                              style={{
-                                background:
-                                  "linear-gradient(135deg, #22c55e, #16a34a)",
-                                border: "none",
-                                color: "#fff",
-                                padding: "6px 16px",
-                                borderRadius: "6px",
-                                fontSize: "12px",
-                                fontWeight: "700",
-                                cursor: "pointer",
-                                flexShrink: 0,
-                              }}
-                            >
-                              Lưu
-                            </button>
-                          )}
-                          {/* Đã lưu */}
-                          {isDone && item.saved && (
-                            <span
-                              style={{
-                                fontSize: "12px",
-                                color: "#22c55e",
-                                fontWeight: "700",
-                                flexShrink: 0,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "4px",
-                              }}
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="#22c55e"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
+                          {isDone && (
+                            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                              <button
+                                onClick={() => handleRemoveFile(item.id)}
+                                style={{
+                                  background: 'rgba(255,255,255,0.1)',
+                                  border: 'none',
+                                  color: '#fff',
+                                  padding: '6px 16px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: '700',
+                                  cursor: 'pointer',
+                                }}
                               >
-                                <polyline points="20 6 9 17 4 12"></polyline>
-                              </svg>
-                              Đã lưu
-                            </span>
+                                Hoàn thành
+                              </button>
+                              <button
+                                onClick={() => handleProcessFile(item.id)}
+                                style={{
+                                  background: 'linear-gradient(135deg, #3e89ff, #2563eb)',
+                                  border: 'none',
+                                  color: '#fff',
+                                  padding: '6px 16px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: '700',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Xử lý
+                              </button>
+                            </div>
                           )}
                         </div>
                         <div
@@ -721,93 +714,7 @@ const UploadPage = () => {
             </div>
           )}
 
-          {/* Meeting name input */}
-          <div style={{ marginBottom: "24px" }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "12px",
-                fontWeight: "700",
-                color: "#fff",
-                marginBottom: "8px",
-              }}
-            >
-              Đặt tên cho bản ghi (tùy chọn)
-            </label>
-            <div className="sr-input-wrap" style={{ minHeight: "40px" }}>
-              <input
-                type="text"
-                placeholder="VD: Họp Marketing Quý 3 - Review chiến dịch"
-                style={{ height: "38px", fontSize: "14px" }}
-                value={meetingName}
-                onChange={(e) => setMeetingName(e.target.value)}
-              />
-            </div>
-            <p
-              style={{ margin: "8px 0 0", fontSize: "12px", color: "#576176" }}
-            >
-              Nếu để trống, hệ thống sẽ dùng tên file gốc làm tên bản ghi.
-            </p>
-          </div>
-
-          {/* Action buttons */}
-          <div
-            style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}
-          >
-            <button
-              className="sr-button sr-button-secondary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-              }}
-              onClick={() => {
-                queue.forEach((item) => {
-                  if (item.abortController) item.abortController.abort();
-                });
-                navigate("/");
-              }}
-            >
-              Hủy
-            </button>
-            <button
-              className="sr-button sr-button-primary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-                opacity: allSaved ? 1 : 0.5,
-                cursor: allSaved ? "pointer" : "not-allowed",
-                display: "inline-flex",
-                gap: "8px",
-              }}
-              disabled={!allSaved}
-              onClick={() => {
-                if (allSaved) handleStartProcessing();
-              }}
-            >
-              {allSaved ? (
-                <>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    stroke="none"
-                  >
-                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                  </svg>
-                  Bắt đầu xử lý
-                </>
-              ) : (
-                "Đang tải lên..."
-              )}
-            </button>
-          </div>
+          {/* Action buttons removed */}
         </div>
       </div>
     </div>
