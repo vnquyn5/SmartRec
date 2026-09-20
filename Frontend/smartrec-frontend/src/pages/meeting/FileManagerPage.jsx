@@ -153,7 +153,8 @@ export default function FileManagerPage() {
   };
 
   const handleDownload = (meeting) => {
-    const downloadUrl = meeting.downloadUrl || meeting.fileUrl || meeting.objectUrl;
+    const downloadUrl =
+      meeting.downloadUrl || meeting.fileUrl || meeting.objectUrl;
     if (!downloadUrl) {
       setActionMessage("Backend chưa trả về URL tải xuống cho tệp này.");
       return;
@@ -172,7 +173,8 @@ export default function FileManagerPage() {
     setShareCopied(false);
   };
 
-  const getShareUrl = (meeting) => `${window.location.origin}/meeting/${meeting.id}`;
+  const getShareUrl = (meeting) =>
+    `${window.location.origin}/meeting/${meeting.id}`;
 
   const copyShareUrl = async () => {
     if (!shareMeeting) return;
@@ -507,32 +509,163 @@ export default function FileManagerPage() {
         onConfirm={handleDelete}
       />
       {infoMeeting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setInfoMeeting(null)}>
-          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50" role="dialog" aria-modal="true" aria-labelledby="meeting-info-title">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setInfoMeeting(null)
+          }
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="meeting-info-title"
+          >
             <div className="flex items-start justify-between gap-4">
-              <div><p className="text-xs uppercase tracking-wide text-slate-500">Thông tin lưu trong CSDL</p><h2 id="meeting-info-title" className="mt-1 break-words text-lg font-bold text-white">{infoMeeting.fileName || infoMeeting.title || "File cuộc họp"}</h2></div>
-              <button type="button" onClick={() => setInfoMeeting(null)} className="text-xl leading-none text-slate-500 hover:text-white" aria-label="Đóng">×</button>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Thông tin lưu trong CSDL
+                </p>
+                <h2
+                  id="meeting-info-title"
+                  className="mt-1 break-words text-lg font-bold text-white"
+                >
+                  {infoMeeting.fileName || infoMeeting.title || "File cuộc họp"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInfoMeeting(null)}
+                className="text-xl leading-none text-slate-500 hover:text-white"
+                aria-label="Đóng"
+              >
+                ×
+              </button>
             </div>
             <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-              <div><dt className="text-xs text-slate-500">Meeting ID</dt><dd className="mt-1 break-all font-mono text-slate-200">{infoMeeting.id || "--"}</dd></div>
-              <div><dt className="text-xs text-slate-500">Media file ID</dt><dd className="mt-1 break-all font-mono text-slate-200">{infoMeeting.mediaFileId || "--"}</dd></div>
-              <div><dt className="text-xs text-slate-500">Trạng thái</dt><dd className="mt-1"><MeetingStatusBadge status={infoMeeting.status} /></dd></div>
-              <div><dt className="text-xs text-slate-500">MIME type</dt><dd className="mt-1 text-slate-200">{infoMeeting.mimeType || "--"}</dd></div>
-              <div><dt className="text-xs text-slate-500">Dung lượng</dt><dd className="mt-1 text-slate-200">{formatBytes(Number(infoMeeting.fileSizeBytes) || 0)}</dd></div>
-              <div><dt className="text-xs text-slate-500">Thời lượng</dt><dd className="mt-1 text-slate-200">{infoMeeting.durationSeconds ? `${infoMeeting.durationSeconds}s` : "--"}</dd></div>
-              <div><dt className="text-xs text-slate-500">Ngày tạo</dt><dd className="mt-1 text-slate-200">{formatDate(infoMeeting.createdAt)}</dd></div>
-              <div><dt className="text-xs text-slate-500">Cập nhật</dt><dd className="mt-1 text-slate-200">{formatDate(infoMeeting.updatedAt)}</dd></div>
+              <div>
+                <dt className="text-xs text-slate-500">Meeting ID</dt>
+                <dd className="mt-1 break-all font-mono text-slate-200">
+                  {infoMeeting.id || "--"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Media file ID</dt>
+                <dd className="mt-1 break-all font-mono text-slate-200">
+                  {infoMeeting.mediaFileId || "--"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Trạng thái</dt>
+                <dd className="mt-1">
+                  <MeetingStatusBadge status={infoMeeting.status} />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">MIME type</dt>
+                <dd className="mt-1 text-slate-200">
+                  {infoMeeting.mimeType || "--"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Dung lượng</dt>
+                <dd className="mt-1 text-slate-200">
+                  {formatBytes(Number(infoMeeting.fileSizeBytes) || 0)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Thời lượng</dt>
+                <dd className="mt-1 text-slate-200">
+                  {infoMeeting.durationSeconds
+                    ? `${infoMeeting.durationSeconds}s`
+                    : "--"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Ngày tạo</dt>
+                <dd className="mt-1 text-slate-200">
+                  {formatDate(infoMeeting.createdAt)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Cập nhật</dt>
+                <dd className="mt-1 text-slate-200">
+                  {formatDate(infoMeeting.updatedAt)}
+                </dd>
+              </div>
             </dl>
-            <div className="mt-6 flex justify-end"><button type="button" onClick={() => setInfoMeeting(null)} className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400">Đóng</button></div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setInfoMeeting(null)}
+                className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}
       {shareMeeting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setShareMeeting(null)}>
-          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50" role="dialog" aria-modal="true" aria-labelledby="share-meeting-title">
-            <div className="flex items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-wide text-slate-500">Chia sẻ cuộc họp</p><h2 id="share-meeting-title" className="mt-1 text-lg font-bold text-white">Link chia sẻ file</h2></div><button type="button" onClick={() => setShareMeeting(null)} className="text-xl leading-none text-slate-500 hover:text-white" aria-label="Đóng">×</button></div>
-            <div className="mt-5 flex items-center gap-2 rounded-lg border border-slate-700 bg-[#171d31] p-2"><input readOnly value={getShareUrl(shareMeeting)} className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-300 outline-none" aria-label="Link chia sẻ" /><button type="button" onClick={copyShareUrl} className="shrink-0 rounded-md bg-blue-500 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-400">{shareCopied ? "Đã sao chép" : "Sao chép"}</button></div>
-            <div className="mt-6 flex justify-end"><button type="button" onClick={() => setShareMeeting(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:border-slate-500">Đóng</button></div>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setShareMeeting(null)
+          }
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-meeting-title"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Chia sẻ cuộc họp
+                </p>
+                <h2
+                  id="share-meeting-title"
+                  className="mt-1 text-lg font-bold text-white"
+                >
+                  Link chia sẻ file
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareMeeting(null)}
+                className="text-xl leading-none text-slate-500 hover:text-white"
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-5 flex items-center gap-2 rounded-lg border border-slate-700 bg-[#171d31] p-2">
+              <input
+                readOnly
+                value={getShareUrl(shareMeeting)}
+                className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-300 outline-none"
+                aria-label="Link chia sẻ"
+              />
+              <button
+                type="button"
+                onClick={copyShareUrl}
+                className="shrink-0 rounded-md bg-blue-500 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-400"
+              >
+                {shareCopied ? "Đã sao chép" : "Sao chép"}
+              </button>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShareMeeting(null)}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:border-slate-500"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}
