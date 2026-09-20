@@ -3,6 +3,7 @@ import { Routes, Route } from "react-router-dom";
 
 import DashboardPage from "../pages/dashboard/DashboardPage";
 import UploadPage from "../pages/upload/UploadPage";
+import FileManagerPage from "../pages/meeting/FileManagerPage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
@@ -25,6 +26,7 @@ const AppRoutes = () => {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/meeting/:id" element={<Meeting />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/history" element={<FileManagerPage />} />
       </Route>
     </Routes>
   );
