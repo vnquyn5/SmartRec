@@ -26,6 +26,7 @@
         <!-- Khai báo version cho JWT và Hypersistence để dễ quản lý -->
         <jjwt.version>0.11.5</jjwt.version>
         <hypersistence.version>3.5.1</hypersistence.version>
+        <springdoc.version>2.2.0</springdoc.version>
     </properties>
 
     <dependencies>
@@ -33,6 +34,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
 
         <!-- 2. Database & ORM (PostgreSQL + JPA) -->
@@ -100,6 +107,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <version>1.18.30</version>
             <optional>true</optional>
         </dependency>
 
@@ -118,6 +126,21 @@
 
     <build>
         <plugins>
+            <!-- Khai báo explicit compiler plugin để VS Code nhận dạng Annotation Processor -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

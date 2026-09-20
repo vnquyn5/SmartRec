@@ -62,6 +62,16 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatus()).body(errorResponseDTO);
     }
 
+        @ExceptionHandler(MinioOperationException.class)
+        public ResponseEntity<ErrorResponseDTO> handleMinioOperation(MinioOperationException ex) {
+                ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+                errorResponseDTO.setCode(ex.getCode());
+                errorResponseDTO.setMessage(ex.getMessage());
+                errorResponseDTO.setDetail(List.of());
+                errorResponseDTO.setTimestamp(LocalDateTime.now());
+                return ResponseEntity.status(ex.getStatus()).body(errorResponseDTO);
+        }
+
     // 404
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponseDTO> handleResourceNotFound(

@@ -3,6 +3,7 @@ package com.example.smartrec.service.impl;
 import com.example.smartrec.service.MinioService;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -28,5 +29,14 @@ public class MinioServiceImpl implements MinioService {
                         .contentType(file.getContentType())
                         .build()
         );       
+    }
+
+    @Override
+    public void delete(String objectKey) throws Exception {
+        minioClient.removeObject(
+                RemoveObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(objectKey)
+                        .build());
     }
 }

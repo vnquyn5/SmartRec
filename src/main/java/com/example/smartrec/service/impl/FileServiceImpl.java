@@ -10,12 +10,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.entity.MediaFile;
-import com.example.smartrec.entity.Meetings;
+import com.example.smartrec.entity.Meeting;
+import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.FileUploadResponse;
 import com.example.smartrec.repository.MediaFileRepository;
-import com.example.smartrec.repository.MeetingsRepository;
+import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.FileService;
 import com.example.smartrec.service.MinioService;
@@ -26,7 +27,7 @@ import lombok.AllArgsConstructor;
 @AllArgsConstructor
 public class FileServiceImpl implements FileService {
     private final MediaFileRepository mediaFileRepository;
-    private  final MeetingsRepository meetingsRepository;
+    private final MeetingRepository meetingRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
 
@@ -74,13 +75,13 @@ public class FileServiceImpl implements FileService {
                                      .build();
         MediaFile savedMediaFile =mediaFileRepository.save(mediaFile);
 
-        Meetings meeting = Meetings.builder()
+        Meeting meeting = Meeting.builder()
                                   .workspace_id(workspaceId)
                                   .media_file_id(savedMediaFile.getId())
                                   .title(title == null || title.isBlank() ? safeFileName :title)
-                                  .status("PENDING")
+                      .status(MeetingStatus.PENDING)
                                   .build();
-        Meetings savedMeeting  = meetingsRepository.save(meeting);
+        Meeting savedMeeting = meetingRepository.save(meeting);
           return new FileUploadResponse(
                 savedMediaFile.getId(),
                 savedMeeting.getId(),
@@ -90,7 +91,7 @@ public class FileServiceImpl implements FileService {
                 savedMediaFile.getFile_size_bytes(),
                 savedMediaFile.getDuration_seconds(),
                 savedMediaFile.getStatus(),
-                savedMeeting.getStatus()
+                savedMeeting.getStatus().name()
         );
     }
 
