@@ -33,6 +33,17 @@ public class JwtService {
         return expiration == null || expiration.after(new Date());
     }
 
+    public long extractTokenVersion(Claims claims) {
+
+        Object value = claims.get("tokenVersion");
+
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+
+        return 0L;
+    }
+
     @SuppressWarnings("unchecked")
     public List<String> extractRoles(Claims claims) {
         Object roles = claims.get("roles");
