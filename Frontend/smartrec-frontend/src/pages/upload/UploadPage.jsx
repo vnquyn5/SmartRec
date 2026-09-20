@@ -86,7 +86,6 @@ const UploadPage = () => {
   const addFilesToQueue = useCallback(
     (files) => {
       const fileArray = Array.from(files);
-      const currentCount = queue.length;
 
       const validFiles = [];
       for (const file of fileArray) {
@@ -103,14 +102,26 @@ const UploadPage = () => {
         validFiles.push(file);
       }
 
-      if (currentCount + validFiles.length > MAX_FILES) {
+      const activeCount = queue.filter(
+        (item) => item.phase !== "success",
+      ).length;
+      const availableSlots = MAX_FILES - activeCount;
+
+      if (availableSlots <= 0) {
         alert(
-          `Chỉ được upload tối đa ${MAX_FILES} file. Hiện tại đã có ${currentCount} file trong hàng đợi.`,
+          `Chỉ được upload tối đa ${MAX_FILES} file đang hoạt động. Hiện tại đã có ${activeCount} file đang upload hoặc xử lý.`,
         );
         return;
       }
 
       if (validFiles.length === 0) return;
+
+      if (validFiles.length > availableSlots) {
+        alert(
+          `Chỉ còn ${availableSlots} slot upload. Chỉ thêm ${availableSlots} file hợp lệ đầu tiên.`,
+        );
+        validFiles.splice(availableSlots);
+      }
 
       const newItems = validFiles.map((file) => ({
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -131,7 +142,7 @@ const UploadPage = () => {
         newItems.forEach((item) => startUpload(item));
       }, 100);
     },
-    [queue.length, startUpload],
+    [queue, startUpload],
   );
 
   // Xử lý chọn file qua input
@@ -183,18 +194,8 @@ const UploadPage = () => {
     setTimeout(() => setSavedNotification(null), 3000);
   }, []);
 
-  // Bắt đầu xử lý: xóa queue sau khi server đã nhận file
-  const handleStartProcessing = useCallback(() => {
-    alert("Bắt đầu xử lý tất cả bản ghi!");
-    setQueue([]);
-    setMeetingName("");
-    setSavedNotification(null);
-    navigate("/");
-  }, [navigate]);
-
-  const canAddMore = queue.length < MAX_FILES;
-  const allSaved =
-    queue.length > 0 && queue.every((item) => item.phase === "success");
+  const activeCount = queue.filter((item) => item.phase !== "success").length;
+  const canAddMore = activeCount < MAX_FILES;
 
   return (
     <div
@@ -343,7 +344,7 @@ const UploadPage = () => {
                   margin: "0 0 20px",
                 }}
               >
-                Hỗ trợ tải lên tối đa {MAX_FILES} file ({queue.length}/
+                Hỗ trợ tải lên tối đa {MAX_FILES} file ({activeCount}/
                 {MAX_FILES})
               </p>
               <input
@@ -721,39 +722,8 @@ const UploadPage = () => {
             </div>
           )}
 
-          {/* Meeting name input */}
-          <div style={{ marginBottom: "24px" }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "12px",
-                fontWeight: "700",
-                color: "#fff",
-                marginBottom: "8px",
-              }}
-            >
-              Đặt tên cho bản ghi (tùy chọn)
-            </label>
-            <div className="sr-input-wrap" style={{ minHeight: "40px" }}>
-              <input
-                type="text"
-                placeholder="VD: Họp Marketing Quý 3 - Review chiến dịch"
-                style={{ height: "38px", fontSize: "14px" }}
-                value={meetingName}
-                onChange={(e) => setMeetingName(e.target.value)}
-              />
-            </div>
-            <p
-              style={{ margin: "8px 0 0", fontSize: "12px", color: "#576176" }}
-            >
-              Nếu để trống, hệ thống sẽ dùng tên file gốc làm tên bản ghi.
-            </p>
-          </div>
-
-          {/* Action buttons */}
-          <div
-            style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}
-          >
+          {/* Cancel button */}
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button
               className="sr-button sr-button-secondary"
               style={{
@@ -771,41 +741,6 @@ const UploadPage = () => {
               }}
             >
               Hủy
-            </button>
-            <button
-              className="sr-button sr-button-primary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-                opacity: allSaved ? 1 : 0.5,
-                cursor: allSaved ? "pointer" : "not-allowed",
-                display: "inline-flex",
-                gap: "8px",
-              }}
-              disabled={!allSaved}
-              onClick={() => {
-                if (allSaved) handleStartProcessing();
-              }}
-            >
-              {allSaved ? (
-                <>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    stroke="none"
-                  >
-                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                  </svg>
-                  Bắt đầu xử lý
-                </>
-              ) : (
-                "Đang tải lên..."
-              )}
             </button>
           </div>
         </div>
