@@ -1,6 +1,17 @@
 const TOKEN_KEY = "smartrec_access_token";
-let accessToken = localStorage.getItem(TOKEN_KEY);
+let accessToken = sessionStorage.getItem(TOKEN_KEY);
 const listeners = new Set();
+
+function readClaims(token) {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=")));
+  } catch {
+    return null;
+  }
+}
 
 export const tokenStore = {
   get() {
@@ -9,11 +20,18 @@ export const tokenStore = {
   set(token) {
     accessToken = token;
     if (token) {
-      localStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.setItem(TOKEN_KEY, token);
     } else {
-      localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
     }
     listeners.forEach((fn) => fn(token));
+  },
+  getExpiration() {
+    return readClaims(accessToken)?.exp ?? null;
+  },
+  isExpired() {
+    const expiration = this.getExpiration();
+    return !expiration || expiration * 1000 <= Date.now();
   },
   subscribe(fn) {
     listeners.add(fn);

@@ -1,5 +1,9 @@
 package com.example.smartrec.service.impl;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.concurrent.ThreadLocalRandom;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,8 +42,10 @@ public class AuthServiceImpl implements AuthService {
                     "Số điện thoại đã tồn tại");
         }
 
-        User user = User.builder()
+        String userCode = generateUniqueUserCode();
 
+        User user = User.builder()
+                .userCode(userCode)
                 .full_name(request.getFull_name())
                 .email(request.getEmail())
                 .phone(request.getPhone())
@@ -48,6 +54,16 @@ public class AuthServiceImpl implements AuthService {
                 .build();
         userRepository.save(user);
 
+    }
+
+    private String generateUniqueUserCode() {
+        String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String code;
+        do {
+            String suffix = String.format("%04d", ThreadLocalRandom.current().nextInt(10000));
+            code = "SMR" + datePart + suffix;
+        } while (userRepository.existsByUserCode(code));
+        return code;
     }
 
     @Override

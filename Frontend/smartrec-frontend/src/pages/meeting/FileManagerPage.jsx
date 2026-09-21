@@ -17,7 +17,11 @@ import {
 import DeleteMeetingModal from "../../components/meeting/DeleteMeetingModal.jsx";
 import MeetingStatusBadge from "../../components/meeting/MeetingStatusBadge.jsx";
 import { MEETING_STATUS } from "../../types/meeting.js";
-import { deleteMeeting, getMeetings } from "../../services/meetingService.js";
+import {
+  deleteMeeting,
+  getMeetings,
+  renameMeeting as renameMeetingApi,
+} from "../../services/meetingService.js";
 
 const EMPTY_PAGE = {
   content: [],
@@ -62,6 +66,8 @@ export default function FileManagerPage() {
   const [actionMessage, setActionMessage] = useState("");
   const [renameMeeting, setRenameMeeting] = useState(null);
   const [renameBaseName, setRenameBaseName] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
   const [infoMeeting, setInfoMeeting] = useState(null);
   const [shareMeeting, setShareMeeting] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
@@ -131,25 +137,42 @@ export default function FileManagerPage() {
     const currentName = meeting.fileName || meeting.title || "File cuộc họp";
     setRenameMeeting(meeting);
     setRenameBaseName(getBaseName(currentName));
+    setRenameError("");
   };
 
-  const handleRename = () => {
+  const handleRename = async () => {
     const nextBaseName = renameBaseName.trim();
-    if (!renameMeeting || !nextBaseName) return;
+    if (!renameMeeting) return;
+    if (!nextBaseName) {
+      setRenameError("Vui lòng nhập tên file.");
+      return;
+    }
 
     const currentName =
       renameMeeting.fileName || renameMeeting.title || "File cuộc họp";
     const nextName = `${nextBaseName}${getExtension(currentName)}`;
-    setData((currentData) => ({
-      ...currentData,
-      content: currentData.content.map((meeting) =>
-        meeting.id === renameMeeting.id
-          ? { ...meeting, fileName: nextName, title: nextName }
-          : meeting,
-      ),
-    }));
-    setRenameMeeting(null);
-    setActionMessage(`Đã đổi tên tệp thành “${nextName}”.`);
+    setIsRenaming(true);
+    setRenameError("");
+    try {
+      const updatedMeeting = await renameMeetingApi(renameMeeting.id, nextName);
+      setData((currentData) => ({
+        ...currentData,
+        content: currentData.content.map((meeting) =>
+          meeting.id === renameMeeting.id ? updatedMeeting : meeting,
+        ),
+      }));
+      setRenameMeeting(null);
+      setActionMessage(
+        `Đã đổi tên tệp thành “${updatedMeeting.fileName || nextName}”.`,
+      );
+    } catch (requestError) {
+      setRenameError(
+        requestError?.message ||
+          "Không thể cập nhật tên file. Vui lòng thử lại.",
+      );
+    } finally {
+      setIsRenaming(false);
+    }
   };
 
   const handleDownload = (meeting) => {
@@ -704,20 +727,31 @@ export default function FileManagerPage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setRenameMeeting(null)}
+                onClick={() => {
+                  if (!isRenaming) {
+                    setRenameMeeting(null);
+                    setRenameError("");
+                  }
+                }}
+                disabled={isRenaming}
                 className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
               >
                 Hủy
               </button>
               <button
                 type="button"
-                disabled={!renameBaseName.trim()}
+                disabled={!renameBaseName.trim() || isRenaming}
                 onClick={handleRename}
                 className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Lưu tên
+                {isRenaming ? "Đang lưu..." : "Lưu tên"}
               </button>
             </div>
+            {renameError && (
+              <p className="mt-3 text-xs text-red-300" role="alert">
+                {renameError}
+              </p>
+            )}
           </div>
         </div>
       )}

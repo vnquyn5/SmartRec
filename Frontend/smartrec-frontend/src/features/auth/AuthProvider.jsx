@@ -26,6 +26,11 @@ function readStoredUser() {
   }
 }
 
+function getExpirationDelay() {
+  const expiration = tokenStore.getExpiration();
+  return expiration ? Math.max(0, expiration * 1000 - Date.now()) : 0;
+}
+
 export function AuthProvider({ children }) {
   const [status, setStatus] = useState("bootstrapping");
   const [user, setUser] = useState(null);
@@ -45,7 +50,7 @@ export function AuthProvider({ children }) {
       if (!alive) return;
 
       const storedUser = readStoredUser();
-      if (tokenStore.get() && storedUser) {
+      if (tokenStore.get() && !tokenStore.isExpired() && storedUser) {
         setUser(storedUser);
         setStatus("authenticated");
 
@@ -56,8 +61,12 @@ export function AuthProvider({ children }) {
           const currentUser = {
             ...storedUser,
             id: profile.id ?? storedUser.id,
+            userCode: profile.userCode ?? storedUser.userCode,
             name: profile.full_name ?? storedUser.name,
             email: profile.email ?? storedUser.email,
+            phone: profile.phone ?? storedUser.phone,
+            department: profile.department ?? storedUser.department,
+            position: profile.position ?? storedUser.position,
             role: profile.role ?? storedUser.role,
             roles: profile.role ? [profile.role] : storedUser.roles,
           };
@@ -74,6 +83,19 @@ export function AuthProvider({ children }) {
       alive = false;
     };
   }, [clearSession]);
+
+  useEffect(() => {
+    if (!tokenStore.get()) return undefined;
+
+    const delay = getExpirationDelay();
+    if (!delay) {
+      clearSession();
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(clearSession, delay);
+    return () => window.clearTimeout(timeoutId);
+  }, [status, clearSession]);
 
   // 2. Lắng nghe sự kiện hết phiên phát ra từ tầng HTTP.
   useEffect(

@@ -60,3 +60,7 @@ export async function getAllMeetings() {
 export async function deleteMeeting(id) {
   return httpClient.delete(`/meetings/${id}`);
 }
+
+export async function renameMeeting(id, fileName) {
+  return httpClient.patch(`/meetings/${id}/name`, { fileName });
+}

@@ -10,7 +10,7 @@ import {
   validateEmail,
   formatFullName,
   validateFullName,
-  isPasswordValid,
+  validatePassword,
   validatePhone,
 } from "../../utils/validators";
 
@@ -37,6 +37,7 @@ const RegisterForm = () => {
       fullName: validateFullName(values.fullName),
       phone: validatePhone(values.phone),
       email: validateEmail(values.email),
+      password: validatePassword(values.password),
       confirmPassword: validateConfirmPassword(
         values.confirmPassword,
         values.password,
@@ -51,6 +52,43 @@ const RegisterForm = () => {
     return (
       Object.keys(nextErrors).length === 0 && isPasswordValid(values.password)
     );
+  };
+
+  const setBackendErrors = (error) => {
+    const nextErrors = {};
+
+    if (error.code === "EMAIL_ALREADY_EXISTS") {
+      nextErrors.email = "Email này đã được đăng ký.";
+    }
+    if (error.code === "PHONE_ALREADY_EXISTS") {
+      nextErrors.phone = "Số điện thoại này đã được đăng ký.";
+    }
+
+    if (error.code === "VALIDATION_ERROR" && Array.isArray(error.detail)) {
+      error.detail.forEach((item) => {
+        const [field, ...messageParts] = item.split(":");
+        const fieldMap = {
+          email: "email",
+          phone: "phone",
+          passWord: "password",
+          password: "password",
+          full_name: "fullName",
+          fullName: "fullName",
+        };
+        const mappedField = fieldMap[field?.trim()];
+
+        if (
+          mappedField &&
+          messageParts.length > 0 &&
+          !nextErrors[mappedField]
+        ) {
+          nextErrors[mappedField] = messageParts.join(":").trim();
+        }
+      });
+    }
+
+    setErrors((current) => ({ ...current, ...nextErrors }));
+    return Object.keys(nextErrors).length > 0;
   };
 
   const handleChange = (event) => {
@@ -85,7 +123,9 @@ const RegisterForm = () => {
         },
       });
     } catch (error) {
-      setFormError(error.message || "Đăng ký thất bại. Vui lòng thử lại.");
+      if (!setBackendErrors(error)) {
+        setFormError(error.message || "Đăng ký thất bại. Vui lòng thử lại.");
+      }
     } finally {
       setLoading(false);
     }

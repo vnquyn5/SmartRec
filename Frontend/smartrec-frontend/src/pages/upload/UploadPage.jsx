@@ -32,6 +32,10 @@ const UploadPage = () => {
   const [meetingName, setMeetingName] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [savedNotification, setSavedNotification] = useState(null);
+  const [savingIds, setSavingIds] = useState(() => new Set());
+  const [isSavingAll, setIsSavingAll] = useState(false);
+  const savingIdsRef = useRef(new Set());
+  const isSavingAllRef = useRef(false);
 
   // Cập nhật 1 item trong queue theo id
   const updateItem = useCallback((id, updates) => {
@@ -182,19 +186,82 @@ const UploadPage = () => {
     });
   }, []);
 
-  // Mark a successful server upload in the local queue.
-  const handleSaveFile = useCallback((id) => {
-    setQueue((prev) => {
-      const updated = prev.map((item) =>
-        item.id === id ? { ...item, saved: true } : item,
-      );
-      return updated;
-    });
-    setSavedNotification("Đã lưu thành công!");
-    setTimeout(() => setSavedNotification(null), 3000);
+  // The upload API already persists the file; saving here confirms it locally.
+  const persistFile = useCallback(async (item) => {
+    if (item.phase !== "success") {
+      throw new Error("File chưa tải lên thành công");
+    }
+    return true;
   }, []);
 
+  const handleSaveFile = useCallback(
+    async (id) => {
+      if (isSavingAllRef.current || savingIdsRef.current.has(id)) return;
+
+      const item = queue.find((queueItem) => queueItem.id === id);
+      if (!item || item.phase !== "success") return;
+
+      savingIdsRef.current.add(id);
+      setSavingIds(new Set(savingIdsRef.current));
+
+      try {
+        await persistFile(item);
+        setQueue((prev) => prev.filter((queueItem) => queueItem.id !== id));
+        setSavedNotification("Đã lưu thành công!");
+        setTimeout(() => setSavedNotification(null), 3000);
+      } catch (error) {
+        updateItem(id, {
+          saveError: error.message || "Lưu file thất bại",
+        });
+      } finally {
+        savingIdsRef.current.delete(id);
+        setSavingIds(new Set(savingIdsRef.current));
+      }
+    },
+    [persistFile, queue, updateItem],
+  );
+
+  const handleSaveAll = useCallback(async () => {
+    if (isSavingAllRef.current || savingIdsRef.current.size > 0) return;
+
+    const itemsToSave = queue.filter((item) => item.phase === "success");
+    if (itemsToSave.length === 0) return;
+
+    isSavingAllRef.current = true;
+    setIsSavingAll(true);
+
+    const savedIds = [];
+    try {
+      for (const item of itemsToSave) {
+        try {
+          await persistFile(item);
+          savedIds.push(item.id);
+        } catch (error) {
+          updateItem(item.id, {
+            saveError: error.message || "Lưu file thất bại",
+          });
+        }
+      }
+
+      if (savedIds.length > 0) {
+        setQueue((prev) => prev.filter((item) => !savedIds.includes(item.id)));
+        setSavedNotification(
+          savedIds.length === itemsToSave.length
+            ? "Đã lưu tất cả file thành công!"
+            : `Đã lưu ${savedIds.length}/${itemsToSave.length} file.`,
+        );
+        setTimeout(() => setSavedNotification(null), 3000);
+      }
+    } finally {
+      isSavingAllRef.current = false;
+      setIsSavingAll(false);
+    }
+  }, [persistFile, queue, updateItem]);
+
   const activeCount = queue.filter((item) => item.phase !== "success").length;
+  const completedCount = queue.filter(
+    (item) => item.phase === "success",
+  ).length;
   const canAddMore = activeCount < MAX_FILES;
 
   return (
@@ -413,6 +480,43 @@ const UploadPage = () => {
               lần
             </span>
           </div>
+
+          {queue.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                marginBottom: "12px",
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleSaveAll}
+                disabled={
+                  isSavingAll || savingIds.size > 0 || completedCount === 0
+                }
+                style={{
+                  background:
+                    completedCount > 0 && !isSavingAll
+                      ? "linear-gradient(135deg, #22c55e, #16a34a)"
+                      : "rgba(255,255,255,0.08)",
+                  border: "none",
+                  color:
+                    completedCount > 0 && !isSavingAll ? "#fff" : "#576176",
+                  padding: "8px 16px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  cursor:
+                    completedCount > 0 && !isSavingAll
+                      ? "pointer"
+                      : "not-allowed",
+                }}
+              >
+                {isSavingAll ? "Đang lưu..." : "Lưu tất cả"}
+              </button>
+            </div>
+          )}
 
           {/* File Queue */}
           {queue.length > 0 && (
@@ -639,54 +743,41 @@ const UploadPage = () => {
                             ></div>
                           </div>
                           {/* Nút Lưu - chỉ hiện khi done và chưa lưu */}
-                          {isDone && !item.saved && (
+                          {isDone && (
                             <button
+                              type="button"
                               onClick={() => handleSaveFile(item.id)}
+                              disabled={isSavingAll || savingIds.has(item.id)}
                               style={{
                                 background:
-                                  "linear-gradient(135deg, #22c55e, #16a34a)",
+                                  isSavingAll || savingIds.has(item.id)
+                                    ? "rgba(255,255,255,0.08)"
+                                    : "linear-gradient(135deg, #22c55e, #16a34a)",
                                 border: "none",
-                                color: "#fff",
+                                color:
+                                  isSavingAll || savingIds.has(item.id)
+                                    ? "#576176"
+                                    : "#fff",
                                 padding: "6px 16px",
                                 borderRadius: "6px",
                                 fontSize: "12px",
                                 fontWeight: "700",
-                                cursor: "pointer",
+                                cursor:
+                                  isSavingAll || savingIds.has(item.id)
+                                    ? "not-allowed"
+                                    : "pointer",
                                 flexShrink: 0,
                               }}
                             >
-                              Lưu
+                              {savingIds.has(item.id) ? "Đang lưu..." : "Lưu"}
                             </button>
                           )}
-                          {/* Đã lưu */}
-                          {isDone && item.saved && (
-                            <span
-                              style={{
-                                fontSize: "12px",
-                                color: "#22c55e",
-                                fontWeight: "700",
-                                flexShrink: 0,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "4px",
-                              }}
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="#22c55e"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <polyline points="20 6 9 17 4 12"></polyline>
-                              </svg>
-                              Đã lưu
-                            </span>
-                          )}
                         </div>
+                        {item.saveError && (
+                          <div style={{ color: "#ff5c5c", marginTop: "8px" }}>
+                            {item.saveError}
+                          </div>
+                        )}
                         <div
                           style={{
                             display: "flex",

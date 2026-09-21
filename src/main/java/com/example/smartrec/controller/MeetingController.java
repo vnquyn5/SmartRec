@@ -8,11 +8,14 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.model.dto.MeetingFilterRequest;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.model.dto.PageResponse;
+import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.service.MeetingService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -56,5 +59,12 @@ public class MeetingController {
             @PathVariable UUID id) {
         meetingService.deleteMeeting(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/{id}/name")
+    public ResponseEntity<MeetingResponseDTO> renameMeeting(
+            @PathVariable UUID id,
+            @RequestBody RenameFileRequest request) {
+        return ResponseEntity.ok(meetingService.renameMeeting(id, request));
     }
 }

@@ -2641,6 +2641,178 @@ a {
   font-size: 11px;
 }
 
+.password-form-card {
+  display: flex;
+  gap: 22px;
+  max-width: 680px;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: var(--sr-panel);
+}
+
+.password-form-icon {
+  display: grid;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(62, 137, 255, 0.25);
+  border-radius: 10px;
+  color: var(--sr-blue);
+  background: rgba(62, 137, 255, 0.1);
+}
+
+.password-form-fields {
+  display: grid;
+  flex: 1;
+  gap: 18px;
+}
+
+.password-requirements-note {
+  margin-top: -4px;
+  color: var(--sr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.password-form-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 77, 93, 0.25);
+  border-radius: 8px;
+  color: var(--sr-error);
+  background: rgba(255, 77, 93, 0.08);
+  font-size: 12px;
+}
+
+.password-submit {
+  justify-self: start;
+}
+
+.password-submit:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.password-input-wrap {
+  position: relative;
+}
+
+.password-input-wrap .profile-input {
+  padding-right: 38px;
+}
+
+.password-visibility-button {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  color: #7b879f;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.password-visibility-button:hover {
+  color: var(--sr-text);
+}
+
+.password-success-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 8, 18, 0.78);
+}
+
+.password-success-modal {
+  width: min(100%, 390px);
+  padding: 22px 24px 24px;
+  border: 1px solid rgba(81, 99, 139, 0.25);
+  border-radius: 12px;
+  background: #111827;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  text-align: center;
+}
+
+.password-success-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sr-text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.password-success-brand .auth-logo-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.password-success-brand .auth-logo-mark span {
+  width: 8px;
+  height: 8px;
+}
+
+.password-success-brand strong span {
+  color: var(--sr-cyan);
+}
+
+.password-success-icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  margin: 28px auto 16px;
+  place-items: center;
+  border: 1px solid rgba(24, 201, 154, 0.45);
+  border-radius: 50%;
+  color: #061d1b;
+  background: var(--sr-success);
+  box-shadow: 0 0 0 8px rgba(24, 201, 154, 0.1);
+}
+
+.password-success-icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.password-success-icon circle {
+  fill: none;
+  stroke: #061d1b;
+}
+
+.password-success-icon path {
+  stroke: #061d1b;
+}
+
+.password-success-modal h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 19px;
+}
+
+.password-success-modal p {
+  max-width: 280px;
+  margin: 8px auto 20px;
+  color: var(--sr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.password-success-button {
+  width: 100%;
+  min-height: 38px;
+  background: linear-gradient(90deg, #3e89ff, #8954f6);
+}
+
 .profile-edit-btn,
 .btn-save,
 .btn-cancel {
@@ -3018,7 +3190,7 @@ a {
   }
 
   .profile-sidebar-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .profile-sidebar-link {
@@ -3051,5 +3223,14 @@ a {
 
   .profile-edit-form-wrap {
     padding: 18px;
+  }
+
+  .password-form-card {
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .password-submit {
+    justify-self: stretch;
   }
 }

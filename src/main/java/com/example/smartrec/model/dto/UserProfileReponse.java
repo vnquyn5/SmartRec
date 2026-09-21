@@ -13,9 +13,17 @@ import lombok.Getter;
 public class UserProfileReponse {
     private UUID id;
 
+    private String userCode;
+
     private String email;
 
+    private String phone;
+
     private String full_name;
+
+    private String department;
+
+    private String position;
 
     private String role;
 

@@ -1,15 +1,20 @@
 package com.example.smartrec.entity;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -30,6 +35,9 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private  UUID id;
 
+    @Column(name = "user_code", unique = true, nullable = false, length = 30)
+    private String userCode;
+
     @Column (name ="email" , unique = true)
     private String email;
 
@@ -41,6 +49,12 @@ public class User {
 
     @Column (name ="full_name" , nullable = false)
     private String full_name;
+
+    @Column(name = "department")
+    private String department;
+
+    @Column(name = "position")
+    private String position;
 
     @Column (name = "is_active")
     private Boolean is_active = true;
@@ -56,5 +70,12 @@ public class User {
     @Column (name = "delete_at")
     private Instant delete_at;
 
-    
+    @PrePersist
+    public void generateUserCodeIfNeeded() {
+        if (userCode == null || userCode.isBlank()) {
+            String date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+            String suffix = String.format("%04d", ThreadLocalRandom.current().nextInt(10000));
+            this.userCode = "SMR" + date + suffix;
+        }
+    }
 }

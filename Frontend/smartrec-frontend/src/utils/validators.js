@@ -1,6 +1,6 @@
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const fullNamePattern = /^[A-Za-zÀ-ỹ]+(?: +[A-Za-zÀ-ỹ]+)*$/u;
-const phonePattern = /^[0-9]{10}$/;
+const phonePattern = /^0[0-9]{9}$/;
 const passwordRequirementChecks = {
   length: (value) => value.length >= 8 && value.length <= 16,
   uppercase: (value) => /[A-Z]/.test(value),
@@ -50,7 +50,7 @@ export const validateFullName = (value) => {
     return "Vui lòng nhập họ và tên";
   }
   if (trimmedValue.length < 3 || trimmedValue.length > 50) {
-    return "Họ và tên phải từ 3 đến 50 ký tự";
+    return "Họ và tên phải có từ 3 đến 50 ký tự.";
   }
   if (!fullNamePattern.test(trimmedValue)) {
     return "Họ và tên chỉ được chứa chữ cái và khoảng trắng";

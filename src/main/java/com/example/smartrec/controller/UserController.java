@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.example.smartrec.model.dto.ChangePassWordRequest;
+import com.example.smartrec.model.dto.UpdateUserProfileRequest;
 import com.example.smartrec.model.dto.UserProfileReponse;
 import com.example.smartrec.service.UserService;
 
@@ -23,6 +24,12 @@ public class UserController {
     @GetMapping("/me")
     public ResponseEntity<UserProfileReponse> getMyProfile(){
          return ResponseEntity.status(HttpStatus.OK).body(userService.getMyProfile());
+    }
+
+    @PutMapping("/me")
+    public ResponseEntity<UserProfileReponse> updateMyProfile(
+            @Valid @RequestBody UpdateUserProfileRequest request) {
+        return ResponseEntity.status(HttpStatus.OK).body(userService.updateMyProfile(request));
     }
 
     @PutMapping("/change-password")
