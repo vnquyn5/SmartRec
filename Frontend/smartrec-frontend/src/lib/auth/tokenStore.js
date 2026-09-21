@@ -7,7 +7,14 @@ function readClaims(token) {
     const payload = token.split(".")[1];
     if (!payload) return null;
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=")));
+    return JSON.parse(
+      atob(
+        normalized.padEnd(
+          normalized.length + ((4 - (normalized.length % 4)) % 4),
+          "=",
+        ),
+      ),
+    );
   } catch {
     return null;
   }
