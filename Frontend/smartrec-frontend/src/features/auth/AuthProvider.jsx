@@ -48,6 +48,24 @@ export function AuthProvider({ children }) {
       if (tokenStore.get() && storedUser) {
         setUser(storedUser);
         setStatus("authenticated");
+
+        try {
+          const profile = await api.get("/api/user/me");
+          if (!alive) return;
+
+          const currentUser = {
+            ...storedUser,
+            id: profile.id ?? storedUser.id,
+            name: profile.full_name ?? storedUser.name,
+            email: profile.email ?? storedUser.email,
+            role: profile.role ?? storedUser.role,
+            roles: profile.role ? [profile.role] : storedUser.roles,
+          };
+          setUser(currentUser);
+          localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
+        } catch {
+          if (alive) setUser(storedUser);
+        }
       } else {
         clearSession();
       }

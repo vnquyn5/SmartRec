@@ -38,6 +38,25 @@ export async function getMeetings({
   return normalizePageResponse(response);
 }
 
+export async function getAllMeetings() {
+  const firstPage = await getMeetings({ page: 0, size: 100 });
+  if (firstPage.totalPages <= 1) return firstPage;
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: firstPage.totalPages - 1 }, (_, index) =>
+      getMeetings({ page: index + 1, size: 100 }),
+    ),
+  );
+
+  return {
+    ...firstPage,
+    content: [
+      ...firstPage.content,
+      ...remainingPages.flatMap((page) => page.content),
+    ],
+  };
+}
+
 export async function deleteMeeting(id) {
   return httpClient.delete(`/meetings/${id}`);
 }

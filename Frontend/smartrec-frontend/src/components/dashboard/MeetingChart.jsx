@@ -1,10 +1,31 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-const rawData = [3, 5, 4, 8, 12, 9, 11, 7, 10, 6, 8, 5, 7, 9, 11, 14, 10, 8, 6, 9, 12, 8, 5, 7, 10, 13, 9, 6];
+const getChartData = (meetings) => {
+  const dates = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - (6 - index));
+    return date;
+  });
 
-const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return {
+    rawData: dates.map((date) =>
+      meetings.filter((meeting) => {
+        const createdAt = new Date(meeting.createdAt);
+        return (
+          createdAt.getFullYear() === date.getFullYear() &&
+          createdAt.getMonth() === date.getMonth() &&
+          createdAt.getDate() === date.getDate()
+        );
+      }).length,
+    ),
+    dayLabels: dates.map((date) =>
+      date.toLocaleDateString('en-US', { weekday: 'short' }),
+    ),
+  };
+};
 
-const MeetingChart = () => {
+const MeetingChart = ({ meetings = [] }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [dimensions, setDimensions] = useState({ w: 0, h: 0 });
@@ -23,6 +44,7 @@ const MeetingChart = () => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || dimensions.w === 0) return;
+    const { rawData, dayLabels } = getChartData(meetings);
 
     const dpr = window.devicePixelRatio || 1;
     const w = dimensions.w;
@@ -138,7 +160,7 @@ const MeetingChart = () => {
       ctx.lineWidth = 2;
       ctx.stroke();
     });
-  }, [dimensions]);
+  }, [dimensions, meetings]);
 
   return (
     <div className="chart-card" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

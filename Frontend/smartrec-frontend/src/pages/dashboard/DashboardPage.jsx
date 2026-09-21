@@ -1,13 +1,42 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import StatsCards from '../../components/dashboard/StatsCards';
 import MeetingChart from '../../components/dashboard/MeetingChart';
 import RecentMeetings from '../../components/dashboard/RecentMeetings';
+import { useAuth } from '../../features/auth/AuthProvider';
+import { getAllMeetings } from '../../services/meetingService';
 
 const DashboardPage = () => {
   const navigate = useNavigate();
-  const displayName = 'Alex';
+  const { user } = useAuth();
+  const displayName = user?.name || 'Đang tải...';
+  const [meetings, setMeetings] = useState([]);
+  const [totalMeetings, setTotalMeetings] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadDashboardMeetings = async () => {
+      try {
+        const response = await getAllMeetings();
+        if (!isMounted) return;
+        setMeetings(response.content);
+        setTotalMeetings(response.totalElements);
+      } catch (error) {
+        if (isMounted) setLoadError(error?.message || 'Không thể tải dữ liệu Dashboard.');
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+
+    loadDashboardMeetings();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <DashboardLayout>
@@ -24,10 +53,11 @@ const DashboardPage = () => {
         </button>
       </div>
 
-      <StatsCards />
+      {loadError && <div className="dashboard-data-error">{loadError}</div>}
+      <StatsCards meetings={meetings} totalMeetings={totalMeetings} isLoading={isLoading} />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px', alignItems: 'stretch' }}>
-        <MeetingChart />
-        <RecentMeetings />
+        <MeetingChart meetings={meetings} isLoading={isLoading} />
+        <RecentMeetings meetings={meetings} totalMeetings={totalMeetings} isLoading={isLoading} />
       </div>
     </DashboardLayout>
   );

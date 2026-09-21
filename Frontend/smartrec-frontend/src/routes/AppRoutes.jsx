@@ -8,6 +8,7 @@ import FileManagerPage from "../pages/meeting/FileManagerPage";
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
 import ForgotPasswordPage from "../pages/auth/ForgotPasswordPage";
+import ProfilePage from "../pages/auth/ProfilePage";
 
 import { RequireAuth } from "../features/auth/RequireAuth";
 
@@ -27,6 +28,7 @@ const AppRoutes = () => {
         <Route path="/meeting/:id" element={<Meeting />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/history" element={<FileManagerPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
       </Route>
     </Routes>
   );

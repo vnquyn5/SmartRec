@@ -3,8 +3,6 @@ import React from 'react';
 const cards = [
   {
     label: 'Total Meetings',
-    value: '142',
-    change: '+12%',
     color: 'blue',
     icon: (
       <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
@@ -15,8 +13,6 @@ const cards = [
   },
   {
     label: 'Hours Processed',
-    value: '86.5h',
-    change: '+8%',
     color: 'amber',
     icon: (
       <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
@@ -27,8 +23,6 @@ const cards = [
   },
   {
     label: 'AI Tasks',
-    value: '412',
-    change: '+5%',
     color: 'green',
     icon: (
       <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
@@ -60,10 +54,24 @@ const colorMap = {
   },
 };
 
-const StatsCards = () => {
+const formatHours = (meetings) => {
+  const seconds = meetings.reduce(
+    (total, meeting) => total + (Number(meeting.durationSeconds) || 0),
+    0,
+  );
+  return `${(seconds / 3600).toFixed(1)}h`;
+};
+
+const StatsCards = ({ meetings = [], totalMeetings = 0, isLoading = false }) => {
+  const values = [
+    isLoading ? '...' : totalMeetings.toString(),
+    isLoading ? '...' : formatHours(meetings),
+    'Chưa có API',
+  ];
+
   return (
     <div className="stats-row">
-      {cards.map((card) => {
+      {cards.map((card, index) => {
         const c = colorMap[card.color];
         return (
           <div key={card.label} className="stat-card">
@@ -76,12 +84,12 @@ const StatsCards = () => {
             <div className="stat-body">
               <span className="stat-label">{card.label}</span>
               <div className="stat-value-row">
-                <span className="stat-value">{card.value}</span>
+                <span className="stat-value">{values[index]}</span>
                 <span
                   className="stat-badge"
                   style={{ background: c.badge, color: c.text }}
                 >
-                  {card.change}
+                  {index === 2 ? 'Chưa có nguồn dữ liệu' : 'Dữ liệu thật'}
                 </span>
               </div>
             </div>

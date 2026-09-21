@@ -1,55 +1,57 @@
 import React, { useState } from 'react';
 
-const meetings = [
-  {
-    id: 1,
-    name: 'Product Roadmap Sync',
-    date: 'Oct 24, 2023',
-    duration: '45m 20s',
-    status: 'Processed',
-    color: '#22c55e',
-  },
-  {
-    id: 2,
-    name: 'Q4 Quarterly Review',
-    date: 'Oct 23, 2023',
-    duration: '1h 10m',
-    status: 'Processing',
-    color: '#3e89ff',
-  },
-  {
-    id: 3,
-    name: 'Design Critique: Dashboard',
-    date: 'Oct 22, 2023',
-    duration: '28m 17s',
-    status: 'Processed',
-    color: '#22c55e',
-  },
-  {
-    id: 4,
-    name: 'Investor Pitch - Draft 2',
-    date: 'Oct 21, 2023',
-    duration: '1h+ 05s',
-    status: 'Failed',
-    color: '#ff4d5d',
-  },
-];
-
 const statusColors = {
   Processed: { bg: 'rgba(34,197,94,0.14)', text: '#22c55e' },
   Processing: { bg: 'rgba(62,137,255,0.14)', text: '#3e89ff' },
   Failed: { bg: 'rgba(255,77,93,0.14)', text: '#ff4d5d' },
+  Pending: { bg: 'rgba(148,163,184,0.14)', text: '#94a3b8' },
 };
 
 const dotColors = {
   Processed: '#22c55e',
   Processing: '#3e89ff',
   Failed: '#ff4d5d',
+  Pending: '#94a3b8',
 };
 
-const RecentMeetings = () => {
+const statusLabels = {
+  COMPLETED: 'Processed',
+  PROCESSING: 'Processing',
+  FAILED: 'Failed',
+  PENDING: 'Pending',
+};
+
+const formatDate = (value) =>
+  value
+    ? new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }).format(new Date(value))
+    : '--';
+
+const formatDuration = (seconds) => {
+  const duration = Number(seconds);
+  if (!Number.isFinite(duration) || duration <= 0) return '--';
+  const hours = Math.floor(duration / 3600);
+  const minutes = Math.floor((duration % 3600) / 60);
+  const remainingSeconds = duration % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${remainingSeconds}s`;
+};
+
+const RecentMeetings = ({ meetings = [], totalMeetings = 0, isLoading = false }) => {
   const [filter, setFilter] = useState('All');
-  const filtered = filter === 'All' ? meetings : meetings.filter((m) => m.status === filter);
+  const recentMeetings = meetings.slice(0, 4).map((meeting) => ({
+    ...meeting,
+    name: meeting.title || meeting.fileName || 'Untitled meeting',
+    date: formatDate(meeting.createdAt),
+    duration: formatDuration(meeting.durationSeconds),
+    status: statusLabels[meeting.status] || meeting.status || 'Pending',
+  }));
+  const filtered = filter === 'All'
+    ? recentMeetings
+    : recentMeetings.filter((meeting) => meeting.status === filter);
 
   return (
     <div className="meetings-card" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -65,6 +67,7 @@ const RecentMeetings = () => {
             <option>Processed</option>
             <option>Processing</option>
             <option>Failed</option>
+            <option>Pending</option>
           </select>
         </div>
       </div>
@@ -82,7 +85,7 @@ const RecentMeetings = () => {
           </thead>
           <tbody>
             {filtered.map((m) => {
-              const sc = statusColors[m.status];
+              const sc = statusColors[m.status] || statusColors.Processing;
               return (
                 <tr key={m.id}>
                   <td>
@@ -122,7 +125,9 @@ const RecentMeetings = () => {
       </div>
 
       <div className="meetings-footer">
-        <span className="meetings-count">Showing 1-4 of 142 meetings</span>
+          <span className="meetings-count">
+            {isLoading ? 'Loading meetings...' : `Showing 1-${filtered.length} of ${totalMeetings} meetings`}
+          </span>
         <div className="meetings-pagination">
           <button className="pagination-btn" disabled>Previous</button>
           <button className="pagination-btn">Next</button>

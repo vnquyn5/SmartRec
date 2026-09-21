@@ -42,6 +42,12 @@ const icons = {
       <path d="M10 2v2M10 16v2M18 10h-2M4 10H2M15.66 4.34l-1.42 1.42M5.76 14.24l-1.42 1.42M15.66 15.66l-1.42-1.42M5.76 5.76L4.34 4.34" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
+  profile: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M4 17c0-3.31 2.69-6 6-6s6 2.69 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
   logout: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <path d="M7 17H4a1 1 0 01-1-1V4a1 1 0 011-1h3M13 14l4-4-4-4M17 10H7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -82,6 +88,18 @@ const Sidebar = () => {
               <span>{item.label}</span>
             </NavLink>
           ))}
+        </nav>
+
+        <div className="profile-sidebar-label">CÀI ĐẶT</div>
+        <nav className="sidebar-nav">
+          <button
+            className="sidebar-link"
+            onClick={() => navigate('/profile')}
+            type="button"
+          >
+            {icons.profile}
+            <span>Thông tin cá nhân</span>
+          </button>
         </nav>
       </div>
 

@@ -10,12 +10,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import com.example.smartrec.entity.User;
-import com.example.smartrec.entity.WorkspaceMember;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.ChangePassWordRequest;
 import com.example.smartrec.model.dto.UserProfileReponse;
 import com.example.smartrec.repository.UserRepository;
-import com.example.smartrec.repository.WorkspaceMemberRepository;
 import com.example.smartrec.service.UserService;
 
 import lombok.RequiredArgsConstructor;
@@ -25,7 +23,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
-    private final WorkspaceMemberRepository workspaceMemberRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -42,24 +39,11 @@ public class UserServiceImpl implements UserService {
                         HttpStatus.NOT_FOUND,
                         "USER_NOT_FOUND",
                         "Không tìm thấy người dùng"));
-        WorkspaceMember member = workspaceMemberRepository
-                .findByUserId(
-                        user.getId())
-                .orElseThrow(() -> new BusinessException(
-                        HttpStatus.FORBIDDEN,
-                        "WORKSPACE_ACCESS_DENIED",
-                        "Người dùng không thuộc workspace này"));
-
-        String role = member.getRole();
-        if (role == null || role.isBlank()) {
-            role = "USER";
-        }
-
         return UserProfileReponse.builder()
                                  .id(user.getId())
                                  .email(user.getEmail())
                                  .full_name(user.getFull_name())
-                                 .role(role)
+                                 .role("USER")
                                  .createdAt(user.getCreated_at())
                                  .build();
     }
