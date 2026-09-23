@@ -50,22 +50,12 @@ const RegisterForm = () => {
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-<<<<<<< Updated upstream
-    setValues((current) => ({ ...current, [name]: value }));
-=======
-    let nextValue =
-      name === "fullName"
-        ? formatFullName(value)
-        : name === "phone"
-          ? value.replace(/\D/g, "").slice(0, 10)
-          : value;
-
+    let nextValue = value;
     if (name === "email" || name === "password" || name === "confirmPassword") {
       nextValue = nextValue.replace(/\s/g, "");
     }
 
     setValues((current) => ({ ...current, [name]: nextValue }));
->>>>>>> Stashed changes
     setErrors((current) => ({ ...current, [name]: "" }));
   };
 
