@@ -3,6 +3,7 @@ import { Routes, Route } from "react-router-dom";
 
 import DashboardPage from "../pages/dashboard/DashboardPage";
 import UploadPage from "../pages/upload/UploadPage";
+import LargeFileUploadPage from "../pages/upload/LargeFileUploadPage";
 import FileManagerPage from "../pages/meeting/FileManagerPage";
 
 import LoginPage from "../pages/auth/LoginPage";
@@ -27,6 +28,7 @@ const AppRoutes = () => {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/meeting/:id" element={<Meeting />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/upload/large" element={<LargeFileUploadPage />} />
         <Route path="/history" element={<FileManagerPage />} />
         <Route path="/profile" element={<ProfilePage />} />
       </Route>

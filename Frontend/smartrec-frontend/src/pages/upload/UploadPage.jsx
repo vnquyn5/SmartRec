@@ -34,8 +34,10 @@ const UploadPage = () => {
   const [savedNotification, setSavedNotification] = useState(null);
   const [savingIds, setSavingIds] = useState(() => new Set());
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [confirmLargeFile, setConfirmLargeFile] = useState(null);
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
+  const speedTrackerRef = useRef({});
 
   // Cập nhật 1 item trong queue theo id
   const updateItem = useCallback((id, updates) => {
@@ -56,7 +58,8 @@ const UploadPage = () => {
         ),
       );
 
-      updateItem(id, { phase: "uploading", strategy: "single", error: null });
+      updateItem(id, { phase: "uploading", strategy: "single", error: null, speedBps: 0 });
+      speedTrackerRef.current[id] = { lastLoaded: 0, lastTime: Date.now() };
 
       try {
         const uploadResponse = await uploadSingleFile(
@@ -65,9 +68,23 @@ const UploadPage = () => {
           controller.signal,
           (event) => {
             if (event.total) {
-              updateItem(id, {
-                progress: Math.round((event.loaded / event.total) * 100),
-              });
+              const now = Date.now();
+              const tracker = speedTrackerRef.current[id] || { lastLoaded: 0, lastTime: now };
+              const timeDiff = (now - tracker.lastTime) / 1000;
+              
+              const updates = { progress: Math.round((event.loaded / event.total) * 100) };
+              
+              if (timeDiff >= 0.5) {
+                const bytesDiff = event.loaded - tracker.lastLoaded;
+                if (bytesDiff > 0) {
+                  updates.speedBps = bytesDiff / timeDiff;
+                }
+                tracker.lastTime = now;
+                tracker.lastLoaded = event.loaded;
+                speedTrackerRef.current[id] = tracker;
+              }
+              
+              updateItem(id, updates);
             }
           },
         );
@@ -100,7 +117,7 @@ const UploadPage = () => {
           continue;
         }
         if (file.size > MAX_FILE_SIZE) {
-          alert(`File "${file.name}" vượt quá giới hạn 2GB.`);
+          setConfirmLargeFile(file);
           continue;
         }
         validFiles.push(file);
@@ -532,8 +549,19 @@ const UploadPage = () => {
                 const isDone = item.phase === "success";
                 const isError = item.phase === "error";
                 const isItemUploading = item.phase === "uploading";
-                const progressColor =
-                  item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
+                const progressColor = item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
+
+                const speedBps = item.speedBps || 0;
+                const uploadedBytes = item.file.size * (item.progress / 100);
+                const remainingBytes = item.file.size - uploadedBytes;
+                const remainingSeconds = speedBps > 0 ? remainingBytes / speedBps : 0;
+                
+                const formatTime = (seconds) => {
+                  if (!seconds || !isFinite(seconds)) return "00:00";
+                  const m = Math.floor(seconds / 60);
+                  const s = Math.floor(seconds % 60);
+                  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+                };
 
                 let statusText = "";
                 let statusColor = "#8d96aa";
@@ -787,22 +815,23 @@ const UploadPage = () => {
                             marginTop: "8px",
                           }}
                         >
-                          <span>
-                            {item.progress}% hoàn thành
-                            {item.chunkInfo && (
-                              <span
-                                style={{ marginLeft: "8px", color: "#f59e0b" }}
-                              >
-                                (Chunk {item.chunkInfo.current}/
-                                {item.chunkInfo.total})
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <span>
+                              {item.progress}% hoàn thành
+                              {item.chunkInfo && (
+                                <span style={{ marginLeft: "8px", color: "#f59e0b" }}>
+                                  (Chunk {item.chunkInfo.current}/{item.chunkInfo.total})
+                                </span>
+                              )}
+                            </span>
+                            {isItemUploading && (
+                              <span style={{ color: "#8d96aa", fontSize: "10px" }}>
+                                Speed: {speedBps > 0 ? `${formatBytes(speedBps)}/s` : "0 MB/s"} • Remaining: ~{formatTime(remainingSeconds)}
                               </span>
                             )}
-                          </span>
+                          </div>
                           <span>
-                            {formatBytes(
-                              item.file.size * (item.progress / 100),
-                            )}{" "}
-                            / {formatBytes(item.file.size)}
+                            {formatBytes(uploadedBytes)} / {formatBytes(item.file.size)}
                           </span>
                         </div>
                       </>
@@ -813,8 +842,8 @@ const UploadPage = () => {
             </div>
           )}
 
-          {/* Cancel button */}
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          {/* Action buttons */}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
             <button
               className="sr-button sr-button-secondary"
               style={{
@@ -833,9 +862,62 @@ const UploadPage = () => {
             >
               Hủy
             </button>
+            <button
+              className="sr-button sr-button-primary"
+              style={{
+                minHeight: "36px",
+                height: "36px",
+                width: "auto",
+                padding: "0 24px",
+                fontSize: "13px",
+              }}
+              onClick={() => {
+                navigate("/history");
+              }}
+            >
+              Tiếp tục
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Confirmation Popup for Large Files */}
+      {confirmLargeFile && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl">
+            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-amber-500/10 text-amber-500 mb-4 mx-auto">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-bold text-white text-center mb-2">File dung lượng lớn</h3>
+            <p className="text-sm text-slate-400 text-center mb-6">
+              File <strong className="text-slate-200">{confirmLargeFile.name}</strong> có dung lượng lớn hơn 2GB ({formatBytes(confirmLargeFile.size)}). 
+              Hệ thống sẽ chuyển sang trang Upload chuyên biệt (Chunked Upload) để đảm bảo tốc độ và độ ổn định.
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmLargeFile(null)}
+                className="px-4 py-2 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const file = confirmLargeFile;
+                  setConfirmLargeFile(null);
+                  navigate("/upload/large", { state: { file } });
+                }}
+                className="px-5 py-2 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition"
+              >
+                Tiếp tục →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
