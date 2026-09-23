@@ -56,9 +56,15 @@ const LoginForm = () => {
 
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
+    let nextValue = type === "checkbox" ? checked : value;
+
+    if (name === "emailOrPhone" || name === "password") {
+      nextValue = typeof nextValue === 'string' ? nextValue.replace(/\s/g, "") : nextValue;
+    }
+
     setValues((current) => ({
       ...current,
-      [name]: type === "checkbox" ? checked : value,
+      [name]: nextValue,
     }));
     setErrors((current) => ({ ...current, [name]: "" }));
   };

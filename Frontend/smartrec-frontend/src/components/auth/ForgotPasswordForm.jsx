@@ -39,7 +39,7 @@ const ForgotPasswordForm = ({ onSubmit }) => {
         value={emailOrPhone}
         error={error}
         onChange={(event) => {
-          setEmailOrPhone(event.target.value);
+          setEmailOrPhone(event.target.value.replace(/\s/g, ""));
           setError('');
         }}
       />
