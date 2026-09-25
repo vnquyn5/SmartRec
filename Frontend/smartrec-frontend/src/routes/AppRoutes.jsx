@@ -4,6 +4,7 @@ import { Routes, Route } from "react-router-dom";
 import DashboardPage from "../pages/dashboard/DashboardPage";
 import UploadPage from "../pages/upload/UploadPage";
 import FileManagerPage from "../pages/meeting/FileManagerPage";
+import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
@@ -12,7 +13,6 @@ import ProfilePage from "../pages/auth/ProfilePage";
 
 import { RequireAuth } from "../features/auth/RequireAuth";
 
-const Meeting = () => <div className="p-4">Meeting Details</div>;
 
 const AppRoutes = () => {
   return (
@@ -25,7 +25,7 @@ const AppRoutes = () => {
       {/* Protected routes */}
       <Route element={<RequireAuth />}>
         <Route path="/" element={<DashboardPage />} />
-        <Route path="/meeting/:id" element={<Meeting />} />
+        <Route path="/meeting/:id" element={<MeetingDetailPage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/history" element={<FileManagerPage />} />
         <Route path="/profile" element={<ProfilePage />} />

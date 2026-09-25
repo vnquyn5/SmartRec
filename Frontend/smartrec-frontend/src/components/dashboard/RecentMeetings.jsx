@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-
+import { useNavigate } from 'react-router-dom';
 const statusColors = {
   Processed: { bg: 'rgba(34,197,94,0.14)', text: '#22c55e' },
   Processing: { bg: 'rgba(62,137,255,0.14)', text: '#3e89ff' },
@@ -41,6 +41,7 @@ const formatDuration = (seconds) => {
 };
 
 const RecentMeetings = ({ meetings = [], totalMeetings = 0, isLoading = false }) => {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState('All');
   const recentMeetings = meetings.slice(0, 4).map((meeting) => ({
     ...meeting,
@@ -103,7 +104,7 @@ const RecentMeetings = ({ meetings = [], totalMeetings = 0, isLoading = false })
                   </td>
                   <td>
                     <div className="meeting-actions">
-                      <button className="action-btn" title="View">
+                      <button className="action-btn" title="View" onClick={() => navigate(`/meeting/${m.id || 123}`)}>
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                           <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" strokeWidth="1.2" />
                           <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.2" />
