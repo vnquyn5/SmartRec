@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../../components/layout/DashboardLayout.jsx";
 import Pagination from "../../components/common/Pagination.jsx";
 import {
@@ -71,6 +72,7 @@ export default function FileManagerPage() {
   const [infoMeeting, setInfoMeeting] = useState(null);
   const [shareMeeting, setShareMeeting] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const navigate = useNavigate();
 
   const loadMeetings = useCallback(async () => {
     setLoading(true);
@@ -314,6 +316,16 @@ export default function FileManagerPage() {
               />
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigate("/upload")}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-[11px] font-semibold text-blue-400 transition hover:bg-blue-500/20 hover:text-white"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                Tải lên file
+              </button>
               <button
                 type="button"
                 onClick={handleCreateFolder}
@@ -755,6 +767,8 @@ export default function FileManagerPage() {
           </div>
         </div>
       )}
+
+
     </DashboardLayout>
   );
 }
