@@ -9,6 +9,7 @@ import {
   validateConfirmPassword,
   validateEmail,
   formatFullName,
+  isPasswordValid,
   validateFullName,
   validatePassword,
   validatePhone,
