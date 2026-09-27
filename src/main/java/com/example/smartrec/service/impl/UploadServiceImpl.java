@@ -2,6 +2,8 @@ package com.example.smartrec.service.impl;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -18,6 +20,8 @@ import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.UploadSession;
 import com.example.smartrec.model.dto.ChunkUploadRequest;
 import com.example.smartrec.model.dto.ChunkUploadResponse;
+import com.example.smartrec.model.dto.MergeUploadReponse;
+import com.example.smartrec.model.dto.MergeUploadRequest;
 import com.example.smartrec.model.dto.UploadInitRequest;
 import com.example.smartrec.model.dto.UploadInitResponse;
 import com.example.smartrec.repository.UserRepository;
@@ -162,40 +166,40 @@ public class UploadServiceImpl implements UploadService {
                 }
                 UUID uploadSessionId;
                 try {
-                        uploadSessionId = UUID.fromString(sessionIdString);                    
-                } catch (IllegalArgumentException  e) {
+                        uploadSessionId = UUID.fromString(sessionIdString);
+                } catch (IllegalArgumentException e) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "INVALID_UPLOAD_SESSION_ID",
                                         "Upload session ID không hợp lệ");
                 }
-                User crusUser=getCurrentUser();
+                User crusUser = getCurrentUser();
                 UploadSession session = uploadSessionRedisService.get(uploadSessionId);
 
-                if(!session.getUserId().equals(crusUser.getId())){
+                if (!session.getUserId().equals(crusUser.getId())) {
                         throw new BusinessException(
                                         HttpStatus.FORBIDDEN,
                                         "UPLOAD_SESSION_NOT_OWNED",
                                         "Upload session không thuộc người dùng hiện tại");
                 }
 
-                if(session.getStatus() != UploadSessionStatus.INITIATED  && session.getStatus() != UploadSessionStatus.UPLOADING){
+                if (session.getStatus() != UploadSessionStatus.INITIATED
+                                && session.getStatus() != UploadSessionStatus.UPLOADING) {
                         throw new BusinessException(
                                         HttpStatus.CONFLICT,
                                         "INVALID_UPLOAD_SESSION_STATUS",
                                         "Upload session không ở trạng thái cho phép upload chunk");
                 }
 
-
                 Integer chunkIndex = request.getChunkIndex();
-                if(chunkIndex == null){
+                if (chunkIndex == null) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "INVALID_CHUNK_INDEX",
                                         "Chunk index không đc để trống ");
                 }
 
-                if(chunkIndex < 0 || chunkIndex >=session.getTotalChunks()){
+                if (chunkIndex < 0 || chunkIndex >= session.getTotalChunks()) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "INVALID_CHUNK_INDEX",
@@ -203,30 +207,30 @@ public class UploadServiceImpl implements UploadService {
                 }
 
                 MultipartFile file = request.getFile();
-                if(file == null || file.isEmpty()){
+                if (file == null || file.isEmpty()) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "INVALID_CHUNK_FILE",
                                         "Chunk file không đc để trống ");
                 }
-                if(file.getSize() > session.getChunkSize()){
-                         throw new BusinessException(
+                if (file.getSize() > session.getChunkSize()) {
+                        throw new BusinessException(
                                         HttpStatus.PAYLOAD_TOO_LARGE,
                                         "ERR_CHUNK_TOO_LARGE",
                                         "Chunk vượt quá kích thước cho phép ");
                 }
 
                 // kiem tra chunk da upload chua
-                if(uploadSessionRedisService.isChunkUploaded(uploadSessionId, chunkIndex)){
-                         throw new BusinessException(
+                if (uploadSessionRedisService.isChunkUploaded(uploadSessionId, chunkIndex)) {
+                        throw new BusinessException(
                                         HttpStatus.CONFLICT,
                                         "CHUNK_ALREADY_EXISTS",
                                         "Chunk đã được upload");
                 }
 
                 // lay chunksum tu fe gui
-                String checksumMD5 =request.getChecksumMD5();
-                if(checksumMD5 == null || checksumMD5.isBlank()){
+                String checksumMD5 = request.getChecksumMD5();
+                if (checksumMD5 == null || checksumMD5.isBlank()) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "INVALID_CHUNKSUM",
@@ -239,40 +243,39 @@ public class UploadServiceImpl implements UploadService {
                         MessageDigest md = MessageDigest.getInstance("MD5");
                         // doc toan bo du lieu trong chunk thanh mang byte
                         byte[] fileBytes = file.getBytes();
-                        byte[] digest = md.digest(fileBytes);  
-                        // tao stringbuider de chuyen MD5 dang  bytes thanh chuoi hexadecimal
-                        StringBuilder hexString = new  StringBuilder();
-                        for(byte s:digest){
+                        byte[] digest = md.digest(fileBytes);
+                        // tao stringbuider de chuyen MD5 dang bytes thanh chuoi hexadecimal
+                        StringBuilder hexString = new StringBuilder();
+                        for (byte s : digest) {
                                 hexString.append(String.format("%02x", s));
                         }
                         calculatedMD5 = hexString.toString();
-                } catch (NoSuchAlgorithmException  e) {
+                } catch (NoSuchAlgorithmException e) {
                         throw new BusinessException(
                                         HttpStatus.INTERNAL_SERVER_ERROR,
                                         "MD5_ERROR",
                                         "không thể tính MD5");
-                }catch(Exception e){
+                } catch (Exception e) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "CHUNK_READ_ERROR",
                                         "Không thể đọc dữ liệu chunk");
                 }
                 // so sanh MD5 FE va BE
-                if(!calculatedMD5.equalsIgnoreCase(calculatedMD5.trim())){
-                        return  ChunkUploadResponse.builder()
-                                                   .uploadSessionId(sessionIdString)
-                                                   .chunkIndex(chunkIndex)
-                                                   .status("CHECKSUM_MISMATCH")
-                                                   .message("Chunk checksum du lieu khong khop")
-                                                   .build();
+                if (!calculatedMD5.equalsIgnoreCase(calculatedMD5.trim())) {
+                        return ChunkUploadResponse.builder()
+                                        .uploadSessionId(sessionIdString)
+                                        .chunkIndex(chunkIndex)
+                                        .status("CHECKSUM_MISMATCH")
+                                        .message("Chunk checksum du lieu khong khop")
+                                        .build();
                 }
 
                 // tao obj cho chunk
-                String objectKey="tmp/"
-                        +uploadSessionId
-                        +"/chunk_"
-                        +chunkIndex;
-
+                String objectKey = "tmp/"
+                                + uploadSessionId
+                                + "/chunk_"
+                                + chunkIndex;
 
                 // upload chunk vao minio
                 try {
@@ -286,23 +289,166 @@ public class UploadServiceImpl implements UploadService {
 
                 // danh giau chunk da upload trong redis
                 uploadSessionRedisService.markChunkUploaded(uploadSessionId, chunkIndex);
-                // tang so luong chunk da nhan 
+                // tang so luong chunk da nhan
                 int receivedChunks = session.getReceivedChunks();
-                session.setReceivedChunks(receivedChunks+1);
+                session.setReceivedChunks(receivedChunks + 1);
 
                 // Đổi INITIATED → UPLOADING
-                if(session.getStatus() == UploadSessionStatus.INITIATED){
+                if (session.getStatus() == UploadSessionStatus.INITIATED) {
                         session.setStatus(UploadSessionStatus.UPLOADING);
                 }
 
                 // luu session mo vao redis
                 uploadSessionRedisService.save(session);
                 return ChunkUploadResponse.builder()
-                                          .uploadSessionId(sessionIdString)
-                                          .chunkIndex(chunkIndex)
-                                          .status("SUCCESS")
-                                          .message(objectKey)
-                                          .build();
+                                .uploadSessionId(sessionIdString)
+                                .chunkIndex(chunkIndex)
+                                .status("SUCCESS")
+                                .message(objectKey)
+                                .build();
 
+        }
+
+        @Override
+        public MergeUploadReponse mergeUpload(MergeUploadRequest request) {
+                // xac thu yeu cau
+                if (request == null) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_REQUEST",
+                                        "merge request không được để null");
+                }
+
+                // xac thu ma UploadSessionId
+                String sessionIdString = request.getUploadSessionId();
+                if (sessionIdString == null || sessionIdString.isBlank()) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_REQUEST",
+                                        "upload session id không được để null");
+                }
+
+                UUID uploadSessionId;
+                try {
+                        uploadSessionId = UUID.fromString(sessionIdString);
+                } catch (IllegalArgumentException e) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_UPLOAD_SESSION_ID",
+                                        "upload session id không hợp lệ");
+                }
+
+                // lay user hien tai
+                User currUser = getCurrentUser();
+
+                // lay session tu redis
+                UploadSession session = uploadSessionRedisService.get(uploadSessionId);
+                // session khong ton tai
+                if (session == null) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "UPLOAD_SESSION_NOT_FOUND",
+                                        "không tìm thấy upload session ");
+                }
+                // kiem tra quyen so huu khong
+                if (!session.getUserId().equals(currUser.getId())) {
+                        throw new BusinessException(
+                                        HttpStatus.FORBIDDEN,
+                                        "UPLOAD_SESSION_NOT_OWNED",
+                                        "Upload session không thuộc người dùng hiện tại");
+                }
+                // kiem tra trạng thai session
+                if (session.getStatus() != UploadSessionStatus.INITIATED
+                                && session.getStatus() != UploadSessionStatus.UPLOADING) {
+                        throw new BusinessException(
+                                        HttpStatus.CONFLICT,
+                                        "INVALID_UPLOAD_SESSION_STATUS",
+                                        "Upload session không ở trạng thái cho phép merge");
+                }
+                // lay tong chunk
+                Integer totalChunk = session.getTotalChunks();
+                if (totalChunk == null || totalChunk <= 0) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_TOTAL_CHUNKS",
+                                        "total chunk không hợp lệ ");
+                }
+
+                // tim chunk bi thieu
+
+                // danh sach dung de luu index cua nhung chunk chua upload
+                List<Integer> missingChunk = new ArrayList<>();
+                for (int i = 0; i < totalChunk; i++) {
+                        boolean uploaded = uploadSessionRedisService.isChunkUploaded(uploadSessionId, i); // Kiểm tra
+                                                                                                          // chunk thứ i
+                                                                                                          // đã được
+                                                                                                          // upload chưa
+                        if (!uploaded) {// neu chua upload
+                                missingChunk.add(i);// them index chunk bi thieu vao danh sach
+                        }
+                }
+
+                // neu chunk bi thieu se khong merge
+                if (!missingChunk.isEmpty()) {
+                        throw new BusinessException(
+                                        HttpStatus.CONFLICT,
+                                        "UPLOAD_INCOMPLETE",
+                                        "1 so phan bi thieu :" + missingChunk);
+                }
+                // tao danh sach object key cua chunk
+                List<String> chunkObjectKeys = new ArrayList<>();
+                for (int i = 0; i < totalChunk; i++) {
+                        String chunkObjectKey = "tmp/"
+                                        + uploadSessionId
+                                        + "/chunk_"
+                                        + i;
+
+                        chunkObjectKeys.add(chunkObjectKey);
+                }
+
+                String fileName = request.getFileName();
+                if (fileName == null || fileName.isBlank()) {
+                        fileName = session.getFileName();// lay ten file trong upload session
+                }
+                if (fileName == null || fileName.isBlank()) { // neu ca reuest voi session dau khong co ten file
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_FILENAME",
+                                        "Tên file không được để trống");
+                }
+                fileName = fileName.trim();
+
+                // tao object key cuoi cung
+                String finalObjectKey = "meetings/"
+                                + currUser.getId()
+                                + "/"
+                                + uploadSessionId
+                                + "/"
+                                + fileName;
+
+                // ghep cac chunk trong miniio
+                try {
+                        minioService.composeObjects(finalObjectKey, chunkObjectKeys);// gui ds chunk trog mini de ghep
+                                                                                     // thanh file hoan chinh
+                } catch (Exception e) {
+                        throw new BusinessException(
+                                        HttpStatus.INTERNAL_SERVER_ERROR,
+                                        "ERR_MINIO_COMPOSE",
+                                        "Không thể merge các chunk trong MinIO");
+                }
+
+                // danh giau session da hoan thanh
+                session.setStatus(UploadSessionStatus.COMPLETED);
+
+                uploadSessionRedisService.save(session);
+
+                // xoa chunk tam 
+                for(String chunkObjectKey : chunkObjectKeys){// duyet qua tung chunk da dung de compose
+                        try {
+                                minioService.delete(chunkObjectKey);// xoa chunk tam thoi khoi mini
+                        } catch (Exception e) {
+                        }
+                }
+                return new MergeUploadReponse(sessionIdString,fileName,finalObjectKey,UploadSessionStatus.COMPLETED.name());
         }
 }
