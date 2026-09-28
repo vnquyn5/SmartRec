@@ -4,6 +4,7 @@ import { AlertIcon, SpinnerIcon } from "../common/icons.jsx";
 export default function DeleteMeetingModal({
   open,
   title,
+  message,
   loading,
   onClose,
   onConfirm,
@@ -36,7 +37,7 @@ export default function DeleteMeetingModal({
           <AlertIcon className="h-8 w-8" />
         </div>
         <h2 id="delete-meeting-title" className="text-lg font-bold text-white">
-          Bạn có chắc muốn xóa file này không?
+          {message || "Bạn có chắc muốn xóa file này không?"}
         </h2>
         <p className="mt-2 break-words text-sm text-slate-400">
           {title || "File cuộc họp"} sẽ bị xóa khỏi kho lưu trữ và không thể

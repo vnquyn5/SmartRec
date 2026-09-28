@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import DashboardLayout from "../../components/layout/DashboardLayout";
 import StatsCards from "../../components/dashboard/StatsCards";
 import MeetingChart from "../../components/dashboard/MeetingChart";
 import RecentMeetings from "../../components/dashboard/RecentMeetings";
@@ -40,7 +39,7 @@ const DashboardPage = () => {
   }, []);
 
   return (
-    <DashboardLayout>
+    <>
       <div className="dashboard-welcome-row">
         <div className="dashboard-welcome">
           <h1>Chào mừng trở lại, {displayName}</h1>
@@ -64,7 +63,7 @@ const DashboardPage = () => {
               strokeLinecap="round"
             />
           </svg>
-          New Upload
+          Tải lên
         </button>
       </div>
 
@@ -89,7 +88,7 @@ const DashboardPage = () => {
           isLoading={isLoading}
         />
       </div>
-    </DashboardLayout>
+    </>
   );
 };
 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from "react";
 
 const getChartData = (meetings) => {
   const dates = Array.from({ length: 7 }, (_, index) => {
@@ -9,18 +9,19 @@ const getChartData = (meetings) => {
   });
 
   return {
-    rawData: dates.map((date) =>
-      meetings.filter((meeting) => {
-        const createdAt = new Date(meeting.createdAt);
-        return (
-          createdAt.getFullYear() === date.getFullYear() &&
-          createdAt.getMonth() === date.getMonth() &&
-          createdAt.getDate() === date.getDate()
-        );
-      }).length,
+    rawData: dates.map(
+      (date) =>
+        meetings.filter((meeting) => {
+          const createdAt = new Date(meeting.createdAt);
+          return (
+            createdAt.getFullYear() === date.getFullYear() &&
+            createdAt.getMonth() === date.getMonth() &&
+            createdAt.getDate() === date.getDate()
+          );
+        }).length,
     ),
     dayLabels: dates.map((date) =>
-      date.toLocaleDateString('en-US', { weekday: 'short' }),
+      date.toLocaleDateString("en-US", { weekday: "short" }),
     ),
   };
 };
@@ -55,7 +56,7 @@ const MeetingChart = ({ meetings = [] }) => {
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
 
     const padLeft = 40;
@@ -72,14 +73,14 @@ const MeetingChart = ({ meetings = [] }) => {
     ctx.clearRect(0, 0, w, h);
 
     // Y axis labels & grid
-    ctx.font = '11px Inter, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
+    ctx.font = "11px Inter, sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
     ySteps.forEach((v) => {
       const y = padTop + chartH - (v / maxVal) * chartH;
-      ctx.fillStyle = '#4b5672';
+      ctx.fillStyle = "#4b5672";
       ctx.fillText(v.toString(), padLeft - 10, y);
-      ctx.strokeStyle = 'rgba(75,86,114,0.2)';
+      ctx.strokeStyle = "rgba(75,86,114,0.2)";
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -90,12 +91,12 @@ const MeetingChart = ({ meetings = [] }) => {
     });
 
     // X axis labels
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
     const xStep = chartW / (dayLabels.length - 1);
     dayLabels.forEach((label, i) => {
       const x = padLeft + i * xStep;
-      ctx.fillStyle = '#4b5672';
+      ctx.fillStyle = "#4b5672";
       ctx.fillText(label, x, padTop + chartH + 10);
     });
 
@@ -118,10 +119,10 @@ const MeetingChart = ({ meetings = [] }) => {
         const p3 = pts[Math.min(pts.length - 1, i + 2)];
         const tension = 0.3;
 
-        const cp1x = p1.x + ((p2.x - p0.x) * tension);
-        const cp1y = p1.y + ((p2.y - p0.y) * tension);
-        const cp2x = p2.x - ((p3.x - p1.x) * tension);
-        const cp2y = p2.y - ((p3.y - p1.y) * tension);
+        const cp1x = p1.x + (p2.x - p0.x) * tension;
+        const cp1y = p1.y + (p2.y - p0.y) * tension;
+        const cp2x = p2.x - (p3.x - p1.x) * tension;
+        const cp2y = p2.y - (p3.y - p1.y) * tension;
 
         ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
       }
@@ -135,38 +136,41 @@ const MeetingChart = ({ meetings = [] }) => {
     ctx.closePath();
 
     const gradient = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
-    gradient.addColorStop(0, 'rgba(62,137,255,0.28)');
-    gradient.addColorStop(0.6, 'rgba(62,137,255,0.06)');
-    gradient.addColorStop(1, 'rgba(62,137,255,0)');
+    gradient.addColorStop(0, "rgba(62,137,255,0.28)");
+    gradient.addColorStop(0.6, "rgba(62,137,255,0.06)");
+    gradient.addColorStop(1, "rgba(62,137,255,0)");
     ctx.fillStyle = gradient;
     ctx.fill();
 
     // Stroke line
     ctx.beginPath();
     drawSmoothCurve(points);
-    ctx.strokeStyle = '#3e89ff';
+    ctx.strokeStyle = "#3e89ff";
     ctx.lineWidth = 2.5;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.stroke();
 
     // Dots
     points.forEach((p) => {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#3e89ff';
+      ctx.fillStyle = "#3e89ff";
       ctx.fill();
-      ctx.strokeStyle = '#101624';
+      ctx.strokeStyle = "#101624";
       ctx.lineWidth = 2;
       ctx.stroke();
     });
   }, [dimensions, meetings]);
 
   return (
-    <div className="chart-card" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div
+      className="chart-card"
+      style={{ height: "100%", display: "flex", flexDirection: "column" }}
+    >
       <div className="chart-header">
-        <h3>Meeting Processing Volume</h3>
-        <span className="chart-filter">Last 7 Days</span>
+        <h3>Xử lý cuộc họp</h3>
+        <span className="chart-filter">7 Ngày gần nhất</span>
       </div>
       <div ref={containerRef} className="chart-canvas-wrap" style={{ flex: 1 }}>
         <canvas ref={canvasRef} />

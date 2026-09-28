@@ -1,6 +1,7 @@
 import React from "react";
 import { Routes, Route } from "react-router-dom";
 
+import DashboardLayout from "../components/layout/DashboardLayout";
 import DashboardPage from "../pages/dashboard/DashboardPage";
 import UploadPage from "../pages/upload/UploadPage";
 import LargeFileUploadPage from "../pages/upload/LargeFileUploadPage";
@@ -14,7 +15,6 @@ import ProfilePage from "../pages/auth/ProfilePage";
 
 import { RequireAuth } from "../features/auth/RequireAuth";
 
-
 const AppRoutes = () => {
   return (
     <Routes>
@@ -25,11 +25,13 @@ const AppRoutes = () => {
 
       {/* Protected routes */}
       <Route element={<RequireAuth />}>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/meeting/:id" element={<MeetingDetailPage />} />
-        <Route path="/upload" element={<UploadPage />} />
-        <Route path="/upload/large" element={<LargeFileUploadPage />} />
-        <Route path="/history" element={<FileManagerPage />} />
+        <Route element={<DashboardLayout />}>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/meeting/:id" element={<MeetingDetailPage />} />
+          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/upload/large" element={<LargeFileUploadPage />} />
+          <Route path="/history" element={<FileManagerPage />} />
+        </Route>
         <Route path="/profile" element={<ProfilePage />} />
       </Route>
     </Routes>

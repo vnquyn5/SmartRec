@@ -1,15 +1,16 @@
-import React from 'react';
-import Sidebar from './Sidebar';
-import TopBar from './TopBar';
+import React from "react";
+import { Outlet } from "react-router-dom";
+import Sidebar from "./Sidebar";
+import TopBar from "./TopBar";
 
-const DashboardLayout = ({ children }) => {
+const DashboardLayout = () => {
   return (
     <div className="dashboard-shell">
       <Sidebar />
       <div className="dashboard-main">
-        <TopBar />
+        <TopBar hideSearch />
         <div className="dashboard-content">
-          {children}
+          <Outlet />
         </div>
       </div>
     </div>

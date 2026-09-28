@@ -4,6 +4,7 @@ import { useAuth } from "../../features/auth/AuthProvider";
 
 const navItems = [
   { to: "/", icon: "dashboard", label: "Tổng quan" },
+  { to: "/upload", icon: "upload", label: "Tải lên cuộc họp" },
   { to: "/history", icon: "history", label: "Danh sách cuộc họp" },
   { to: "/workspace", icon: "workspace", label: "Không gian cuộc họp" },
   { to: "/export", icon: "export", label: "Xuất dữ liệu" },
@@ -50,6 +51,17 @@ const icons = {
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
+      />
+    </svg>
+  ),
+  upload: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M10 13V3m0 0L6 7m4-4 4 4M4 12v4a1 1 0 001 1h10a1 1 0 001-1v-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   ),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../../components/layout/DashboardLayout.jsx";
 import Pagination from "../../components/common/Pagination.jsx";
@@ -20,6 +20,8 @@ import MeetingStatusBadge from "../../components/meeting/MeetingStatusBadge.jsx"
 import { MEETING_STATUS } from "../../types/meeting.js";
 import {
   deleteMeeting,
+  downloadMeeting,
+  downloadMeetings,
   getMeetings,
   renameMeeting as renameMeetingApi,
 } from "../../services/meetingService.js";
@@ -53,6 +55,22 @@ const formatBytes = (value) => {
   if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
   return `${(value / 1024).toFixed(1)} KB`;
 };
+const formatZipTimestamp = () => {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+};
+
+const triggerBlobDownload = (blob, fileName) => {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
 
 export default function FileManagerPage() {
   const [data, setData] = useState(EMPTY_PAGE);
@@ -62,7 +80,10 @@ export default function FileManagerPage() {
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(0);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [actionMessage, setActionMessage] = useState("");
   const [renameMeeting, setRenameMeeting] = useState(null);
@@ -72,6 +93,7 @@ export default function FileManagerPage() {
   const [infoMeeting, setInfoMeeting] = useState(null);
   const [shareMeeting, setShareMeeting] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const selectAllRef = useRef(null);
   const navigate = useNavigate();
 
   const loadMeetings = useCallback(async () => {
@@ -92,6 +114,16 @@ export default function FileManagerPage() {
     const timer = window.setTimeout(loadMeetings, keyword ? 300 : 0);
     return () => window.clearTimeout(timer);
   }, [loadMeetings, keyword]);
+
+  useEffect(() => {
+    const visibleIdSet = new Set(data.content.map((meeting) => meeting.id));
+    setSelectedIds((currentIds) => {
+      const nextIds = new Set(
+        Array.from(currentIds).filter((id) => visibleIdSet.has(id)),
+      );
+      return nextIds.size === currentIds.size ? currentIds : nextIds;
+    });
+  }, [data.content]);
   const handleSearchChange = (event) => {
     setKeyword(event.target.value);
     setPage(0);
@@ -111,8 +143,20 @@ export default function FileManagerPage() {
   };
 
   const visibleIds = data.content.map((meeting) => meeting.id);
+  const selectedMeetings = data.content.filter((meeting) =>
+    selectedIds.has(meeting.id),
+  );
+  const selectedCount = selectedMeetings.length;
+  const someVisibleSelected = selectedCount > 0;
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate =
+        someVisibleSelected && !allVisibleSelected;
+    }
+  }, [allVisibleSelected, someVisibleSelected]);
 
   const toggleAllVisible = () => {
     setSelectedIds((currentIds) => {
@@ -178,19 +222,34 @@ export default function FileManagerPage() {
   };
 
   const handleDownload = (meeting) => {
-    const downloadUrl =
-      meeting.downloadUrl || meeting.fileUrl || meeting.objectUrl;
-    if (!downloadUrl) {
-      setActionMessage("Backend chưa trả về URL tải xuống cho tệp này.");
-      return;
-    }
+    handleDownloadSelected([meeting]);
+  };
 
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = meeting.fileName || meeting.title || "meeting-file";
-    link.target = "_blank";
-    link.rel = "noreferrer";
-    link.click();
+  const handleDownloadSelected = async (meetings = selectedMeetings) => {
+    if (meetings.length === 0 || isDownloading) return;
+    setIsDownloading(true);
+    setActionMessage("");
+    setError("");
+    try {
+      if (meetings.length === 1) {
+        const meeting = meetings[0];
+        const blob = await downloadMeeting(meeting.id);
+        triggerBlobDownload(
+          blob,
+          meeting.fileName || meeting.title || "meeting-file",
+        );
+      } else {
+        const blob = await downloadMeetings(meetings.map((meeting) => meeting.id));
+        triggerBlobDownload(
+          blob,
+          `smartrec-files-${formatZipTimestamp()}.zip`,
+        );
+      }
+    } catch (requestError) {
+      setError(requestError?.message || "Không thể tải xuống file đã chọn.");
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const openShare = (meeting) => {
@@ -209,6 +268,10 @@ export default function FileManagerPage() {
     } catch {
       setActionMessage("Không thể sao chép link. Vui lòng sao chép thủ công.");
     }
+  };
+
+  const openMeetingDetail = (meeting) => {
+    navigate(`/meeting/${meeting.id}`, { state: { meeting } });
   };
 
   const visibleBytes = data.content.reduce(
@@ -237,16 +300,59 @@ export default function FileManagerPage() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedMeetings.length === 0) return;
+    setIsBulkDeleting(true);
+    setError("");
+    try {
+      for (const meeting of selectedMeetings) {
+        await deleteMeeting(meeting.id);
+      }
+      setBulkDeleteOpen(false);
+      setSelectedIds(new Set());
+      if (data.content.length === selectedMeetings.length && page > 0)
+        setPage((currentPage) => currentPage - 1);
+      else await loadMeetings();
+    } catch (requestError) {
+      setError(requestError?.message || "Không thể xóa các file đã chọn.");
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   return (
-    <DashboardLayout>
+    <>
       <div className="mx-auto max-w-[1180px] space-y-5">
-        <header>
-          <h1 className="text-[27px] font-extrabold leading-tight tracking-tight text-white">
-            Danh sách cuộc họp
-          </h1>
-          <p className="mt-1 text-[13px] text-slate-500">
-            Xem danh sách các file cuộc họp đã tải lên trong không gian cá nhân
-          </p>
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-[27px] font-extrabold leading-tight tracking-tight text-white">
+              Danh sách cuộc họp
+            </h1>
+            <p className="mt-1 text-[13px] text-slate-500">
+              Xem danh sách các file cuộc họp đã tải lên trong không gian cá
+              nhân
+            </p>
+          </div>
+          <button
+            className="sr-button sr-button-primary new-upload-btn"
+            onClick={() => navigate("/upload")}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              style={{ marginRight: 8 }}
+            >
+              <path
+                d="M8 2v12M2 8h12"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+            Tải lên
+          </button>
         </header>
         <section className="grid gap-3 md:grid-cols-3">
           <div className="flex min-h-[104px] items-center gap-4 rounded-xl border border-white/5 bg-[#101624] px-4 py-3.5">
@@ -316,13 +422,45 @@ export default function FileManagerPage() {
               />
             </div>
             <div className="flex items-center gap-2">
+              {selectedCount > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setBulkDeleteOpen(true)}
+                    disabled={isBulkDeleting}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/25 bg-red-500/10 px-2.5 py-2 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <TrashIcon />
+                    Xoá ({selectedCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadSelected()}
+                    disabled={isDownloading}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-[#171d31] px-2.5 py-2 text-[11px] font-semibold text-slate-300 transition hover:border-blue-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <DownloadIcon />
+                    {isDownloading ? "Đang tải..." : `Tải xuống (${selectedCount})`}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => navigate("/upload")}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-[11px] font-semibold text-blue-400 transition hover:bg-blue-500/20 hover:text-white"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
                 </svg>
                 Tải lên file
               </button>
@@ -389,6 +527,7 @@ export default function FileManagerPage() {
                 <tr>
                   <th className="w-10 px-4 py-3">
                     <input
+                      ref={selectAllRef}
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={toggleAllVisible}
@@ -417,12 +556,14 @@ export default function FileManagerPage() {
                   : data.content.map((meeting) => (
                       <tr
                         key={meeting.id}
-                        className="transition hover:bg-blue-500/[0.03]"
+                        onClick={() => openMeetingDetail(meeting)}
+                        className="cursor-pointer transition hover:bg-blue-500/[0.03]"
                       >
                         <td className="px-4 py-3">
                           <input
                             type="checkbox"
                             checked={selectedIds.has(meeting.id)}
+                            onClick={(event) => event.stopPropagation()}
                             onChange={() => toggleMeeting(meeting.id)}
                             aria-label={`Chọn ${meeting.fileName || meeting.title || "file"}`}
                             className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 accent-blue-500"
@@ -461,7 +602,10 @@ export default function FileManagerPage() {
                             <button
                               type="button"
                               title="Xem"
-                              onClick={() => setInfoMeeting(meeting)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openMeetingDetail(meeting);
+                              }}
                               className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
                             >
                               <EyeIcon />
@@ -469,7 +613,10 @@ export default function FileManagerPage() {
                             <button
                               type="button"
                               title="Tải xuống"
-                              onClick={() => handleDownload(meeting)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDownload(meeting);
+                              }}
                               className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
                             >
                               <DownloadIcon />
@@ -477,7 +624,10 @@ export default function FileManagerPage() {
                             <button
                               type="button"
                               title="Chia sẻ"
-                              onClick={() => openShare(meeting)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openShare(meeting);
+                              }}
                               className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
                             >
                               <ShareIcon />
@@ -485,7 +635,10 @@ export default function FileManagerPage() {
                             <button
                               type="button"
                               title="Xóa file"
-                              onClick={() => setSelectedMeeting(meeting)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedMeeting(meeting);
+                              }}
                               className="rounded p-1.5 text-slate-600 transition hover:bg-red-500/10 hover:text-red-300"
                             >
                               <TrashIcon />
@@ -493,7 +646,10 @@ export default function FileManagerPage() {
                             <button
                               type="button"
                               title="Đổi tên tệp"
-                              onClick={() => openRename(meeting)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openRename(meeting);
+                              }}
                               className="rounded p-1.5 text-slate-600 transition hover:bg-blue-500/10 hover:text-blue-300"
                             >
                               <PencilIcon />
@@ -501,11 +657,12 @@ export default function FileManagerPage() {
                             <button
                               type="button"
                               title="Đưa vào Workspace"
-                              onClick={() =>
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 setActionMessage(
                                   `Đã chọn “${meeting.fileName || meeting.title || "tệp"}” để đưa vào quy trình Workspace.`,
-                                )
-                              }
+                                );
+                              }}
                               className="rounded p-1.5 text-slate-600 transition hover:bg-emerald-500/10 hover:text-emerald-300"
                             >
                               <PlayIcon />
@@ -542,6 +699,14 @@ export default function FileManagerPage() {
         loading={isDeleting}
         onClose={() => setSelectedMeeting(null)}
         onConfirm={handleDelete}
+      />
+      <DeleteMeetingModal
+        open={bulkDeleteOpen}
+        title={`${selectedCount} file đã chọn`}
+        message={`Bạn có chắc muốn xoá ${selectedCount} file đã chọn?`}
+        loading={isBulkDeleting}
+        onClose={() => setBulkDeleteOpen(false)}
+        onConfirm={handleBulkDelete}
       />
       {infoMeeting && (
         <div
@@ -767,8 +932,6 @@ export default function FileManagerPage() {
           </div>
         </div>
       )}
-
-
-    </DashboardLayout>
+    </>
   );
 }

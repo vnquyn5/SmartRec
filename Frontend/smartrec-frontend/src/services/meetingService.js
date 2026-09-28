@@ -61,6 +61,20 @@ export async function deleteMeeting(id) {
   return httpClient.delete(`/meetings/${id}`);
 }
 
+export async function downloadMeeting(id) {
+  return httpClient.get(`/meetings/${id}/download`, {
+    responseType: "blob",
+    timeout: 0,
+  });
+}
+
+export async function downloadMeetings(ids) {
+  return httpClient.post("/meetings/download", ids, {
+    responseType: "blob",
+    timeout: 0,
+  });
+}
+
 export async function renameMeeting(id, fileName) {
   return httpClient.patch(`/meetings/${id}/name`, { fileName });
 }

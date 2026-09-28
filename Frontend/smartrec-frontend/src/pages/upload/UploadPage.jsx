@@ -1,7 +1,10 @@
 import React, { useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import TopBar from "../../components/layout/TopBar";
 import { uploadSingleFile } from "../../features/files/useSingleUpload";
+import {
+  largeUploadStore,
+  useLargeUploadStore,
+} from "../../hooks/useLargeUploadStore";
 
 // Helper format bytes
 const formatBytes = (bytes) => {
@@ -26,6 +29,7 @@ const isValidExtension = (fileName) => {
 const UploadPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const largeUploadState = useLargeUploadStore();
 
   // Queue: mảng các file item
   const [queue, setQueue] = useState([]);
@@ -58,7 +62,12 @@ const UploadPage = () => {
         ),
       );
 
-      updateItem(id, { phase: "uploading", strategy: "single", error: null, speedBps: 0 });
+      updateItem(id, {
+        phase: "uploading",
+        strategy: "single",
+        error: null,
+        speedBps: 0,
+      });
       speedTrackerRef.current[id] = { lastLoaded: 0, lastTime: Date.now() };
 
       try {
@@ -69,11 +78,16 @@ const UploadPage = () => {
           (event) => {
             if (event.total) {
               const now = Date.now();
-              const tracker = speedTrackerRef.current[id] || { lastLoaded: 0, lastTime: now };
+              const tracker = speedTrackerRef.current[id] || {
+                lastLoaded: 0,
+                lastTime: now,
+              };
               const timeDiff = (now - tracker.lastTime) / 1000;
-              
-              const updates = { progress: Math.round((event.loaded / event.total) * 100) };
-              
+
+              const updates = {
+                progress: Math.round((event.loaded / event.total) * 100),
+              };
+
               if (timeDiff >= 0.5) {
                 const bytesDiff = event.loaded - tracker.lastLoaded;
                 if (bytesDiff > 0) {
@@ -83,7 +97,7 @@ const UploadPage = () => {
                 tracker.lastLoaded = event.loaded;
                 speedTrackerRef.current[id] = tracker;
               }
-              
+
               updateItem(id, updates);
             }
           },
@@ -91,7 +105,14 @@ const UploadPage = () => {
         updateItem(id, { phase: "success", progress: 100, uploadResponse });
       } catch (err) {
         if (err.kind === "canceled" || err.message === "canceled") {
-          updateItem(id, { phase: "idle", progress: 0 });
+          setQueue((prev) =>
+            prev.map((item) => {
+              if (item.id !== id) return item;
+              if (item.phase === "paused" || item.phase === "canceled")
+                return item;
+              return { ...item, phase: "idle", progress: 0 };
+            }),
+          );
         } else {
           updateItem(id, {
             phase: "error",
@@ -123,8 +144,8 @@ const UploadPage = () => {
         validFiles.push(file);
       }
 
-      const activeCount = queue.filter(
-        (item) => item.phase !== "success",
+      const activeCount = queue.filter((item) =>
+        ["idle", "uploading", "paused"].includes(item.phase),
       ).length;
       const availableSlots = MAX_FILES - activeCount;
 
@@ -137,12 +158,7 @@ const UploadPage = () => {
 
       if (validFiles.length === 0) return;
 
-      if (validFiles.length > availableSlots) {
-        alert(
-          `Chỉ còn ${availableSlots} slot upload. Chỉ thêm ${availableSlots} file hợp lệ đầu tiên.`,
-        );
-        validFiles.splice(availableSlots);
-      }
+      if (validFiles.length > availableSlots) validFiles.splice(availableSlots);
 
       const newItems = validFiles.map((file) => ({
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -202,6 +218,69 @@ const UploadPage = () => {
       return newQueue;
     });
   }, []);
+
+  const handlePauseFile = useCallback(
+    (id, strategy = "single") => {
+      if (strategy === "chunk") {
+        largeUploadStore.selectItem(id);
+        largeUploadStore.pause();
+        return;
+      }
+
+      const item = queue.find((queueItem) => queueItem.id === id);
+      if (!item || item.phase !== "uploading") return;
+      item.abortController?.abort();
+      updateItem(id, {
+        phase: "paused",
+        speedBps: 0,
+        abortController: null,
+      });
+    },
+    [queue, updateItem],
+  );
+
+  const handleCancelFile = useCallback(
+    (id, strategy = "single") => {
+      if (strategy === "chunk") {
+        largeUploadStore.selectItem(id);
+        largeUploadStore.cancel();
+        return;
+      }
+
+      const item = queue.find((queueItem) => queueItem.id === id);
+      if (!item || item.phase === "success") return;
+      item.abortController?.abort();
+      updateItem(id, {
+        phase: "canceled",
+        progress: 0,
+        speedBps: 0,
+        error: "Upload đã huỷ.",
+        abortController: null,
+      });
+    },
+    [queue, updateItem],
+  );
+
+  const handleRetryFile = useCallback(
+    (item) => {
+      if (item.strategy === "chunk") {
+        largeUploadStore.selectItem(item.id);
+        largeUploadStore.start(item.id);
+        navigate("/upload/large");
+        return;
+      }
+
+      updateItem(item.id, {
+        phase: "idle",
+        progress: 0,
+        error: null,
+        speedBps: 0,
+        abortController: null,
+      });
+      startUpload({ ...item, progress: 0, error: null });
+    },
+    [navigate, startUpload, updateItem],
+  );
 
   // The upload API already persists the file; saving here confirms it locally.
   const persistFile = useCallback(async (item) => {
@@ -275,23 +354,33 @@ const UploadPage = () => {
     }
   }, [persistFile, queue, updateItem]);
 
-  const activeCount = queue.filter((item) => item.phase !== "success").length;
+  const activeCount = queue.filter((item) =>
+    ["idle", "uploading", "paused"].includes(item.phase),
+  ).length;
   const completedCount = queue.filter(
     (item) => item.phase === "success",
   ).length;
   const canAddMore = activeCount < MAX_FILES;
+  const largeQueueItems = largeUploadState.items.map((item) => ({
+    id: item.id,
+    file: item.file,
+    phase: item.phase,
+    progress: item.progress,
+    strategy: "chunk",
+    chunkInfo: {
+      current: item.uploadedChunks,
+      total: item.chunks.length,
+    },
+    error: item.error,
+    saved: false,
+    uploadResponse: null,
+    abortController: null,
+    speedBps: item.speedBps,
+  }));
+  const displayQueue = [...queue, ...largeQueueItems];
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        minHeight: "100vh",
-        background: "var(--sr-bg)",
-      }}
-    >
-      <TopBar hideSearch={true} />
-
+    <>
       <div
         style={{
           flex: 1,
@@ -498,7 +587,7 @@ const UploadPage = () => {
             </span>
           </div>
 
-          {queue.length > 0 && (
+          {displayQueue.length > 0 && (
             <div
               style={{
                 display: "flex",
@@ -536,7 +625,7 @@ const UploadPage = () => {
           )}
 
           {/* File Queue */}
-          {queue.length > 0 && (
+          {displayQueue.length > 0 && (
             <div
               style={{
                 display: "flex",
@@ -545,17 +634,23 @@ const UploadPage = () => {
                 marginBottom: "24px",
               }}
             >
-              {queue.map((item) => {
+              {displayQueue.map((item) => {
                 const isDone = item.phase === "success";
                 const isError = item.phase === "error";
+                const isCanceled = item.phase === "canceled";
+                const isPaused = item.phase === "paused";
+                const isReadyToMerge = item.phase === "ready_to_merge";
+                const isMerging = item.phase === "merging";
                 const isItemUploading = item.phase === "uploading";
-                const progressColor = item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
+                const progressColor =
+                  item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
 
                 const speedBps = item.speedBps || 0;
                 const uploadedBytes = item.file.size * (item.progress / 100);
                 const remainingBytes = item.file.size - uploadedBytes;
-                const remainingSeconds = speedBps > 0 ? remainingBytes / speedBps : 0;
-                
+                const remainingSeconds =
+                  speedBps > 0 ? remainingBytes / speedBps : 0;
+
                 const formatTime = (seconds) => {
                   if (!seconds || !isFinite(seconds)) return "00:00";
                   const m = Math.floor(seconds / 60);
@@ -571,14 +666,23 @@ const UploadPage = () => {
                 } else if (isItemUploading) {
                   statusText = "Đang tải lên";
                   statusColor = "#3e89ff";
+                } else if (isPaused) {
+                  statusText = "Tạm dừng";
+                  statusColor = "#f59e0b";
+                } else if (isMerging) {
+                  statusText = "Đang lưu";
+                  statusColor = "#f59e0b";
+                } else if (isReadyToMerge) {
+                  statusText = "Sẵn sàng lưu";
+                  statusColor = "#22c55e";
                 } else if (isDone && !item.saved) {
                   statusText = "Hoàn thành";
                   statusColor = "#22c55e";
                 } else if (isDone && item.saved) {
                   statusText = "Đã lưu";
                   statusColor = "#22c55e";
-                } else if (isError) {
-                  statusText = "Lỗi";
+                } else if (isError || isCanceled) {
+                  statusText = isCanceled ? "Upload đã huỷ" : "Lỗi";
                   statusColor = "#ff5c5c";
                 }
 
@@ -641,7 +745,7 @@ const UploadPage = () => {
                             style={{
                               fontSize: "14px",
                               fontWeight: "700",
-                              color: "#fff",
+                              color: isCanceled ? "#ff5c5c" : "#fff",
                               marginBottom: "4px",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -692,7 +796,14 @@ const UploadPage = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => handleRemoveFile(item.id)}
+                        onClick={() => {
+                          if (item.strategy === "chunk") {
+                            largeUploadStore.selectItem(item.id);
+                            largeUploadStore.cancel();
+                            return;
+                          }
+                          handleRemoveFile(item.id);
+                        }}
                         style={{
                           background: "transparent",
                           border: "none",
@@ -719,7 +830,7 @@ const UploadPage = () => {
                     </div>
 
                     {/* Progress bar + Save button */}
-                    {isError ? (
+                    {isError || isCanceled ? (
                       <>
                         <div
                           style={{
@@ -741,6 +852,30 @@ const UploadPage = () => {
                         </div>
                         <div style={{ fontSize: "11px", color: "#ff5c5c" }}>
                           <span>{item.error || "Xử lý tải lên thất bại"}</span>
+                        </div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "flex-end",
+                            marginTop: "10px",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleRetryFile(item)}
+                            style={{
+                              background: "rgba(62, 137, 255, 0.15)",
+                              border: "1px solid rgba(62, 137, 255, 0.3)",
+                              color: "#3e89ff",
+                              padding: "6px 14px",
+                              borderRadius: "6px",
+                              fontSize: "12px",
+                              fontWeight: "700",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Thử lại
+                          </button>
                         </div>
                       </>
                     ) : (
@@ -765,25 +900,39 @@ const UploadPage = () => {
                               style={{
                                 width: `${item.progress}%`,
                                 height: "100%",
-                                background: isDone ? "#22c55e" : progressColor,
+                                background:
+                                  isDone || isReadyToMerge
+                                    ? "#22c55e"
+                                    : progressColor,
                                 transition: "width 0.15s linear",
                               }}
                             ></div>
                           </div>
-                          {/* Nút Lưu - chỉ hiện khi done và chưa lưu */}
-                          {isDone && (
+                          {/* Nút Lưu */}
+                          {((item.strategy === "chunk" &&
+                            (isReadyToMerge || isMerging)) ||
+                            (item.strategy !== "chunk" && isDone)) && (
                             <button
                               type="button"
-                              onClick={() => handleSaveFile(item.id)}
-                              disabled={isSavingAll || savingIds.has(item.id)}
+                              onClick={() => {
+                                if (item.strategy === "chunk") {
+                                  largeUploadStore.selectItem(item.id);
+                                  largeUploadStore.merge(item.id);
+                                  return;
+                                }
+                                handleSaveFile(item.id);
+                              }}
+                              disabled={
+                                isMerging || isSavingAll || savingIds.has(item.id)
+                              }
                               style={{
                                 background:
-                                  isSavingAll || savingIds.has(item.id)
+                                  isMerging || isSavingAll || savingIds.has(item.id)
                                     ? "rgba(255,255,255,0.08)"
                                     : "linear-gradient(135deg, #22c55e, #16a34a)",
                                 border: "none",
                                 color:
-                                  isSavingAll || savingIds.has(item.id)
+                                  isMerging || isSavingAll || savingIds.has(item.id)
                                     ? "#576176"
                                     : "#fff",
                                 padding: "6px 16px",
@@ -791,14 +940,68 @@ const UploadPage = () => {
                                 fontSize: "12px",
                                 fontWeight: "700",
                                 cursor:
-                                  isSavingAll || savingIds.has(item.id)
+                                  isMerging || isSavingAll || savingIds.has(item.id)
                                     ? "not-allowed"
                                     : "pointer",
                                 flexShrink: 0,
                               }}
                             >
-                              {savingIds.has(item.id) ? "Đang lưu..." : "Lưu"}
+                              {isMerging || savingIds.has(item.id)
+                                ? "Đang lưu..."
+                                : "Lưu"}
                             </button>
+                          )}
+                          {(isItemUploading || isPaused) && (
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "6px",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  isPaused
+                                    ? handleRetryFile(item)
+                                    : handlePauseFile(item.id, item.strategy)
+                                }
+                                style={{
+                                  background: isPaused
+                                    ? "rgba(34, 197, 94, 0.15)"
+                                    : "rgba(245, 158, 11, 0.15)",
+                                  border: isPaused
+                                    ? "1px solid rgba(34, 197, 94, 0.3)"
+                                    : "1px solid rgba(245, 158, 11, 0.3)",
+                                  color: isPaused ? "#22c55e" : "#f59e0b",
+                                  padding: "6px 12px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  fontWeight: "700",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {isPaused ? "Tiếp tục" : "Tạm dừng"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleCancelFile(item.id, item.strategy)
+                                }
+                                style={{
+                                  background: "rgba(255, 92, 92, 0.15)",
+                                  border: "1px solid rgba(255, 92, 92, 0.3)",
+                                  color: "#ff5c5c",
+                                  padding: "6px 12px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  fontWeight: "700",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Huỷ bỏ
+                              </button>
+                            </div>
                           )}
                         </div>
                         {item.saveError && (
@@ -815,23 +1018,42 @@ const UploadPage = () => {
                             marginTop: "8px",
                           }}
                         >
-                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "2px",
+                            }}
+                          >
                             <span>
                               {item.progress}% hoàn thành
                               {item.chunkInfo && (
-                                <span style={{ marginLeft: "8px", color: "#f59e0b" }}>
-                                  (Chunk {item.chunkInfo.current}/{item.chunkInfo.total})
+                                <span
+                                  style={{
+                                    marginLeft: "8px",
+                                    color: "#f59e0b",
+                                  }}
+                                >
+                                  (Chunk {item.chunkInfo.current}/
+                                  {item.chunkInfo.total})
                                 </span>
                               )}
                             </span>
                             {isItemUploading && (
-                              <span style={{ color: "#8d96aa", fontSize: "10px" }}>
-                                Speed: {speedBps > 0 ? `${formatBytes(speedBps)}/s` : "0 MB/s"} • Remaining: ~{formatTime(remainingSeconds)}
+                              <span
+                                style={{ color: "#8d96aa", fontSize: "10px" }}
+                              >
+                                Speed:{" "}
+                                {speedBps > 0
+                                  ? `${formatBytes(speedBps)}/s`
+                                  : "0 MB/s"}{" "}
+                                • Remaining: ~{formatTime(remainingSeconds)}
                               </span>
                             )}
                           </div>
                           <span>
-                            {formatBytes(uploadedBytes)} / {formatBytes(item.file.size)}
+                            {formatBytes(uploadedBytes)} /{" "}
+                            {formatBytes(item.file.size)}
                           </span>
                         </div>
                       </>
@@ -843,7 +1065,9 @@ const UploadPage = () => {
           )}
 
           {/* Action buttons */}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+          <div
+            style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}
+          >
             <button
               className="sr-button sr-button-secondary"
               style={{
@@ -854,7 +1078,7 @@ const UploadPage = () => {
                 fontSize: "13px",
               }}
               onClick={() => {
-                queue.forEach((item) => {
+                displayQueue.forEach((item) => {
                   if (item.abortController) item.abortController.abort();
                 });
                 navigate("/");
@@ -886,14 +1110,31 @@ const UploadPage = () => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl">
             <div className="flex items-center justify-center w-12 h-12 rounded-full bg-amber-500/10 text-amber-500 mb-4 mx-auto">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
               </svg>
             </div>
-            <h3 className="text-lg font-bold text-white text-center mb-2">File dung lượng lớn</h3>
+            <h3 className="text-lg font-bold text-white text-center mb-2">
+              File dung lượng lớn
+            </h3>
             <p className="text-sm text-slate-400 text-center mb-6">
-              File <strong className="text-slate-200">{confirmLargeFile.name}</strong> có dung lượng lớn hơn 2GB ({formatBytes(confirmLargeFile.size)}). 
-              Hệ thống sẽ chuyển sang trang Upload chuyên biệt (Chunked Upload) để đảm bảo tốc độ và độ ổn định.
+              File{" "}
+              <strong className="text-slate-200">
+                {confirmLargeFile.name}
+              </strong>{" "}
+              có dung lượng lớn hơn 2GB ({formatBytes(confirmLargeFile.size)}).
+              Hệ thống sẽ chuyển sang trang Upload chuyên biệt (Chunked Upload)
+              để đảm bảo tốc độ và độ ổn định.
             </p>
             <div className="flex justify-center gap-3">
               <button
@@ -918,7 +1159,7 @@ const UploadPage = () => {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 
