@@ -204,3 +204,66 @@ class FFmpegWrapper:
             "processing_time_seconds": round(elapsed_time, 3)
         }
         
+    def slice_audio(
+        self,
+        input_path: str,
+        output_path: str,
+        start_seconds: float,
+        duration_seconds: float
+    ) -> Dict[str, Any]:
+        """
+        Cắt một phân đoạn âm thanh từ input_path từ start_seconds với độ dài duration_seconds.
+        Giữ nguyên chuẩn 16kHz Mono PCM 16-bit.
+        """
+        if not os.path.isfile(input_path):
+            raise FileNotFoundError(f"File nguồn không tồn tại: {input_path}")
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+        # Lệnh FFmpeg cắt chính xác:
+        # -ss đặt trước -i để tìm kiếm nhanh (fast seek)
+        # -t chỉ định thời lượng cần cắt
+        cmd = [
+            self.ffmpeg_bin,
+            "-y",
+            "-ss", str(start_seconds),
+            "-t", str(duration_seconds),
+            "-i", input_path,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            output_path
+        ]
+
+        start_time = time.time()
+        process = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False
+        )
+        elapsed_time = time.time() - start_time
+
+        if process.returncode != 0:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise FFmpegExecutionError(cmd, process.returncode, process.stderr, process.stdout)
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise AudioValidationError(f"File chunk cắt ra bị rỗng hoặc không tồn tại: {output_path}")
+
+        chunk_info = self.inspect_audio_stream(output_path)
+        actual_duration = chunk_info["duration_seconds"] if chunk_info else duration_seconds
+
+        return {
+            "output_file": output_path,
+            "duration_seconds": round(actual_duration, 3),
+            "file_size_bytes": os.path.getsize(output_path),
+            "processing_time_seconds": round(elapsed_time, 3)
+        }
