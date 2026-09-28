@@ -1,6 +1,13 @@
 package com.example.smartrec.service.impl;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -27,6 +34,7 @@ import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.MeetingService;
+import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MinioService;
 
 import lombok.AllArgsConstructor;
@@ -76,14 +84,8 @@ public class MeetingServiceImpl implements MeetingService {
     @Transactional
     public void deleteMeeting(UUID meetingId) {
         User currentUser = getCurrentUser();
-        Meeting meeting = meetingRepository.findById(meetingId)
-                .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
-
-        MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id())
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "MEDIA_FILE_NOT_FOUND", "Không tìm thấy file của cuộc họp"));
+        Meeting meeting = getMeetingForUser(meetingId, currentUser);
+        MediaFile mediaFile = getMediaFile(meeting);
 
         try {
             minioService.delete(mediaFile.getObject_key());
@@ -95,14 +97,61 @@ public class MeetingServiceImpl implements MeetingService {
         mediaFileRepository.delete(mediaFile);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public MeetingDownloadFile getDownloadFile(UUID meetingId) {
+        User currentUser = getCurrentUser();
+        Meeting meeting = getMeetingForUser(meetingId, currentUser);
+        MediaFile mediaFile = getMediaFile(meeting);
+
+        try {
+            InputStream inputStream = minioService.getObject(mediaFile.getObject_key());
+            return new MeetingDownloadFile(
+                    mediaFile.getOriginal_name(),
+                    mediaFile.getMime_type(),
+                    mediaFile.getFile_size_bytes(),
+                    inputStream);
+        } catch (Exception ex) {
+            throw new MinioOperationException("Không thể tải file từ MinIO", ex);
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public void writeMeetingsZip(List<UUID> meetingIds, OutputStream outputStream) {
+        if (meetingIds == null || meetingIds.isEmpty()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "EMPTY_DOWNLOAD_SELECTION",
+                    "Vui lòng chọn ít nhất một file để tải xuống");
+        }
+
+        User currentUser = getCurrentUser();
+        try (ZipOutputStream zipOutputStream = new ZipOutputStream(outputStream)) {
+            Set<String> usedEntryNames = new HashSet<>();
+            for (UUID meetingId : meetingIds) {
+                Meeting meeting = getMeetingForUser(meetingId, currentUser);
+                MediaFile mediaFile = getMediaFile(meeting);
+                String entryName = buildUniqueZipEntryName(usedEntryNames, mediaFile.getOriginal_name());
+
+                ZipEntry entry = new ZipEntry(entryName);
+                zipOutputStream.putNextEntry(entry);
+                try (InputStream inputStream = minioService.getObject(mediaFile.getObject_key())) {
+                    inputStream.transferTo(zipOutputStream);
+                }
+                zipOutputStream.closeEntry();
+            }
+            zipOutputStream.finish();
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new MinioOperationException("Không thể tạo file ZIP tải xuống", ex);
+        }
+    }
+
         @Override
         @Transactional
         public MeetingResponseDTO renameMeeting(UUID meetingId, RenameFileRequest request) {
         User currentUser = getCurrentUser();
-        Meeting meeting = meetingRepository.findById(meetingId)
-            .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
-            .orElseThrow(() -> new ResourceNotFoundException(
-                "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
+        Meeting meeting = getMeetingForUser(meetingId, currentUser);
 
         String fileName = request == null || request.getFileName() == null
             ? ""
@@ -116,13 +165,42 @@ public class MeetingServiceImpl implements MeetingService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILENAME", "Tên file không hợp lệ");
         }
 
-        MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id())
-            .orElseThrow(() -> new ResourceNotFoundException(
-                "MEDIA_FILE_NOT_FOUND", "Không tìm thấy file của cuộc họp"));
+        MediaFile mediaFile = getMediaFile(meeting);
         mediaFile.setOriginal_name(fileName);
         mediaFileRepository.save(mediaFile);
         return toResponse(meeting);
         }
+
+    private Meeting getMeetingForUser(UUID meetingId, User currentUser) {
+        return meetingRepository.findById(meetingId)
+                .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
+    }
+
+    private MediaFile getMediaFile(Meeting meeting) {
+        return mediaFileRepository.findById(meeting.getMedia_file_id())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "MEDIA_FILE_NOT_FOUND", "Không tìm thấy file của cuộc họp"));
+    }
+
+    private String buildUniqueZipEntryName(Set<String> usedEntryNames, String originalName) {
+        String safeName = originalName == null || originalName.isBlank() ? "meeting-file" : originalName;
+        if (usedEntryNames.add(safeName)) {
+            return safeName;
+        }
+
+        int dotIndex = safeName.lastIndexOf('.');
+        String baseName = dotIndex > 0 ? safeName.substring(0, dotIndex) : safeName;
+        String extension = dotIndex > 0 ? safeName.substring(dotIndex) : "";
+        int copyIndex = 2;
+        String candidate;
+        do {
+            candidate = baseName + " (" + copyIndex + ")" + extension;
+            copyIndex++;
+        } while (!usedEntryNames.add(candidate));
+        return candidate;
+    }
 
     private MeetingResponseDTO toResponse(Meeting meeting) {
         MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id()).orElse(null);

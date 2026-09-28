@@ -48,7 +48,3 @@ env/
 node_modules/
 dist/
 build/
-
-# Nested clones
-SmartRec/
-.npm

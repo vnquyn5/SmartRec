@@ -2,11 +2,18 @@ package com.example.smartrec.service.impl;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import javax.sql.DataSource;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -15,6 +22,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.enums.UploadSessionStatus;
 
+import com.example.smartrec.entity.MediaFile;
+import com.example.smartrec.entity.Meeting;
+import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.UploadSession;
@@ -24,21 +34,28 @@ import com.example.smartrec.model.dto.MergeUploadReponse;
 import com.example.smartrec.model.dto.MergeUploadRequest;
 import com.example.smartrec.model.dto.UploadInitRequest;
 import com.example.smartrec.model.dto.UploadInitResponse;
+import com.example.smartrec.repository.MediaFileRepository;
+import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.UserRepository;
+import com.example.smartrec.repository.UploadSessionRepository;
 import com.example.smartrec.service.MinioService;
 import com.example.smartrec.service.UploadService;
 import com.example.smartrec.service.UploadSessionRedisService;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
 public class UploadServiceImpl implements UploadService {
+        private static final Logger log = LoggerFactory.getLogger(UploadServiceImpl.class);
+
         private final UserRepository userRepository;
+        private final UploadSessionRepository uploadSessionRepository;
+        private final MediaFileRepository mediaFileRepository;
+        private final MeetingRepository meetingRepository;
         private final UploadSessionRedisService uploadSessionRedisService;
         private final MinioService minioService;
+        private final DataSource dataSource;
 
         // chunk =5 MB
         private static final long CHUNK_SIZE = 5l * 1024 * 1024;
@@ -101,8 +118,35 @@ public class UploadServiceImpl implements UploadService {
                                 .status(UploadSessionStatus.INITIATED)
                                 .build();
 
+                com.example.smartrec.entity.UploadSession persistentSession =
+                                com.example.smartrec.entity.UploadSession.builder()
+                                                .id(uploadSessionId)
+                                                .userId(user.getId())
+                                                .totalChunks(totalChunks)
+                                                .receivedChunks(0)
+                                                .status(UploadSessionStatus.INITIATED)
+                                                .build();
+                try {
+                        logDatasource();
+                        log.info("Saving upload session to PostgreSQL: {}", uploadSessionId);
+                        uploadSessionRepository.saveAndFlush(persistentSession);
+                        log.info("Upload session saved to PostgreSQL: {}", uploadSessionId);
+                } catch (Exception e) {
+                        log.error("Failed to save upload session to PostgreSQL: {}", uploadSessionId, e);
+                        throw new BusinessException(
+                                        HttpStatus.INTERNAL_SERVER_ERROR,
+                                        "UPLOAD_SESSION_DB_SAVE_FAILED",
+                                        "Không thể lưu upload session vào PostgreSQL");
+                }
+
                 // luu upload session vao redis
-                uploadSessionRedisService.save(session);
+                try {
+                        uploadSessionRedisService.save(session);
+                } catch (Exception e) {
+                        log.error("Failed to save upload session to Redis after PostgreSQL save: {}", uploadSessionId,
+                                        e);
+                        throw e;
+                }
                 return UploadInitResponse.builder()
                                 .uploadSessionId(uploadSessionId.toString())
                                 .chunkSize(CHUNK_SIZE)
@@ -110,6 +154,17 @@ public class UploadServiceImpl implements UploadService {
                                 .status(UploadSessionStatus.INITIATED.name())
                                 .build();
 
+        }
+
+        private void logDatasource() {
+                try (Connection connection = dataSource.getConnection()) {
+                        DatabaseMetaData metaData = connection.getMetaData();
+                        log.info("UploadSession PostgreSQL datasource: url={}, user={}",
+                                        metaData.getURL(),
+                                        metaData.getUserName());
+                } catch (Exception e) {
+                        log.warn("Could not read datasource metadata for upload session save", e);
+                }
         }
 
         private User getCurrentUser() {
@@ -150,6 +205,78 @@ public class UploadServiceImpl implements UploadService {
                                 .toLowerCase();
         }
 
+        private String sanitizeFileName(String fileName) {
+                return fileName
+                                .replace("\\", "_")
+                                .replace("/", "_")
+                                .replace("..", "_")
+                                .replaceAll("[^a-zA-Z0-9._-]", "_");
+        }
+
+        private String sanitizeAccountName(String accountName) {
+                if (accountName == null || accountName.isBlank()) {
+                        return "unknown_user";
+                }
+                return accountName.trim().replaceAll("[\\\\/:*?\"<>|]", "");
+        }
+
+        private String buildUserObjectKey(User user, String fileName) {
+                String accountName = sanitizeAccountName(user.getFull_name());
+                LocalDate now = LocalDate.now();
+                return accountName
+                                + "/"
+                                + String.format("%02d", now.getMonthValue())
+                                + "-"
+                                + now.getYear()
+                                + "/"
+                                + sanitizeFileName(fileName);
+        }
+
+        private String detectMimeType(String fileName) {
+                String extension = getExtension(fileName);
+                return switch (extension) {
+                        case "mp3" -> "audio/mpeg";
+                        case "m4a" -> "audio/mp4";
+                        case "mp4" -> "video/mp4";
+                        case "mkv" -> "video/x-matroska";
+                        default -> "application/octet-stream";
+                };
+        }
+
+        private UUID parseUploadSessionId(String sessionIdString) {
+                if (sessionIdString == null || sessionIdString.isBlank()) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_UPLOAD_SESSION_ID",
+                                        "Upload session ID không được để trống");
+                }
+                try {
+                        return UUID.fromString(sessionIdString);
+                } catch (IllegalArgumentException e) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_UPLOAD_SESSION_ID",
+                                        "Upload session ID không hợp lệ");
+                }
+        }
+
+        private com.example.smartrec.entity.UploadSession getPersistentSessionForCurrentUser(UUID uploadSessionId) {
+                User user = getCurrentUser();
+                return uploadSessionRepository.findByIdAndUserId(uploadSessionId, user.getId())
+                                .orElseThrow(() -> new BusinessException(
+                                                HttpStatus.NOT_FOUND,
+                                                "UPLOAD_SESSION_NOT_FOUND",
+                                                "Không tìm thấy upload session trong PostgreSQL"));
+        }
+
+        private void updatePersistentStatus(String sessionIdString, UploadSessionStatus status) {
+                UUID uploadSessionId = parseUploadSessionId(sessionIdString);
+                com.example.smartrec.entity.UploadSession persistentSession =
+                                getPersistentSessionForCurrentUser(uploadSessionId);
+                persistentSession.setStatus(status);
+                uploadSessionRepository.save(persistentSession);
+        }
+
         @Override
         public ChunkUploadResponse uploadChunk(ChunkUploadRequest request) {
                 if (request == null) {
@@ -175,6 +302,12 @@ public class UploadServiceImpl implements UploadService {
                 }
                 User crusUser = getCurrentUser();
                 UploadSession session = uploadSessionRedisService.get(uploadSessionId);
+                com.example.smartrec.entity.UploadSession persistentSession =
+                                uploadSessionRepository.findById(uploadSessionId)
+                                                .orElseThrow(() -> new BusinessException(
+                                                                HttpStatus.NOT_FOUND,
+                                                                "UPLOAD_SESSION_NOT_FOUND",
+                                                                "Không tìm thấy upload session trong PostgreSQL"));
 
                 if (!session.getUserId().equals(crusUser.getId())) {
                         throw new BusinessException(
@@ -262,13 +395,13 @@ public class UploadServiceImpl implements UploadService {
                                         "Không thể đọc dữ liệu chunk");
                 }
                 // so sanh MD5 FE va BE
-                if (!calculatedMD5.equalsIgnoreCase(calculatedMD5.trim())) {
-                        return ChunkUploadResponse.builder()
-                                        .uploadSessionId(sessionIdString)
-                                        .chunkIndex(chunkIndex)
-                                        .status("CHECKSUM_MISMATCH")
-                                        .message("Chunk checksum du lieu khong khop")
-                                        .build();
+                if (!calculatedMD5.equalsIgnoreCase(checksumMD5.trim())) {
+                        persistentSession.setStatus(UploadSessionStatus.FAILED);
+                        uploadSessionRepository.save(persistentSession);
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "CHECKSUM_MISMATCH",
+                                        "Chunk checksum dữ liệu không khớp");
                 }
 
                 // tao obj cho chunk
@@ -281,6 +414,8 @@ public class UploadServiceImpl implements UploadService {
                 try {
                         minioService.upLoad(file, objectKey);
                 } catch (Exception e) {
+                        persistentSession.setStatus(UploadSessionStatus.FAILED);
+                        uploadSessionRepository.save(persistentSession);
                         throw new BusinessException(
                                         HttpStatus.INTERNAL_SERVER_ERROR,
                                         "ERR_MINIO_UNAVAILABLE",
@@ -297,6 +432,12 @@ public class UploadServiceImpl implements UploadService {
                 if (session.getStatus() == UploadSessionStatus.INITIATED) {
                         session.setStatus(UploadSessionStatus.UPLOADING);
                 }
+                if (session.getReceivedChunks() >= session.getTotalChunks()) {
+                        session.setStatus(UploadSessionStatus.READY_TO_MERGE);
+                }
+                persistentSession.setReceivedChunks(session.getReceivedChunks());
+                persistentSession.setStatus(session.getStatus());
+                uploadSessionRepository.save(persistentSession);
 
                 // luu session mo vao redis
                 uploadSessionRedisService.save(session);
@@ -307,6 +448,115 @@ public class UploadServiceImpl implements UploadService {
                                 .message(objectKey)
                                 .build();
 
+        }
+
+        @Override
+        public void pauseUpload(String uploadSessionId) {
+                updatePersistentStatus(uploadSessionId, UploadSessionStatus.PAUSED);
+                try {
+                        UploadSession session = uploadSessionRedisService.get(UUID.fromString(uploadSessionId));
+                        session.setStatus(UploadSessionStatus.PAUSED);
+                        uploadSessionRedisService.save(session);
+                } catch (Exception ignored) {
+                }
+        }
+
+        @Override
+        public void resumeUpload(String uploadSessionId) {
+                updatePersistentStatus(uploadSessionId, UploadSessionStatus.UPLOADING);
+                try {
+                        UploadSession session = uploadSessionRedisService.get(UUID.fromString(uploadSessionId));
+                        if (session.getStatus() == UploadSessionStatus.PAUSED) {
+                                session.setStatus(UploadSessionStatus.UPLOADING);
+                                uploadSessionRedisService.save(session);
+                        }
+                } catch (Exception ignored) {
+                }
+        }
+
+        @Override
+        public void cancelUpload(String uploadSessionId) {
+                updatePersistentStatus(uploadSessionId, UploadSessionStatus.CANCELLED);
+                try {
+                        UploadSession session = uploadSessionRedisService.get(UUID.fromString(uploadSessionId));
+                        session.setStatus(UploadSessionStatus.CANCELLED);
+                        uploadSessionRedisService.save(session);
+                } catch (Exception ignored) {
+                }
+        }
+
+        private void ensureCompletedObjectInUserFolder(
+                        UUID uploadSessionId,
+                        User user,
+                        String originalFileName,
+                        String safeFileName,
+                        String finalObjectKey) {
+                if (minioService.objectExists(finalObjectKey)) {
+                        return;
+                }
+
+                String legacyObjectKey = "meetings/" + user.getId() + "/" + uploadSessionId + "/" + originalFileName;
+                if (!minioService.objectExists(legacyObjectKey)) {
+                        legacyObjectKey = "meetings/" + user.getId() + "/" + uploadSessionId + "/" + safeFileName;
+                }
+                if (!minioService.objectExists(legacyObjectKey)) {
+                        throw new BusinessException(
+                                        HttpStatus.CONFLICT,
+                                        "MERGED_OBJECT_NOT_FOUND",
+                                        "Không tìm thấy file đã merge trên MinIO");
+                }
+
+                try {
+                        log.info(
+                                        "Moving legacy merged object to user folder. uploadSessionId={}, legacyObjectKey={}, finalObjectKey={}",
+                                        uploadSessionId,
+                                        legacyObjectKey,
+                                        finalObjectKey);
+                        minioService.composeObjects(finalObjectKey, List.of(legacyObjectKey));
+                        if (minioService.objectExists(finalObjectKey)) {
+                                minioService.delete(legacyObjectKey);
+                        }
+                } catch (Exception e) {
+                        log.error(
+                                        "Could not move legacy merged object to user folder. uploadSessionId={}, legacyObjectKey={}, finalObjectKey={}",
+                                        uploadSessionId,
+                                        legacyObjectKey,
+                                        finalObjectKey,
+                                        e);
+                        throw new BusinessException(
+                                        HttpStatus.INTERNAL_SERVER_ERROR,
+                                        "ERR_MINIO_MOVE_MERGED_FILE",
+                                        "Không thể chuyển file đã merge vào thư mục người dùng");
+                }
+        }
+
+        private MediaFile findOrCreateMediaFile(
+                        User user,
+                        UploadSession session,
+                        String safeFileName,
+                        String objectKey) {
+                return mediaFileRepository.findByObjectKey(objectKey)
+                                .orElseGet(() -> mediaFileRepository.save(
+                                                MediaFile.builder()
+                                                                .workspace_id(user.getId())
+                                                                .uploaded_by(user.getId())
+                                                                .original_name(safeFileName)
+                                                                .object_key(objectKey)
+                                                                .mime_type(detectMimeType(safeFileName))
+                                                                .file_size_bytes(session.getFileSize())
+                                                                .status("UPLOADED")
+                                                                .build()));
+        }
+
+        private Meeting findOrCreateMeeting(User user, MediaFile mediaFile, String safeFileName) {
+                return meetingRepository.findByMediaFileId(mediaFile.getId())
+                                .orElseGet(() -> meetingRepository.save(
+                                                Meeting.builder()
+                                                                .workspace_id(user.getId())
+                                                                .media_file_id(mediaFile.getId())
+                                                                .title(safeFileName)
+                                                                .status(MeetingStatus.PENDING)
+                                                                .build()));
         }
 
         @Override
@@ -343,6 +593,12 @@ public class UploadServiceImpl implements UploadService {
 
                 // lay session tu redis
                 UploadSession session = uploadSessionRedisService.get(uploadSessionId);
+                com.example.smartrec.entity.UploadSession persistentSession =
+                                uploadSessionRepository.findById(uploadSessionId)
+                                                .orElseThrow(() -> new BusinessException(
+                                                                HttpStatus.NOT_FOUND,
+                                                                "UPLOAD_SESSION_NOT_FOUND",
+                                                                "Không tìm thấy upload session trong PostgreSQL"));
                 // session khong ton tai
                 if (session == null) {
                         throw new BusinessException(
@@ -357,9 +613,35 @@ public class UploadServiceImpl implements UploadService {
                                         "UPLOAD_SESSION_NOT_OWNED",
                                         "Upload session không thuộc người dùng hiện tại");
                 }
+
+                String fileName = request.getFileName();
+                if (fileName == null || fileName.isBlank()) {
+                        fileName = session.getFileName();// lay ten file trong upload session
+                }
+                if (fileName == null || fileName.isBlank()) { // neu ca reuest voi session dau khong co ten file
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_FILENAME",
+                                        "Tên file không được để trống");
+                }
+                fileName = fileName.trim();
+                String safeFileName = sanitizeFileName(fileName);
+                String finalObjectKey = buildUserObjectKey(currUser, safeFileName);
+
+                if (persistentSession.getStatus() == UploadSessionStatus.COMPLETED) {
+                        ensureCompletedObjectInUserFolder(uploadSessionId, currUser, fileName, safeFileName, finalObjectKey);
+                        MediaFile mediaFile = findOrCreateMediaFile(currUser, session, safeFileName, finalObjectKey);
+                        findOrCreateMeeting(currUser, mediaFile, safeFileName);
+                        return new MergeUploadReponse(
+                                        sessionIdString,
+                                        safeFileName,
+                                        finalObjectKey,
+                                        UploadSessionStatus.COMPLETED.name());
+                }
                 // kiem tra trạng thai session
                 if (session.getStatus() != UploadSessionStatus.INITIATED
-                                && session.getStatus() != UploadSessionStatus.UPLOADING) {
+                                && session.getStatus() != UploadSessionStatus.UPLOADING
+                                && session.getStatus() != UploadSessionStatus.READY_TO_MERGE) {
                         throw new BusinessException(
                                         HttpStatus.CONFLICT,
                                         "INVALID_UPLOAD_SESSION_STATUS",
@@ -379,17 +661,16 @@ public class UploadServiceImpl implements UploadService {
                 // danh sach dung de luu index cua nhung chunk chua upload
                 List<Integer> missingChunk = new ArrayList<>();
                 for (int i = 0; i < totalChunk; i++) {
-                        boolean uploaded = uploadSessionRedisService.isChunkUploaded(uploadSessionId, i); // Kiểm tra
-                                                                                                          // chunk thứ i
-                                                                                                          // đã được
-                                                                                                          // upload chưa
-                        if (!uploaded) {// neu chua upload
-                                missingChunk.add(i);// them index chunk bi thieu vao danh sach
+                        boolean uploaded = uploadSessionRedisService.isChunkUploaded(uploadSessionId, i);
+                        if (!uploaded) {
+                                missingChunk.add(i);
                         }
                 }
 
                 // neu chunk bi thieu se khong merge
                 if (!missingChunk.isEmpty()) {
+                        persistentSession.setStatus(UploadSessionStatus.FAILED);
+                        uploadSessionRepository.save(persistentSession);
                         throw new BusinessException(
                                         HttpStatus.CONFLICT,
                                         "UPLOAD_INCOMPLETE",
@@ -406,31 +687,46 @@ public class UploadServiceImpl implements UploadService {
                         chunkObjectKeys.add(chunkObjectKey);
                 }
 
-                String fileName = request.getFileName();
-                if (fileName == null || fileName.isBlank()) {
-                        fileName = session.getFileName();// lay ten file trong upload session
+                List<Integer> missingMinioChunks = new ArrayList<>();
+                for (int i = 0; i < chunkObjectKeys.size(); i++) {
+                        String chunkObjectKey = chunkObjectKeys.get(i);
+                        if (!minioService.objectExists(chunkObjectKey)) {
+                                log.error(
+                                                "Missing chunk object before merge. uploadSessionId={}, chunkIndex={}, bucketObjectKey={}",
+                                                uploadSessionId,
+                                                i,
+                                                chunkObjectKey);
+                                missingMinioChunks.add(i);
+                        }
                 }
-                if (fileName == null || fileName.isBlank()) { // neu ca reuest voi session dau khong co ten file
+                if (!missingMinioChunks.isEmpty()) {
+                        persistentSession.setStatus(UploadSessionStatus.FAILED);
+                        uploadSessionRepository.save(persistentSession);
                         throw new BusinessException(
-                                        HttpStatus.BAD_REQUEST,
-                                        "INVALID_FILENAME",
-                                        "Tên file không được để trống");
+                                        HttpStatus.CONFLICT,
+                                        "MINIO_CHUNKS_MISSING",
+                                        "Thiếu chunk trong MinIO: " + missingMinioChunks);
                 }
-                fileName = fileName.trim();
-
-                // tao object key cuoi cung
-                String finalObjectKey = "meetings/"
-                                + currUser.getId()
-                                + "/"
-                                + uploadSessionId
-                                + "/"
-                                + fileName;
 
                 // ghep cac chunk trong miniio
                 try {
+                        log.info(
+                                        "Merging upload session. uploadSessionId={}, bucket chunk prefix=tmp/{}/chunk_, finalObjectKey={}, totalChunks={}",
+                                        uploadSessionId,
+                                        uploadSessionId,
+                                        finalObjectKey,
+                                        totalChunk);
                         minioService.composeObjects(finalObjectKey, chunkObjectKeys);// gui ds chunk trog mini de ghep
                                                                                      // thanh file hoan chinh
                 } catch (Exception e) {
+                        persistentSession.setStatus(UploadSessionStatus.MERGE_FAILED);
+                        uploadSessionRepository.save(persistentSession);
+                        log.error(
+                                        "Failed to compose upload session in MinIO. uploadSessionId={}, finalObjectKey={}, totalChunks={}",
+                                        uploadSessionId,
+                                        finalObjectKey,
+                                        totalChunk,
+                                        e);
                         throw new BusinessException(
                                         HttpStatus.INTERNAL_SERVER_ERROR,
                                         "ERR_MINIO_COMPOSE",
@@ -439,16 +735,22 @@ public class UploadServiceImpl implements UploadService {
 
                 // danh giau session da hoan thanh
                 session.setStatus(UploadSessionStatus.COMPLETED);
+                session.setReceivedChunks(totalChunk);
+                persistentSession.setReceivedChunks(totalChunk);
+                persistentSession.setStatus(UploadSessionStatus.COMPLETED);
 
                 uploadSessionRedisService.save(session);
+                uploadSessionRepository.save(persistentSession);
+                MediaFile mediaFile = findOrCreateMediaFile(currUser, session, safeFileName, finalObjectKey);
+                findOrCreateMeeting(currUser, mediaFile, safeFileName);
 
-                // xoa chunk tam 
+                // xoa chunk tam sau khi final object da ton tai
                 for(String chunkObjectKey : chunkObjectKeys){// duyet qua tung chunk da dung de compose
                         try {
                                 minioService.delete(chunkObjectKey);// xoa chunk tam thoi khoi mini
                         } catch (Exception e) {
                         }
                 }
-                return new MergeUploadReponse(sessionIdString,fileName,finalObjectKey,UploadSessionStatus.COMPLETED.name());
+                return new MergeUploadReponse(sessionIdString,safeFileName,finalObjectKey,UploadSessionStatus.COMPLETED.name());
         }
 }

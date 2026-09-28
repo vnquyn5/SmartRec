@@ -14,4 +14,10 @@ public interface UploadService {
 
     MergeUploadReponse mergeUpload(MergeUploadRequest request);
 
+    void pauseUpload(String uploadSessionId);
+
+    void resumeUpload(String uploadSessionId);
+
+    void cancelUpload(String uploadSessionId);
+
 }

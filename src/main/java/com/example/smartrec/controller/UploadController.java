@@ -13,7 +13,6 @@ import com.example.smartrec.model.dto.UploadInitRequest;
 import com.example.smartrec.model.dto.UploadInitResponse;
 import com.example.smartrec.service.UploadService;
 import org.springframework.http.MediaType;
-import org.springframework.http.RequestEntity;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -63,6 +62,24 @@ public class UploadController {
     public ResponseEntity <MergeUploadReponse> mergeUpload(@RequestBody MergeUploadRequest request){
             MergeUploadReponse response = uploadService.mergeUpload(request);
             return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/pause")
+    public ResponseEntity<Void> pauseUpload(@RequestParam("uploadSessionId") String uploadSessionId) {
+            uploadService.pauseUpload(uploadSessionId);
+            return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/resume")
+    public ResponseEntity<Void> resumeUpload(@RequestParam("uploadSessionId") String uploadSessionId) {
+            uploadService.resumeUpload(uploadSessionId);
+            return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/cancel")
+    public ResponseEntity<Void> cancelUpload(@RequestParam("uploadSessionId") String uploadSessionId) {
+            uploadService.cancelUpload(uploadSessionId);
+            return ResponseEntity.noContent().build();
     }
     
     

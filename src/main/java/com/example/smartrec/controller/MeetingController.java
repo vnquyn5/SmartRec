@@ -1,7 +1,12 @@
 package com.example.smartrec.controller;
 
 import java.util.UUID;
+import java.util.List;
 
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.model.dto.MeetingFilterRequest;
@@ -17,6 +23,7 @@ import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.service.MeetingService;
+import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -59,6 +66,39 @@ public class MeetingController {
             @PathVariable UUID id) {
         meetingService.deleteMeeting(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/download")
+    public ResponseEntity<InputStreamResource> downloadMeeting(@PathVariable UUID id) {
+        MeetingDownloadFile file = meetingService.getDownloadFile(id);
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        file.mimeType() == null || file.mimeType().isBlank()
+                                ? MediaType.APPLICATION_OCTET_STREAM_VALUE
+                                : file.mimeType()));
+        if (file.fileSizeBytes() != null) {
+            responseBuilder.contentLength(file.fileSizeBytes());
+        }
+        return responseBuilder
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment()
+                                .filename(file.fileName() == null ? "meeting-file" : file.fileName())
+                                .build()
+                                .toString())
+                .body(new InputStreamResource(file.inputStream()));
+    }
+
+    @PostMapping("/download")
+    public ResponseEntity<org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody> downloadMeetingsZip(
+            @RequestBody List<UUID> ids) {
+        String zipFileName = "smartrec-files.zip";
+        org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody stream =
+                outputStream -> meetingService.writeMeetingsZip(ids, outputStream);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(zipFileName).build().toString())
+                .body(stream);
     }
 
     @PatchMapping("/{id}/name")

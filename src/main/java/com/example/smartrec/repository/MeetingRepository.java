@@ -1,6 +1,7 @@
 package com.example.smartrec.repository;
 
 import java.util.UUID;
+import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -12,6 +13,8 @@ import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
 
 public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
+    @Query("select m from Meeting m where m.media_file_id = :mediaFileId")
+    Optional<Meeting> findByMediaFileId(@Param("mediaFileId") UUID mediaFileId);
 
     @Query(value = """
             select m from Meeting m
