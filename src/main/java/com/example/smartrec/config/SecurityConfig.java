@@ -46,6 +46,7 @@ public class SecurityConfig {
                 .requestMatchers("/meetings", "/meetings/**").authenticated()
                 .requestMatchers("/upload/init").authenticated()
                 .requestMatchers("/upload/chunk").authenticated()
+                .requestMatchers("/upload/merge").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

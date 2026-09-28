@@ -7,10 +7,13 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.model.dto.ChunkUploadRequest;
 import com.example.smartrec.model.dto.ChunkUploadResponse;
+import com.example.smartrec.model.dto.MergeUploadReponse;
+import com.example.smartrec.model.dto.MergeUploadRequest;
 import com.example.smartrec.model.dto.UploadInitRequest;
 import com.example.smartrec.model.dto.UploadInitResponse;
 import com.example.smartrec.service.UploadService;
 import org.springframework.http.MediaType;
+import org.springframework.http.RequestEntity;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +59,13 @@ public class UploadController {
 
         return ResponseEntity.ok(response);
     }
+    @PostMapping(value = "/merge", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity <MergeUploadReponse> mergeUpload(@RequestBody MergeUploadRequest request){
+            MergeUploadReponse response = uploadService.mergeUpload(request);
+            return ResponseEntity.ok(response);
+    }
+    
+    
     
     
 }
