@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.entity.MediaFile;
+import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.entity.User;
@@ -71,7 +72,7 @@ public class FileServiceImpl implements FileService {
                 .object_key(objectKey)
                 .mime_type(file.getContentType())
                 .file_size_bytes(file.getSize())
-                .status("UPLOADED")
+                .status(MediaFileStatus.UPLOADED)
                 .build();
         MediaFile savedMediaFile = mediaFileRepository.save(mediaFile);
 

@@ -19,6 +19,11 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
     @Query(value = """
             select m from Meeting m
             where m.workspace_id = :workspaceId
+              and exists (
+                    select mf.id from MediaFile mf
+                    where mf.id = m.media_file_id
+                      and (mf.status is null or mf.status <> 'TRASHED')
+              )
               and (:status is null or m.status = :status)
               and (
                     :keyword is null
@@ -33,6 +38,11 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
             countQuery = """
             select count(m) from Meeting m
             where m.workspace_id = :workspaceId
+              and exists (
+                    select mf.id from MediaFile mf
+                    where mf.id = m.media_file_id
+                      and (mf.status is null or mf.status <> 'TRASHED')
+              )
               and (:status is null or m.status = :status)
               and (
                     :keyword is null

@@ -8,4 +8,9 @@ public class MinioOperationException extends BusinessException {
         super(HttpStatus.SERVICE_UNAVAILABLE, "MINIO_OPERATION_FAILED", message);
         initCause(cause);
     }
+
+    public MinioOperationException(String code, String message, Throwable cause) {
+        super(HttpStatus.SERVICE_UNAVAILABLE, code, message);
+        initCause(cause);
+    }
 }

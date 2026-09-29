@@ -5,6 +5,7 @@ export default function DeleteMeetingModal({
   open,
   title,
   message,
+  description,
   loading,
   onClose,
   onConfirm,
@@ -40,8 +41,8 @@ export default function DeleteMeetingModal({
           {message || "Bạn có chắc muốn xóa file này không?"}
         </h2>
         <p className="mt-2 break-words text-sm text-slate-400">
-          {title || "File cuộc họp"} sẽ bị xóa khỏi kho lưu trữ và không thể
-          hoàn tác.
+          {description ||
+            `${title || "File cuộc họp"} sẽ bị xóa khỏi kho lưu trữ và không thể hoàn tác.`}
         </p>
         <div className="mt-6 flex justify-center gap-3">
           <button

@@ -57,7 +57,20 @@ public class MediaFile {
     private Integer duration_seconds;
 
     @Column (name = "status")
-    private String status="UPLOADING";
+    @Builder.Default
+    private String status = MediaFileStatus.UPLOADING;
+
+    @Column(name = "previous_status", length = 50)
+    private String previous_status;
+
+    @Column(name = "deleted_at")
+    private Instant deleted_at;
+
+    @Column(name = "purge_at")
+    private Instant purge_at;
+
+    @Column(name = "deleted_by")
+    private UUID deleted_by;
 
     
     @CreationTimestamp 

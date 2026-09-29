@@ -2,6 +2,7 @@ package com.example.smartrec.service.impl;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -13,6 +14,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.entity.MediaFile;
+import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.exception.MinioOperationException;
@@ -37,10 +40,10 @@ import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MinioService;
 
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class MeetingServiceImpl implements MeetingService {
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 20;
@@ -50,6 +53,9 @@ public class MeetingServiceImpl implements MeetingService {
     private final MediaFileRepository mediaFileRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
+
+    @Value("${trash.retention-days:30}")
+    private long trashRetentionDays;
 
     @Override
     public PageResponse<MeetingResponseDTO> findMeetings(MeetingFilterRequest request) {
@@ -87,14 +93,18 @@ public class MeetingServiceImpl implements MeetingService {
         Meeting meeting = getMeetingForUser(meetingId, currentUser);
         MediaFile mediaFile = getMediaFile(meeting);
 
-        try {
-            minioService.delete(mediaFile.getObject_key());
-        } catch (Exception ex) {
-            throw new MinioOperationException("Không thể xóa file trên MinIO", ex);
+        if (MediaFileStatus.TRASHED.equals(mediaFile.getStatus())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "MEDIA_ALREADY_TRASHED",
+                    "File đã nằm trong thùng rác");
         }
 
-        meetingRepository.delete(meeting);
-        mediaFileRepository.delete(mediaFile);
+        Instant now = Instant.now();
+        mediaFile.setPrevious_status(mediaFile.getStatus());
+        mediaFile.setStatus(MediaFileStatus.TRASHED);
+        mediaFile.setDeleted_at(now);
+        mediaFile.setPurge_at(now.plusSeconds(trashRetentionDays * 24 * 60 * 60));
+        mediaFile.setDeleted_by(currentUser.getId());
+        mediaFileRepository.save(mediaFile);
     }
 
     @Override
@@ -179,9 +189,14 @@ public class MeetingServiceImpl implements MeetingService {
     }
 
     private MediaFile getMediaFile(Meeting meeting) {
-        return mediaFileRepository.findById(meeting.getMedia_file_id())
+        MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "MEDIA_FILE_NOT_FOUND", "Không tìm thấy file của cuộc họp"));
+        if (MediaFileStatus.TRASHED.equals(mediaFile.getStatus())) {
+            throw new ResourceNotFoundException(
+                    "MEDIA_FILE_IN_TRASH", "File của cuộc họp đang nằm trong thùng rác");
+        }
+        return mediaFile;
     }
 
     private String buildUniqueZipEntryName(Set<String> usedEntryNames, String originalName) {
@@ -203,7 +218,9 @@ public class MeetingServiceImpl implements MeetingService {
     }
 
     private MeetingResponseDTO toResponse(Meeting meeting) {
-        MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id()).orElse(null);
+        MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id())
+                .filter(item -> !MediaFileStatus.TRASHED.equals(item.getStatus()))
+                .orElse(null);
         return new MeetingResponseDTO(
                 meeting.getId(),
                 meeting.getTitle(),

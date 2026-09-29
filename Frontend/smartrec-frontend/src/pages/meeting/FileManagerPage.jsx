@@ -25,6 +25,7 @@ import {
   getMeetings,
   renameMeeting as renameMeetingApi,
 } from "../../services/meetingService.js";
+import { softDeleteMediaFile } from "../../services/trashService.js";
 
 const EMPTY_PAGE = {
   content: [],
@@ -282,19 +283,40 @@ export default function FileManagerPage() {
   const handleDelete = async () => {
     if (!selectedMeeting) return;
     setIsDeleting(true);
+    setError("");
     try {
-      await deleteMeeting(selectedMeeting.id);
+      if (selectedMeeting.mediaFileId) {
+        await softDeleteMediaFile(selectedMeeting.mediaFileId);
+      } else {
+        await deleteMeeting(selectedMeeting.id);
+      }
+      const deletedMeetingId = selectedMeeting.id;
       setSelectedMeeting(null);
       setSelectedIds((currentIds) => {
         const nextIds = new Set(currentIds);
-        nextIds.delete(selectedMeeting.id);
+        nextIds.delete(deletedMeetingId);
         return nextIds;
       });
-      if (data.content.length === 1 && page > 0)
+      setData((currentData) => {
+        const nextContent = currentData.content.filter(
+          (meeting) => meeting.id !== deletedMeetingId,
+        );
+        const nextTotalElements = Math.max(0, currentData.totalElements - 1);
+        return {
+          ...currentData,
+          content: nextContent,
+          totalElements: nextTotalElements,
+          totalPages: currentData.pageSize
+            ? Math.ceil(nextTotalElements / currentData.pageSize)
+            : currentData.totalPages,
+        };
+      });
+      setActionMessage("File đã được chuyển vào Thùng rác.");
+      if (data.content.length === 1 && page > 0) {
         setPage((currentPage) => currentPage - 1);
-      else await loadMeetings();
+      }
     } catch (requestError) {
-      setError(requestError?.message || "Không thể xóa file.");
+      setError(requestError?.message || "Không thể chuyển file vào Thùng rác.");
     } finally {
       setIsDeleting(false);
     }
@@ -306,15 +328,41 @@ export default function FileManagerPage() {
     setError("");
     try {
       for (const meeting of selectedMeetings) {
-        await deleteMeeting(meeting.id);
+        if (meeting.mediaFileId) {
+          await softDeleteMediaFile(meeting.mediaFileId);
+        } else {
+          await deleteMeeting(meeting.id);
+        }
       }
+      const deletedIds = new Set(selectedMeetings.map((meeting) => meeting.id));
       setBulkDeleteOpen(false);
       setSelectedIds(new Set());
-      if (data.content.length === selectedMeetings.length && page > 0)
+      setData((currentData) => {
+        const nextContent = currentData.content.filter(
+          (meeting) => !deletedIds.has(meeting.id),
+        );
+        const nextTotalElements = Math.max(
+          0,
+          currentData.totalElements - selectedMeetings.length,
+        );
+        return {
+          ...currentData,
+          content: nextContent,
+          totalElements: nextTotalElements,
+          totalPages: currentData.pageSize
+            ? Math.ceil(nextTotalElements / currentData.pageSize)
+            : currentData.totalPages,
+        };
+      });
+      setActionMessage(`${selectedMeetings.length} file đã được chuyển vào Thùng rác.`);
+      if (data.content.length === selectedMeetings.length && page > 0) {
         setPage((currentPage) => currentPage - 1);
-      else await loadMeetings();
+      }
     } catch (requestError) {
-      setError(requestError?.message || "Không thể xóa các file đã chọn.");
+      setError(
+        requestError?.message ||
+          "Không thể chuyển các file đã chọn vào Thùng rác.",
+      );
     } finally {
       setIsBulkDeleting(false);
     }
@@ -696,6 +744,8 @@ export default function FileManagerPage() {
       <DeleteMeetingModal
         open={Boolean(selectedMeeting)}
         title={selectedMeeting?.fileName || selectedMeeting?.title}
+        message="File sẽ được chuyển vào Thùng rác và tự động xoá vĩnh viễn sau 30 ngày."
+        description="Bạn có thể khôi phục file trong trang Thùng rác trước khi hết hạn."
         loading={isDeleting}
         onClose={() => setSelectedMeeting(null)}
         onConfirm={handleDelete}
@@ -703,7 +753,8 @@ export default function FileManagerPage() {
       <DeleteMeetingModal
         open={bulkDeleteOpen}
         title={`${selectedCount} file đã chọn`}
-        message={`Bạn có chắc muốn xoá ${selectedCount} file đã chọn?`}
+        message={`${selectedCount} file đã chọn sẽ được chuyển vào Thùng rác và tự động xoá vĩnh viễn sau 30 ngày.`}
+        description="Bạn có thể khôi phục các file này trong trang Thùng rác trước khi hết hạn."
         loading={isBulkDeleting}
         onClose={() => setBulkDeleteOpen(false)}
         onConfirm={handleBulkDelete}

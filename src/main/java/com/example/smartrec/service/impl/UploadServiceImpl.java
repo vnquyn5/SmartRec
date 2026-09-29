@@ -23,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.example.smartrec.enums.UploadSessionStatus;
 
 import com.example.smartrec.entity.MediaFile;
+import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.entity.User;
@@ -544,7 +545,7 @@ public class UploadServiceImpl implements UploadService {
                                                                 .object_key(objectKey)
                                                                 .mime_type(detectMimeType(safeFileName))
                                                                 .file_size_bytes(session.getFileSize())
-                                                                .status("UPLOADED")
+                                                                .status(MediaFileStatus.UPLOADED)
                                                                 .build()));
         }
 
