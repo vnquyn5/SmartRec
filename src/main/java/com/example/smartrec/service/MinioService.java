@@ -1,5 +1,6 @@
 package com.example.smartrec.service;
 
+import java.io.InputStream;
 import java.util.List;
 
 import org.springframework.web.multipart.MultipartFile;
@@ -10,4 +11,6 @@ public interface MinioService {
     void delete(String objectKey) throws Exception;
 
     void composeObjects( String finalObjectKey,List<String> chunkObjectKeys) throws Exception;
+
+    InputStream downloadObject(String objectKey);
 }
