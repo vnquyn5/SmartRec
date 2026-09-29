@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 
 export default function MeetingDetailPage() {
   const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const meeting = location.state?.meeting;
   const [aiStatus, setAiStatus] = useState("completed");
   const [speakers, setSpeakers] = useState([
@@ -56,6 +57,27 @@ export default function MeetingDetailPage() {
         {/* Page Top Header with discrete State Switcher */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
+            <button
+              type="button"
+              onClick={() => navigate("/workspace")}
+              className="mb-3 inline-flex items-center gap-2 rounded-lg border border-[#1e2742] bg-[#0c101d] px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-[#38bdf8] hover:text-white hover:bg-[#141a2e] focus:outline-none focus:ring-2 focus:ring-[#38bdf8]/40"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M19 12H5" />
+                <path d="M12 19l-7-7 7-7" />
+              </svg>
+              <span>Quay lại</span>
+            </button>
             <h1 className="text-2xl font-bold text-white tracking-tight">
               {meeting?.fileName || meeting?.title || "Chi tiết cuộc họp"}
             </h1>

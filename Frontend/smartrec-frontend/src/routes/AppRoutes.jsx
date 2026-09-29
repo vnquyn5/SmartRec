@@ -7,6 +7,7 @@ import UploadPage from "../pages/upload/UploadPage";
 import LargeFileUploadPage from "../pages/upload/LargeFileUploadPage";
 import FileManagerPage from "../pages/meeting/FileManagerPage";
 import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
+import WorkspacePage from "../pages/workspace/WorkspacePage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
@@ -31,6 +32,7 @@ const AppRoutes = () => {
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/upload/large" element={<LargeFileUploadPage />} />
           <Route path="/history" element={<FileManagerPage />} />
+          <Route path="/workspace" element={<WorkspacePage />} />
         </Route>
         <Route path="/profile" element={<ProfilePage />} />
       </Route>
