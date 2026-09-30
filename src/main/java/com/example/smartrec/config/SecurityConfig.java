@@ -47,6 +47,7 @@ public class SecurityConfig {
                 .requestMatchers("/upload/init").authenticated()
                 .requestMatchers("/upload/chunk").authenticated()
                 .requestMatchers("/upload/merge").authenticated()
+                .requestMatchers("/jobs", "/jobs/**").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

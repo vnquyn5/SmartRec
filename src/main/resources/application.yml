@@ -54,3 +54,6 @@ app:
     
 media:
   max-duration-hours: 4
+
+job:
+    max-retry: 5
