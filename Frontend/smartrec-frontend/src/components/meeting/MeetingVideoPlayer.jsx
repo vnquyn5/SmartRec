@@ -31,19 +31,21 @@ export default function MeetingVideoPlayer({ currentTime = '12:45', duration = '
   return (
     <div className="w-full bg-[#080d1a] border border-[#1b2640] rounded-2xl overflow-hidden shadow-2xl flex flex-col">
       {/* 3x3 Video Attendees Grid matching Figma */}
-      <div className="relative aspect-video w-full bg-black p-1.5 grid grid-cols-3 grid-rows-3 gap-1.5 select-none">
-        {attendees.map((person) => (
-          <div key={person.id} className="relative rounded-lg overflow-hidden bg-[#111928] border border-white/5 group">
-            <img
-              src={person.img}
-              alt={person.name}
-              className="w-full h-full object-cover brightness-90 group-hover:brightness-100 transition"
-            />
-            <div className="absolute bottom-1.5 left-2 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white/90 font-medium">
-              {person.name}
+      <div className="relative aspect-video w-full bg-black flex items-center justify-center select-none overflow-hidden">
+        <div className="w-[80%] aspect-video p-1.5 grid grid-cols-3 grid-rows-3 gap-2">
+          {attendees.map((person) => (
+            <div key={person.id} className="relative rounded-xl overflow-hidden bg-[#111928] border border-white/5 group">
+              <img
+                src={person.img}
+                alt={person.name}
+                className="w-full h-full object-cover brightness-90 group-hover:brightness-100 transition"
+              />
+              <div className="absolute bottom-1.5 left-2 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white/90 font-medium">
+                {person.name}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* Video Controls Bar */}

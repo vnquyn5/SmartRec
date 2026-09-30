@@ -4,6 +4,7 @@ export default function TranscriptPanel({ onSeek }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeSegmentId, setActiveSegmentId] = useState('2');
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const [selectedSpeaker, setSelectedSpeaker] = useState('All');
 
   const transcripts = [
     {
@@ -48,12 +49,35 @@ export default function TranscriptPanel({ onSeek }) {
     setTimeout(() => setCopyFeedback(false), 2000);
   };
 
+  const allSpeakers = [...new Set(transcripts.map(t => t.speaker))];
+
   const filteredTranscripts = transcripts.filter(
-    (item) =>
-      item.speaker.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.text.toLowerCase().includes(searchTerm.toLowerCase())
+    (item) => {
+      const matchSearch = item.speaker.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          item.text.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchFilter = selectedSpeaker === 'All' || item.speaker === selectedSpeaker;
+      return matchSearch && matchFilter;
+    }
   );
 
+  // Hàm highlight từ khóa trong văn bản
+  const highlightText = (text, highlight) => {
+    if (!highlight || !highlight.trim()) return text;
+    
+    // Tách chuỗi dựa trên từ khóa (không phân biệt hoa thường)
+    const regex = new RegExp(`(${highlight})`, 'gi');
+    const parts = text.split(regex);
+    
+    return parts.map((part, i) => 
+      regex.test(part) ? (
+        <span key={i} className="bg-yellow-500/40 text-yellow-100 font-semibold rounded px-0.5">
+          {part}
+        </span>
+      ) : (
+        part
+      )
+    );
+  };
   return (
     <div className="w-full flex-1 bg-[#090f1d] border border-[#1b2640] rounded-2xl flex flex-col overflow-hidden shadow-xl min-h-[360px]">
       {/* Header */}
@@ -78,9 +102,9 @@ export default function TranscriptPanel({ onSeek }) {
         </div>
       </div>
 
-      {/* Search Input Bar */}
-      <div className="px-4 py-2.5 border-b border-[#141e33] bg-[#0c1324]">
-        <div className="relative flex items-center">
+      {/* Search Input Bar & Filter */}
+      <div className="px-4 py-2.5 border-b border-[#141e33] bg-[#0c1324] flex gap-2">
+        <div className="relative flex-1 flex items-center">
           <svg
             className="absolute left-3 w-4 h-4 text-slate-400 pointer-events-none"
             viewBox="0 0 24 24"
@@ -101,6 +125,16 @@ export default function TranscriptPanel({ onSeek }) {
             className="w-full bg-[#11192e] border border-[#223152] rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#38bdf8] transition"
           />
         </div>
+        <select
+          value={selectedSpeaker}
+          onChange={(e) => setSelectedSpeaker(e.target.value)}
+          className="bg-[#11192e] border border-[#223152] rounded-xl px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-[#38bdf8] transition cursor-pointer max-w-[140px] truncate"
+        >
+          <option value="All">All Speakers</option>
+          {allSpeakers.map(spk => (
+            <option key={spk} value={spk}>{spk}</option>
+          ))}
+        </select>
       </div>
 
       {/* Transcript Items List */}
@@ -112,7 +146,7 @@ export default function TranscriptPanel({ onSeek }) {
               key={item.id}
               onClick={() => {
                 setActiveSegmentId(item.id);
-                if (onSeek) onSeek(item.time);
+                if (onSeek) onSeek(item.time); 
               }}
               className={`p-3 rounded-xl transition cursor-pointer text-xs ${
                 isSelected
