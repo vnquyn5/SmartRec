@@ -44,6 +44,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/register","/api/auth/login").permitAll()
                 .requestMatchers("/meetings/upload").authenticated()
                 .requestMatchers("/meetings", "/meetings/**").authenticated()
+                .requestMatchers("/upload/presign").authenticated()
+                .requestMatchers("/upload/complete").authenticated()
                 .requestMatchers("/upload/init").authenticated()
                 .requestMatchers("/upload/chunk").authenticated()
                 .requestMatchers("/upload/merge").authenticated()

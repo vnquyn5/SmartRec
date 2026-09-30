@@ -1,6 +1,9 @@
 import React, { useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { uploadSingleFile } from "../../features/files/useSingleUpload";
+import {
+  completeSimpleUpload,
+  uploadSingleFile,
+} from "../../features/files/useSingleUpload";
 import {
   largeUploadStore,
   useLargeUploadStore,
@@ -71,38 +74,68 @@ const UploadPage = () => {
       speedTrackerRef.current[id] = { lastLoaded: 0, lastTime: Date.now() };
 
       try {
-        const uploadResponse = await uploadSingleFile(
-          fileItem.file,
-          meetingName,
-          controller.signal,
-          (event) => {
-            if (event.total) {
-              const now = Date.now();
-              const tracker = speedTrackerRef.current[id] || {
-                lastLoaded: 0,
-                lastTime: now,
-              };
-              const timeDiff = (now - tracker.lastTime) / 1000;
+        let uploadResponse;
+        if (fileItem.directUpload?.putSucceeded && fileItem.directUpload?.completePayload) {
+          updateItem(id, {
+            phase: "finalizing",
+            progress: 100,
+            speedBps: 0,
+            error: null,
+          });
+          uploadResponse = await completeSimpleUpload(
+            fileItem.directUpload.completePayload,
+            controller.signal,
+          );
+        } else {
+          uploadResponse = await uploadSingleFile(
+            fileItem.file,
+            meetingName,
+            controller.signal,
+            (event) => {
+              if (event.total) {
+                const now = Date.now();
+                const tracker = speedTrackerRef.current[id] || {
+                  lastLoaded: 0,
+                  lastTime: now,
+                };
+                const timeDiff = (now - tracker.lastTime) / 1000;
 
-              const updates = {
-                progress: Math.round((event.loaded / event.total) * 100),
-              };
+                const updates = {
+                  progress: Math.round((event.loaded / event.total) * 100),
+                };
 
-              if (timeDiff >= 0.5) {
-                const bytesDiff = event.loaded - tracker.lastLoaded;
-                if (bytesDiff > 0) {
-                  updates.speedBps = bytesDiff / timeDiff;
+                if (timeDiff >= 0.5) {
+                  const bytesDiff = event.loaded - tracker.lastLoaded;
+                  if (bytesDiff > 0) {
+                    updates.speedBps = bytesDiff / timeDiff;
+                  }
+                  tracker.lastTime = now;
+                  tracker.lastLoaded = event.loaded;
+                  speedTrackerRef.current[id] = tracker;
                 }
-                tracker.lastTime = now;
-                tracker.lastLoaded = event.loaded;
-                speedTrackerRef.current[id] = tracker;
-              }
 
-              updateItem(id, updates);
-            }
-          },
-        );
-        updateItem(id, { phase: "success", progress: 100, uploadResponse });
+                updateItem(id, updates);
+              }
+            },
+            (completePayload) => {
+              updateItem(id, {
+                phase: "finalizing",
+                progress: 100,
+                speedBps: 0,
+                directUpload: {
+                  putSucceeded: true,
+                  completePayload,
+                },
+              });
+            },
+          );
+        }
+        updateItem(id, {
+          phase: "success",
+          progress: 100,
+          uploadResponse,
+          directUpload: null,
+        });
       } catch (err) {
         if (err.kind === "canceled" || err.message === "canceled") {
           setQueue((prev) =>
@@ -145,7 +178,7 @@ const UploadPage = () => {
       }
 
       const activeCount = queue.filter((item) =>
-        ["idle", "uploading", "paused"].includes(item.phase),
+        ["idle", "uploading", "finalizing", "paused"].includes(item.phase),
       ).length;
       const availableSlots = MAX_FILES - activeCount;
 
@@ -170,6 +203,7 @@ const UploadPage = () => {
         error: null,
         saved: false,
         uploadResponse: null,
+        directUpload: null,
         abortController: null,
       }));
 
@@ -355,7 +389,7 @@ const UploadPage = () => {
   }, [persistFile, queue, updateItem]);
 
   const activeCount = queue.filter((item) =>
-    ["idle", "uploading", "paused"].includes(item.phase),
+    ["idle", "uploading", "finalizing", "paused"].includes(item.phase),
   ).length;
   const completedCount = queue.filter(
     (item) => item.phase === "success",
@@ -641,7 +675,13 @@ const UploadPage = () => {
                 const isPaused = item.phase === "paused";
                 const isReadyToMerge = item.phase === "ready_to_merge";
                 const isMerging = item.phase === "merging";
+                const canRetryMerge =
+                  item.strategy === "chunk" &&
+                  isError &&
+                  item.uploadedChunkIndexes?.length === item.chunks?.length &&
+                  !item.mergeStarted;
                 const isItemUploading = item.phase === "uploading";
+                const isFinalizing = item.phase === "finalizing";
                 const progressColor =
                   item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
 
@@ -666,6 +706,9 @@ const UploadPage = () => {
                 } else if (isItemUploading) {
                   statusText = "Đang tải lên";
                   statusColor = "#3e89ff";
+                } else if (isFinalizing) {
+                  statusText = "Đang hoàn tất...";
+                  statusColor = "#f59e0b";
                 } else if (isPaused) {
                   statusText = "Tạm dừng";
                   statusColor = "#f59e0b";
@@ -910,7 +953,7 @@ const UploadPage = () => {
                           </div>
                           {/* Nút Lưu */}
                           {((item.strategy === "chunk" &&
-                            (isReadyToMerge || isMerging)) ||
+                            (isReadyToMerge || isMerging || canRetryMerge)) ||
                             (item.strategy !== "chunk" && isDone)) && (
                             <button
                               type="button"
@@ -946,9 +989,13 @@ const UploadPage = () => {
                                 flexShrink: 0,
                               }}
                             >
-                              {isMerging || savingIds.has(item.id)
-                                ? "Đang lưu..."
-                                : "Lưu"}
+                              {isMerging
+                                ? "Đang gộp file..."
+                                : savingIds.has(item.id)
+                                  ? "Đang lưu..."
+                                  : canRetryMerge
+                                    ? "Thử lại merge"
+                                    : "Lưu"}
                             </button>
                           )}
                           {(isItemUploading || isPaused) && (

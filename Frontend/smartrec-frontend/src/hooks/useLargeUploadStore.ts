@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import {
   cancelChunkedUpload,
+  getChunkedUploadStatus,
   initChunkedUpload,
   mergeChunkedUpload,
   pauseChunkedUpload,
@@ -17,7 +18,8 @@ type LargeUploadPhase =
   | "merging"
   | "success"
   | "canceled"
-  | "error";
+  | "upload_failed"
+  | "merge_failed";
 
 export interface LargeUploadItem {
   id: string;
@@ -56,6 +58,8 @@ interface PersistedItem {
 const STORAGE_KEY = "smartrec.largeUpload.sessions.v1";
 const MAX_RETRIES = 3;
 const CONCURRENCY = 3;
+const MERGE_POLL_INTERVAL_MS = 2500;
+const MERGE_POLL_TIMEOUT_MS = 15 * 60 * 1000;
 
 const listeners = new Set<() => void>();
 
@@ -122,6 +126,23 @@ const updateItem = (id: string, updates: Partial<LargeUploadItem>) => {
 const getActiveItem = () =>
   state.items.find((item) => item.id === state.activeItemId) || null;
 
+const normalizePersistedPhase = (
+  phase: LargeUploadPhase | "error" | undefined,
+  hasUploadedAllChunks: boolean,
+): LargeUploadPhase => {
+  if (phase === "error") {
+    return hasUploadedAllChunks ? "merge_failed" : "upload_failed";
+  }
+  if (hasUploadedAllChunks) {
+    if (phase === "merge_failed") return "merge_failed";
+    if (phase === "success") return "success";
+    return "ready_to_merge";
+  }
+  if (phase === "uploading") return "paused";
+  if (phase === "merging") return "ready_to_merge";
+  return phase || "idle";
+};
+
 const buildItem = (file: File): LargeUploadItem => {
   const persistedItem = readPersisted().find(
     (item) =>
@@ -133,13 +154,13 @@ const buildItem = (file: File): LargeUploadItem => {
     ? sliceFileToBlobs(file, persistedItem.backendChunkSize)
     : sliceFileToBlobs(file);
   const uploadedChunkIndexes = persistedItem?.uploadedChunkIndexes || [];
+  const hasUploadedAllChunks =
+    chunks.length > 0 && uploadedChunkIndexes.length === chunks.length;
 
-  const restoredPhase =
-    persistedItem?.phase === "uploading"
-      ? "paused"
-      : persistedItem?.phase === "merging"
-        ? "ready_to_merge"
-        : persistedItem?.phase || "idle";
+  const restoredPhase = normalizePersistedPhase(
+    persistedItem?.phase as LargeUploadPhase | "error" | undefined,
+    hasUploadedAllChunks,
+  );
 
   return {
     id: getFileKey(file),
@@ -221,6 +242,94 @@ const isAlreadyUploadedError = (error: unknown) => {
   );
 };
 
+const isInvalidUploadSessionStatusError = (error: unknown) => {
+  const appError = error as { code?: string; message?: string };
+  return appError.code === "INVALID_UPLOAD_SESSION_STATUS";
+};
+
+const getErrorMessage = (error: unknown) => {
+  const appError = error as { message?: string };
+  return appError.message || "Đã có lỗi xảy ra.";
+};
+
+const getErrorCode = (error: unknown) => {
+  const appError = error as { code?: string };
+  return appError.code;
+};
+
+const parseMissingChunkIndexes = (error: unknown): number[] => {
+  const appError = error as { code?: string; detail?: unknown; message?: string };
+  if (appError.code !== "MISSING_UPLOAD_CHUNKS") return [];
+
+  if (Array.isArray(appError.detail)) {
+    return appError.detail
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 0);
+  }
+
+  const matches = appError.message?.match(/\d+/g) || [];
+  return matches
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0);
+};
+
+const removeUploadedChunkIndexes = (itemId: string, missingChunkIndexes: number[]) => {
+  if (missingChunkIndexes.length === 0) return;
+  const missingSet = new Set(missingChunkIndexes);
+  const item = state.items.find((currentItem) => currentItem.id === itemId);
+  if (!item) return;
+  const uploadedChunkIndexes = item.uploadedChunkIndexes.filter(
+    (chunkIndex) => !missingSet.has(chunkIndex),
+  );
+  updateItem(itemId, {
+    uploadedChunkIndexes,
+    uploadedChunks: uploadedChunkIndexes.length,
+    progress: Math.round((uploadedChunkIndexes.length / item.chunks.length) * 100),
+    phase: "upload_failed",
+    mergeStarted: false,
+    speedBps: 0,
+    error: `Thiếu chunk: ${missingChunkIndexes.join(", ")}`,
+  });
+};
+
+const reconcileUploadCompletion = async (item: LargeUploadItem) => {
+  if (!item.uploadSessionId) return false;
+  const status = await getChunkedUploadStatus(item.uploadSessionId);
+  const missingChunkIndexes = status.missingChunks || [];
+  if (missingChunkIndexes.length > 0) {
+    removeUploadedChunkIndexes(item.id, missingChunkIndexes);
+    return false;
+  }
+
+  if (
+    status.receivedChunks >= status.totalChunks &&
+    ["READY_TO_MERGE", "MERGING", "COMPLETED"].includes(status.status)
+  ) {
+    updateItem(item.id, {
+      phase: status.status === "MERGING"
+        ? "merging"
+        : status.status === "COMPLETED"
+          ? "success"
+          : "ready_to_merge",
+      progress: 100,
+      uploadedChunks: item.chunks.length,
+      retryCount: 0,
+      error: null,
+      speedBps: 0,
+    });
+    return true;
+  }
+
+  updateItem(item.id, {
+    phase: "upload_failed",
+    uploadedChunks: Math.min(status.receivedChunks, item.chunks.length),
+    progress: Math.round((Math.min(status.receivedChunks, item.chunks.length) / item.chunks.length) * 100),
+    error: "Backend chưa xác nhận đủ chunk.",
+    speedBps: 0,
+  });
+  return false;
+};
+
 const processQueue = (runId: number, controller: AbortController) => {
   const item = getActiveItem();
   if (!item || isPaused || item.phase !== "uploading" || !item.uploadSessionId) {
@@ -258,9 +367,21 @@ const processQueue = (runId: number, controller: AbortController) => {
           break;
         } catch (error) {
           if (controller.signal.aborted || isPaused || runId !== uploadRunId) break;
+          console.warn("[chunked-upload] chunk upload failed", {
+            uploadSessionId: latestItem.uploadSessionId,
+            chunkIndex: chunk.index,
+            attempt,
+            code: getErrorCode(error),
+            message: getErrorMessage(error),
+            error,
+          });
           if (isAlreadyUploadedError(error)) {
             lastError = null;
             refreshProgress(latestItem.id, chunk);
+            break;
+          }
+          if (isInvalidUploadSessionStatusError(error)) {
+            lastError = error as Error;
             break;
           }
           lastError = error as Error;
@@ -279,8 +400,8 @@ const processQueue = (runId: number, controller: AbortController) => {
       if (lastError && !controller.signal.aborted && !isPaused && runId === uploadRunId) {
         controller.abort();
         updateItem(latestItem.id, {
-          phase: "error",
-          error: lastError.message || "Upload chunk thất bại",
+          phase: "upload_failed",
+          error: getErrorMessage(lastError) || "Upload chunk thất bại",
           speedBps: 0,
         });
         break;
@@ -295,12 +416,15 @@ const processQueue = (runId: number, controller: AbortController) => {
       runId === uploadRunId &&
       latestItem.uploadedChunkIndexes.length === latestItem.chunks.length
     ) {
-      updateItem(latestItem.id, {
-        phase: "ready_to_merge",
-        progress: 100,
-        uploadedChunks: latestItem.chunks.length,
-        speedBps: 0,
-      });
+      try {
+        await reconcileUploadCompletion(latestItem);
+      } catch (error) {
+        updateItem(latestItem.id, {
+          phase: "upload_failed",
+          error: getErrorMessage(error) || "Không thể xác nhận trạng thái upload",
+          speedBps: 0,
+        });
+      }
     }
   };
 
@@ -331,6 +455,9 @@ const mergeUpload = async (item: LargeUploadItem) => {
       latestItem.uploadSessionId,
       latestItem.file.name,
     );
+    if (mergeResponse.status === "MERGING") {
+      await pollMergeStatus(latestItem.id, latestItem.uploadSessionId);
+    }
     updateItem(latestItem.id, {
       phase: "success",
       progress: 100,
@@ -347,14 +474,43 @@ const mergeUpload = async (item: LargeUploadItem) => {
       mergeResponse,
     };
   } catch (error) {
+    const missingChunkIndexes = parseMissingChunkIndexes(error);
+    if (missingChunkIndexes.length > 0) {
+      removeUploadedChunkIndexes(latestItem.id, missingChunkIndexes);
+      return null;
+    }
     updateItem(latestItem.id, {
-      phase: "error",
-      error: (error as Error).message || "Merge upload thất bại",
+      phase: "merge_failed",
+      error: getErrorMessage(error) || "Merge upload thất bại",
       mergeStarted: false,
       speedBps: 0,
     });
     return null;
   }
+};
+
+const pollMergeStatus = async (itemId: string, uploadSessionId: string) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < MERGE_POLL_TIMEOUT_MS) {
+    await new Promise((resolve) =>
+      window.setTimeout(resolve, MERGE_POLL_INTERVAL_MS),
+    );
+
+    const currentItem = state.items.find((item) => item.id === itemId);
+    if (!currentItem || currentItem.phase !== "merging") return;
+
+    const statusResponse = await getChunkedUploadStatus(uploadSessionId);
+    if (statusResponse.status === "COMPLETED") return;
+    if (
+      statusResponse.status === "FAILED" ||
+      statusResponse.status === "MERGE_FAILED" ||
+      statusResponse.status === "CANCELLED"
+    ) {
+      throw new Error("Merge upload thất bại. Bạn có thể thử lại merge.");
+    }
+  }
+
+  throw new Error("Merge upload chưa hoàn tất sau thời gian chờ.");
 };
 
 export const largeUploadStore = {
@@ -388,6 +544,36 @@ export const largeUploadStore = {
     const item = state.items.find((currentItem) => currentItem.id === targetId);
     if (!item || item.phase === "uploading" || item.phase === "merging") return;
 
+    const hasUploadedAllChunks =
+      item.uploadedChunkIndexes.length === item.chunks.length ||
+      item.progress >= 100;
+    if (
+      hasUploadedAllChunks ||
+      item.phase === "ready_to_merge" ||
+      item.phase === "merge_failed" ||
+      item.phase === "success"
+    ) {
+      if (item.uploadSessionId && item.phase !== "success" && item.phase !== "merge_failed") {
+        try {
+          await reconcileUploadCompletion(item);
+        } catch (error) {
+          updateItem(item.id, {
+            phase: "upload_failed",
+            error: getErrorMessage(error) || "Không thể xác nhận trạng thái upload",
+            speedBps: 0,
+          });
+        }
+      } else {
+        updateItem(item.id, {
+          phase: item.phase === "merge_failed" ? "merge_failed" : "ready_to_merge",
+          progress: 100,
+          uploadedChunks: item.chunks.length,
+          speedBps: 0,
+        });
+      }
+      return;
+    }
+
     if (state.activeItemId !== item.id) {
       state = { ...state, activeItemId: item.id };
     }
@@ -407,26 +593,21 @@ export const largeUploadStore = {
 
     try {
       const sessionItem = await ensureSession(item);
-      if (item.uploadSessionId) {
-        await resumeChunkedUpload(item.uploadSessionId);
-      }
       pendingChunkIndexes = sessionItem.chunks
         .map((chunk) => chunk.index)
         .filter((chunkIndex) => !sessionItem.uploadedChunkIndexes.includes(chunkIndex));
       if (pendingChunkIndexes.length === 0) {
-        updateItem(sessionItem.id, {
-          phase: "ready_to_merge",
-          progress: 100,
-          uploadedChunks: sessionItem.chunks.length,
-          speedBps: 0,
-        });
+        await reconcileUploadCompletion(sessionItem);
       } else {
+        if (item.uploadSessionId) {
+          await resumeChunkedUpload(item.uploadSessionId);
+        }
         processQueue(runId, abortController);
       }
     } catch (error) {
       updateItem(item.id, {
-        phase: "error",
-        error: (error as Error).message || "Không thể khởi tạo upload session",
+        phase: "upload_failed",
+        error: getErrorMessage(error) || "Không thể khởi tạo upload session",
         speedBps: 0,
       });
     }

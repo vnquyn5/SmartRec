@@ -1,6 +1,10 @@
 package com.example.smartrec.service.impl;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
@@ -107,6 +111,47 @@ public class UploadSessionRedisServiceImpl implements UploadSessionRedisService 
             redisTemplate.expire(key, SESSION_TTL);
         } catch (Exception e) {
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,"REDIS_ERROR","Không thể cập nhật trạng thái của chunk");
+        }
+    }
+
+    @Override
+    public long uploadedChunkCount(UUID uploadSessionId) {
+        try {
+            String key = CHUNK_KEY_PREFIX + uploadSessionId;
+            Long size = redisTemplate.opsForSet().size(key);
+            return size == null ? 0 : size;
+        } catch (Exception e) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,"REDIS_ERROR","Không thể đếm trạng thái chunk");
+        }
+    }
+
+    @Override
+    public List<Integer> missingChunkIndexes(UUID uploadSessionId, int totalChunks) {
+        try {
+            String key = CHUNK_KEY_PREFIX + uploadSessionId;
+            Set<Object> members = redisTemplate.opsForSet().members(key);
+            Set<Integer> uploadedIndexes = new HashSet<>();
+            if (members != null) {
+                for (Object member : members) {
+                    if (member instanceof Integer value) {
+                        uploadedIndexes.add(value);
+                    } else if (member instanceof Number value) {
+                        uploadedIndexes.add(value.intValue());
+                    } else if (member != null) {
+                        uploadedIndexes.add(Integer.parseInt(member.toString()));
+                    }
+                }
+            }
+
+            List<Integer> missing = new ArrayList<>();
+            for (int index = 0; index < totalChunks; index++) {
+                if (!uploadedIndexes.contains(index)) {
+                    missing.add(index);
+                }
+            }
+            return missing;
+        } catch (Exception e) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,"REDIS_ERROR","Không thể kiểm tra danh sách chunk còn thiếu");
         }
     }
 }

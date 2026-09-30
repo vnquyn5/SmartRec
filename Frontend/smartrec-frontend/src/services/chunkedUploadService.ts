@@ -30,6 +30,14 @@ export interface MergeUploadResponse {
   status: string;
 }
 
+export interface UploadSessionStatusResponse {
+  uploadSessionId: string;
+  status: string;
+  receivedChunks: number;
+  totalChunks: number;
+  missingChunks?: number[];
+}
+
 export async function initChunkedUpload(
   payload: InitUploadPayload,
 ): Promise<InitUploadResponse> {
@@ -113,6 +121,15 @@ export async function mergeChunkedUpload(
     });
     throw error;
   }
+}
+
+export async function getChunkedUploadStatus(
+  uploadSessionId: string,
+): Promise<UploadSessionStatusResponse> {
+  return api.get("/upload/status", {
+    params: { uploadSessionId },
+    timeout: 15000,
+  });
 }
 
 export async function pauseChunkedUpload(uploadSessionId: string) {

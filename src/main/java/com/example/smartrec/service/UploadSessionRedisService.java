@@ -13,4 +13,6 @@ public interface UploadSessionRedisService {
     boolean isChunkUploaded(UUID uploadSessionId,Integer chunkIndex);
     // đánh dấu chunk đã upload thành cônng trong redis chưa
     void markChunkUploaded(UUID uploadSessionId,Integer chunkIndex);
+    long uploadedChunkCount(UUID uploadSessionId);
+    java.util.List<Integer> missingChunkIndexes(UUID uploadSessionId, int totalChunks);
 }

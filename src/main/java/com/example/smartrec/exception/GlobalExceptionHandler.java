@@ -13,9 +13,12 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+        private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
         @ExceptionHandler(BadCredentialsException.class)
         public ResponseEntity<ErrorResponseDTO> handleBadCredentials(BadCredentialsException ex) {
@@ -57,7 +60,7 @@ public class GlobalExceptionHandler {
         ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
         errorResponseDTO.setCode(ex.getCode());
         errorResponseDTO.setMessage(ex.getMessage());
-        errorResponseDTO.setDetail(new ArrayList<>());
+        errorResponseDTO.setDetail(ex.getDetail());
         errorResponseDTO.setTimestamp(LocalDateTime.now());
         return ResponseEntity.status(ex.getStatus()).body(errorResponseDTO);
     }
@@ -92,12 +95,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponseDTO> handleException(
             Exception ex) {
-                ex.printStackTrace();
+                log.error("Unhandled backend exception", ex);
 
         ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
 
-        errorResponseDTO.setCode("INTERNAL_SERVER_ERROR");
-        errorResponseDTO.setMessage("Đã xảy ra lỗi hệ thống");
+        errorResponseDTO.setCode(ex.getClass().getSimpleName());
+        errorResponseDTO.setMessage(ex.getMessage() == null ? "Đã xảy ra lỗi hệ thống" : ex.getMessage());
         errorResponseDTO.setDetail(List.of());
         errorResponseDTO.setTimestamp(LocalDateTime.now());
 

@@ -17,6 +17,9 @@ public interface MediaFileRepository extends JpaRepository <MediaFile,UUID >{
     @Query("select mf from MediaFile mf where mf.object_key = :objectKey")
     Optional<MediaFile> findByObjectKey(@Param("objectKey") String objectKey);
 
+    @Query("select mf from MediaFile mf where mf.object_key = :objectKey order by mf.created_at asc")
+    List<MediaFile> findAllByObjectKey(@Param("objectKey") String objectKey);
+
     @Query("""
             select mf from MediaFile mf
             where mf.uploaded_by = :userId

@@ -53,7 +53,9 @@ export default function LargeFileUploadPage() {
   const location = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [durationByFileId, setDurationByFileId] = useState<Record<string, number>>({});
+  const [durationByFileId, setDurationByFileId] = useState<
+    Record<string, number>
+  >({});
   const [hiddenItemIds, setHiddenItemIds] = useState<Set<string>>(new Set());
   const [savedFiles, setSavedFiles] = useState<SavedFileInfo[]>([]);
   const [isSavingAll, setIsSavingAll] = useState<boolean>(false);
@@ -71,7 +73,9 @@ export default function LargeFileUploadPage() {
     null;
   const selectedFile = activeItem?.file || null;
   const chunks = activeItem?.chunks || [];
-  const fileDuration = activeItem ? durationByFileId[activeItem.id] ?? null : null;
+  const fileDuration = activeItem
+    ? (durationByFileId[activeItem.id] ?? null)
+    : null;
   const readyToSaveItems = visibleItems.filter(
     (item) => item.phase === "ready_to_merge",
   );
@@ -180,7 +184,9 @@ export default function LargeFileUploadPage() {
 
   const handleBackToUpload = () => navigate("/upload");
 
-  const buildSavedInfo = (item: NonNullable<typeof activeItem>): SavedFileInfo => ({
+  const buildSavedInfo = (
+    item: NonNullable<typeof activeItem>,
+  ): SavedFileInfo => ({
     id: item.id,
     name:
       (item.mergeResponse as { fileName?: string } | null)?.fileName ||
@@ -191,7 +197,12 @@ export default function LargeFileUploadPage() {
   });
 
   const handleSaveCurrent = async () => {
-    if (!activeItem || activeItem.phase !== "ready_to_merge") return;
+    const canMerge =
+      activeItem?.phase === "ready_to_merge" ||
+      (activeItem?.phase === "merge_failed" &&
+        activeItem.uploadedChunkIndexes.length === activeItem.chunks.length &&
+        !activeItem.mergeStarted);
+    if (!activeItem || !canMerge) return;
     const savedItem = await largeUploadStore.merge(activeItem.id);
     if (savedItem?.phase === "success") {
       setSavedFiles([buildSavedInfo(savedItem)]);
@@ -222,6 +233,10 @@ export default function LargeFileUploadPage() {
   const isPaused = activeItem?.phase === "paused";
   const isReadyToMerge = activeItem?.phase === "ready_to_merge";
   const isMerging = activeItem?.phase === "merging";
+  const canRetryMerge =
+    activeItem?.phase === "merge_failed" &&
+    activeItem.uploadedChunkIndexes.length === activeItem.chunks.length &&
+    !activeItem.mergeStarted;
   const uploadedBytes = activeItem?.uploadedChunks
     ? activeItem.uploadedChunks * (chunks[0]?.size || 0)
     : 0;
@@ -268,7 +283,8 @@ export default function LargeFileUploadPage() {
               }}
             >
               Tải lên file ghi âm/ghi hình (trên 2GB, tối đa 5GB). Chunked
-              Upload để đảm bảo tốc độ và độ ổn định. Tối đa {MAX_LARGE_FILES} file mỗi lần.
+              Upload để đảm bảo tốc độ và độ ổn định. Tối đa {MAX_LARGE_FILES}{" "}
+              file mỗi lần.
             </p>
           </div>
 
@@ -338,7 +354,8 @@ export default function LargeFileUploadPage() {
                   margin: "0 0 20px",
                 }}
               >
-                Hỗ trợ file trên 2GB đến 5GB · MP4 / MKV / MP3 / M4A · Tối đa {MAX_LARGE_FILES} file
+                Hỗ trợ file trên 2GB đến 5GB · MP4 / MKV / MP3 / M4A · Tối đa{" "}
+                {MAX_LARGE_FILES} file
               </p>
               <input
                 type="file"
@@ -403,7 +420,8 @@ export default function LargeFileUploadPage() {
                   borderRadius: "50%",
                 }}
               ></span>
-              Chunked Upload · Tối đa 5GB · Tối đa {MAX_LARGE_FILES} file · Hỗ trợ Pause/Resume
+              Chunked Upload · Tối đa 5GB · Tối đa {MAX_LARGE_FILES} file · Hỗ
+              trợ Pause/Resume
             </span>
           </div>
 
@@ -451,7 +469,13 @@ export default function LargeFileUploadPage() {
                     fontSize: "12px",
                   }}
                 >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {file.name}
                   </span>
                   <span style={{ flexShrink: 0, marginLeft: "12px" }}>
@@ -576,9 +600,9 @@ export default function LargeFileUploadPage() {
                               ? "#22c55e"
                               : isMerging
                                 ? "#f59e0b"
-                            : isUploading
-                              ? "#3e89ff"
-                              : "#8d96aa",
+                                : isUploading
+                                  ? "#3e89ff"
+                                  : "#8d96aa",
                           display: "flex",
                           alignItems: "center",
                           gap: "8px",
@@ -592,13 +616,15 @@ export default function LargeFileUploadPage() {
                             ? "Hoàn thành"
                             : isMerging
                               ? "Đang lưu"
-                              : isReadyToMerge
-                                ? "Sẵn sàng lưu"
-                              : isPaused
-                              ? "Tạm dừng"
-                              : isUploading
-                                ? "Đang tải lên"
-                                : "Sẵn sàng tải lên"}
+                              : canRetryMerge
+                                ? "Merge thất bại"
+                                : isReadyToMerge
+                                  ? "Sẵn sàng lưu"
+                                  : isPaused
+                                    ? "Tạm dừng"
+                                    : isUploading
+                                      ? "Đang tải lên"
+                                      : "Sẵn sàng tải lên"}
                         </span>
                         {fileDuration != null && fileDuration > 0 && (
                           <span style={{ color: "#576176" }}>
@@ -672,36 +698,42 @@ export default function LargeFileUploadPage() {
                       style={{
                         width: `${activeItem?.progress || 0}%`,
                         height: "100%",
-                        background: isDone || isReadyToMerge
-                          ? "#22c55e"
-                          : isPaused
-                            ? "#f59e0b"
-                            : "#f59e0b",
+                        background:
+                          isDone || isReadyToMerge
+                            ? "#22c55e"
+                            : isPaused
+                              ? "#f59e0b"
+                              : "#f59e0b",
                         transition: "width 0.15s linear",
                       }}
                     ></div>
                   </div>
 
                   {/* Nút Upload khi chưa bắt đầu */}
-                  {!isUploading && !isDone && !isReadyToMerge && !isMerging && (
-                    <button
-                      type="button"
-                      onClick={() => handleStartUpload()}
-                      style={{
-                        background: "linear-gradient(135deg, #f59e0b, #d97706)",
-                        border: "none",
-                        color: "#fff",
-                        padding: "6px 16px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: "700",
-                        cursor: "pointer",
-                        flexShrink: 0,
-                      }}
-                    >
-                      Upload
-                    </button>
-                  )}
+                  {!isUploading &&
+                    !isDone &&
+                    !isReadyToMerge &&
+                    !isMerging &&
+                    !canRetryMerge && (
+                      <button
+                        type="button"
+                        onClick={() => handleStartUpload()}
+                        style={{
+                          background:
+                            "linear-gradient(135deg, #f59e0b, #d97706)",
+                          border: "none",
+                          color: "#fff",
+                          padding: "6px 16px",
+                          borderRadius: "6px",
+                          fontSize: "12px",
+                          fontWeight: "700",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                        }}
+                      >
+                        Upload
+                      </button>
+                    )}
 
                   {/* Nút Pause/Resume khi đang upload */}
                   {isUploading && !isDone && (
@@ -728,7 +760,7 @@ export default function LargeFileUploadPage() {
                           cursor: "pointer",
                         }}
                       >
-                        {isPaused ? "Resume" : "Pause"}
+                        {isPaused ? "Tiếp tục" : "Tạm dừng"}
                       </button>
                       <button
                         type="button"
@@ -750,26 +782,32 @@ export default function LargeFileUploadPage() {
                   )}
 
                   {/* Nút Lưu khi đã upload đủ chunk */}
-                  {(isReadyToMerge || isMerging) && (
+                  {(isReadyToMerge || isMerging || canRetryMerge) && (
                     <button
                       type="button"
                       onClick={handleSaveCurrent}
                       disabled={isMerging || isSavingAll}
                       style={{
-                        background: isMerging || isSavingAll
-                          ? "rgba(255,255,255,0.08)"
-                          : "linear-gradient(135deg, #22c55e, #16a34a)",
+                        background:
+                          isMerging || isSavingAll
+                            ? "rgba(255,255,255,0.08)"
+                            : "linear-gradient(135deg, #22c55e, #16a34a)",
                         border: "none",
                         color: isMerging || isSavingAll ? "#576176" : "#fff",
                         padding: "6px 16px",
                         borderRadius: "6px",
                         fontSize: "12px",
                         fontWeight: "700",
-                        cursor: isMerging || isSavingAll ? "not-allowed" : "pointer",
+                        cursor:
+                          isMerging || isSavingAll ? "not-allowed" : "pointer",
                         flexShrink: 0,
                       }}
                     >
-                      {isMerging ? "Đang lưu..." : "Lưu"}
+                      {isMerging
+                        ? "Đang gộp file..."
+                        : canRetryMerge
+                          ? "Thử lại merge"
+                          : "Lưu"}
                     </button>
                   )}
                 </div>
@@ -794,7 +832,8 @@ export default function LargeFileUploadPage() {
                     <span>
                       {activeItem?.progress || 0}% hoàn thành
                       <span style={{ marginLeft: "8px", color: "#f59e0b" }}>
-                        (Chunk {activeItem?.uploadedChunks || 0}/{chunks.length})
+                        (Đang tải lên {activeItem?.uploadedChunks || 0}/
+                        {chunks.length})
                       </span>
                     </span>
                     {isUploading && !isPaused && (
@@ -939,7 +978,9 @@ export default function LargeFileUploadPage() {
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+            >
               {savedFiles.map((file) => (
                 <div
                   key={file.id}
@@ -972,7 +1013,10 @@ export default function LargeFileUploadPage() {
                       fontSize: "12px",
                     }}
                   >
-                    <span>Thời lượng: {file.duration ? formatTime(file.duration) : "Không có"}</span>
+                    <span>
+                      Thời lượng:{" "}
+                      {file.duration ? formatTime(file.duration) : "Không có"}
+                    </span>
                     <span>·</span>
                     <span>Kích thước: {formatBytes(file.size)}</span>
                     <span>·</span>
