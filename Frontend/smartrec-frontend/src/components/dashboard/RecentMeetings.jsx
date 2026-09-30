@@ -1,25 +1,33 @@
-import React, { useState } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
 const statusColors = {
-  Processed: { bg: "rgba(34,197,94,0.14)", text: "#22c55e" },
-  Processing: { bg: "rgba(62,137,255,0.14)", text: "#3e89ff" },
-  Failed: { bg: "rgba(255,77,93,0.14)", text: "#ff4d5d" },
-  Pending: { bg: "rgba(148,163,184,0.14)", text: "#94a3b8" },
+  "Đã xử lý": { bg: "rgba(34,197,94,0.14)", text: "#22c55e" },
+  "Đang xử lý": { bg: "rgba(62,137,255,0.14)", text: "#3e89ff" },
+  Lỗi: { bg: "rgba(255,77,93,0.14)", text: "#ff4d5d" },
+  "Chờ xử lý": { bg: "rgba(148,163,184,0.14)", text: "#94a3b8" },
 };
 
 const dotColors = {
-  Processed: "#22c55e",
-  Processing: "#3e89ff",
-  Failed: "#ff4d5d",
-  Pending: "#94a3b8",
+  "Đã xử lý": "#22c55e",
+  "Đang xử lý": "#3e89ff",
+  Lỗi: "#ff4d5d",
+  "Chờ xử lý": "#94a3b8",
 };
 
 const statusLabels = {
-  COMPLETED: "Processed",
-  PROCESSING: "Processing",
-  FAILED: "Failed",
-  PENDING: "Pending",
+  COMPLETED: "Đã xử lý",
+  PROCESSING: "Đang xử lý",
+  FAILED: "Lỗi",
+  PENDING: "Chờ xử lý",
 };
+
+const statusOptions = [
+  { value: "", label: "Tất cả" },
+  { value: "COMPLETED", label: "Đã xử lý" },
+  { value: "PROCESSING", label: "Đang xử lý" },
+  { value: "FAILED", label: "Lỗi" },
+  { value: "PENDING", label: "Chờ xử lý" },
+];
 
 const formatDate = (value) =>
   value
@@ -43,21 +51,27 @@ const formatDuration = (seconds) => {
 const RecentMeetings = ({
   meetings = [],
   totalMeetings = 0,
+  pageNumber = 0,
+  pageSize = 4,
+  totalPages = 0,
+  first = true,
+  last = true,
+  status = "",
+  onStatusChange,
+  onPageChange,
   isLoading = false,
 }) => {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState("All");
-  const recentMeetings = meetings.slice(0, 4).map((meeting) => ({
+  const recentMeetings = meetings.map((meeting) => ({
     ...meeting,
     name: meeting.fileName || "Untitled meeting",
     date: formatDate(meeting.createdAt),
     duration: formatDuration(meeting.durationSeconds),
-    status: statusLabels[meeting.status] || meeting.status || "Pending",
+    statusText: statusLabels[meeting.status] || meeting.status || "Chờ xử lý",
   }));
-  const filtered =
-    filter === "All"
-      ? recentMeetings
-      : recentMeetings.filter((meeting) => meeting.status === filter);
+  const firstItem =
+    totalMeetings === 0 ? 0 : pageNumber * pageSize + 1;
+  const lastItem = Math.min((pageNumber + 1) * pageSize, totalMeetings);
 
   return (
     <div
@@ -76,12 +90,16 @@ const RecentMeetings = ({
             />
           </svg>
           <span>Trạng thái:</span>
-          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            <option>Tất cả</option>
-            <option>Đã xử lý</option>
-            <option>Đang xử lý</option>
-            <option>Lỗi</option>
-            <option>Chờ xử lý</option>
+          <select
+            value={status}
+            onChange={(e) => onStatusChange?.(e.target.value)}
+            disabled={isLoading}
+          >
+            {statusOptions.map((option) => (
+              <option key={option.value || "all"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -98,17 +116,25 @@ const RecentMeetings = ({
             </tr>
           </thead>
           <tbody>
-            {filtered.map((m) => {
-              const sc = statusColors[m.status] || statusColors.Processing;
+            {isLoading &&
+              Array.from({ length: pageSize }, (_, index) => (
+                <tr key={`loading-${index}`}>
+                  <td colSpan="5">
+                    <div className="dashboard-row-skeleton" />
+                  </td>
+                </tr>
+              ))}
+            {!isLoading && recentMeetings.map((m) => {
+              const sc = statusColors[m.statusText] || statusColors["Đang xử lý"];
               return (
                 <tr key={m.id}>
                   <td>
-                    <div className="meeting-name-cell">
+                    <div className="meeting-name-cell" title={m.name}>
                       <span
                         className="meeting-dot"
-                        style={{ background: dotColors[m.status] }}
+                        style={{ background: dotColors[m.statusText] }}
                       />
-                      {m.name}
+                      <span className="meeting-name-text">{m.name}</span>
                     </div>
                   </td>
                   <td>{m.date}</td>
@@ -118,7 +144,7 @@ const RecentMeetings = ({
                       className="status-badge"
                       style={{ background: sc.bg, color: sc.text }}
                     >
-                      {m.status}
+                      {m.statusText}
                     </span>
                   </td>
                   <td>
@@ -175,6 +201,13 @@ const RecentMeetings = ({
                 </tr>
               );
             })}
+            {!isLoading && recentMeetings.length === 0 && (
+              <tr>
+                <td colSpan="5" className="meetings-empty-cell">
+                  Không có cuộc họp phù hợp.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -183,13 +216,23 @@ const RecentMeetings = ({
         <span className="meetings-count">
           {isLoading
             ? "Đang tải cuộc họp..."
-            : `Đang xem 1-${filtered.length} of ${totalMeetings} trang cuộc họp`}
+            : `Đang xem ${firstItem}-${lastItem} of ${totalMeetings} cuộc họp`}
         </span>
         <div className="meetings-pagination">
-          <button className="pagination-btn" disabled>
+          <button
+            className="pagination-btn"
+            disabled={first || isLoading}
+            onClick={() => onPageChange?.(Math.max(0, pageNumber - 1))}
+          >
             Trước
           </button>
-          <button className="pagination-btn">Sau</button>
+          <button
+            className="pagination-btn"
+            disabled={last || isLoading || totalPages <= 1}
+            onClick={() => onPageChange?.(pageNumber + 1)}
+          >
+            Sau
+          </button>
         </div>
       </div>
     </div>

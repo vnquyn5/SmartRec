@@ -740,11 +740,13 @@ export default function LargeFileUploadPage() {
                     <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
                       <button
                         type="button"
-                        onClick={
-                          isPaused
-                            ? largeUploadStore.resume
-                            : largeUploadStore.pause
-                        }
+                        onClick={() => {
+                          if (isPaused) {
+                            largeUploadStore.resume();
+                          } else {
+                            largeUploadStore.pause();
+                          }
+                        }}
                         style={{
                           background: isPaused
                             ? "rgba(34, 197, 94, 0.15)"

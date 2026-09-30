@@ -1,32 +1,100 @@
 import React, { useRef, useEffect, useState } from "react";
 
-const getChartData = (meetings) => {
-  const dates = Array.from({ length: 7 }, (_, index) => {
+const rangeOptions = [
+  { value: "day", label: "Theo ngày" },
+  { value: "week", label: "Theo tuần" },
+  { value: "month", label: "Theo tháng" },
+  { value: "year", label: "Theo năm" },
+];
+
+const sameDay = (left, right) =>
+  left.getFullYear() === right.getFullYear() &&
+  left.getMonth() === right.getMonth() &&
+  left.getDate() === right.getDate();
+
+const getChartBuckets = (range) => {
+  if (range === "day") {
+    return Array.from({ length: 24 }, (_, hour) => {
+      const date = new Date();
+      date.setMinutes(0, 0, 0);
+      date.setHours(hour);
+      return {
+        date,
+        label: `${String(hour).padStart(2, "0")}h`,
+        match: (createdAt) => sameDay(createdAt, date) && createdAt.getHours() === hour,
+      };
+    });
+  }
+
+  if (range === "month") {
+    return Array.from({ length: 30 }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (29 - index));
+      return {
+        date,
+        label: date.toLocaleDateString("vi-VN", {
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        match: (createdAt) => sameDay(createdAt, date),
+      };
+    });
+  }
+
+  if (range === "year") {
+    return Array.from({ length: 12 }, (_, index) => {
+      const date = new Date();
+      date.setDate(1);
+      date.setHours(0, 0, 0, 0);
+      date.setMonth(date.getMonth() - (11 - index));
+      return {
+        date,
+        label: date.toLocaleDateString("vi-VN", {
+          month: "short",
+        }),
+        match: (createdAt) =>
+          createdAt.getFullYear() === date.getFullYear() &&
+          createdAt.getMonth() === date.getMonth(),
+      };
+    });
+  }
+
+  return Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
     date.setHours(0, 0, 0, 0);
     date.setDate(date.getDate() - (6 - index));
-    return date;
+    return {
+      date,
+      label: date.toLocaleDateString("vi-VN", {
+        weekday: "short",
+      }),
+      match: (createdAt) => sameDay(createdAt, date),
+    };
   });
+};
+
+const getChartData = (meetings, range) => {
+  const buckets = getChartBuckets(range);
 
   return {
-    rawData: dates.map(
-      (date) =>
+    rawData: buckets.map(
+      (bucket) =>
         meetings.filter((meeting) => {
           const createdAt = new Date(meeting.createdAt);
-          return (
-            createdAt.getFullYear() === date.getFullYear() &&
-            createdAt.getMonth() === date.getMonth() &&
-            createdAt.getDate() === date.getDate()
-          );
+          return Number.isFinite(createdAt.getTime()) && bucket.match(createdAt);
         }).length,
     ),
-    dayLabels: dates.map((date) =>
-      date.toLocaleDateString("en-US", { weekday: "short" }),
-    ),
+    labels: buckets.map((bucket) => bucket.label),
   };
 };
 
-const MeetingChart = ({ meetings = [] }) => {
+const MeetingChart = ({
+  meetings = [],
+  isLoading = false,
+  range = "week",
+  onRangeChange,
+}) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [dimensions, setDimensions] = useState({ w: 0, h: 0 });
@@ -45,7 +113,7 @@ const MeetingChart = ({ meetings = [] }) => {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || dimensions.w === 0) return;
-    const { rawData, dayLabels } = getChartData(meetings);
+    const { rawData, labels } = getChartData(meetings, range);
 
     const dpr = window.devicePixelRatio || 1;
     const w = dimensions.w;
@@ -66,8 +134,11 @@ const MeetingChart = ({ meetings = [] }) => {
     const chartW = w - padLeft - padRight;
     const chartH = h - padTop - padBottom;
 
-    const maxVal = Math.max(...rawData) + 2;
-    const ySteps = [0, 5, 10, 15];
+    const maxDataValue = Math.max(1, ...rawData);
+    const maxVal = Math.max(5, Math.ceil(maxDataValue / 5) * 5);
+    const ySteps = Array.from({ length: 4 }, (_, index) =>
+      Math.round((maxVal / 3) * index),
+    );
 
     // Clear
     ctx.clearRect(0, 0, w, h);
@@ -93,8 +164,10 @@ const MeetingChart = ({ meetings = [] }) => {
     // X axis labels
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    const xStep = chartW / (dayLabels.length - 1);
-    dayLabels.forEach((label, i) => {
+    const xStep = labels.length > 1 ? chartW / (labels.length - 1) : chartW;
+    const labelStep = range === "day" || range === "month" ? 4 : 1;
+    labels.forEach((label, i) => {
+      if (i % labelStep !== 0 && i !== labels.length - 1) return;
       const x = padLeft + i * xStep;
       ctx.fillStyle = "#4b5672";
       ctx.fillText(label, x, padTop + chartH + 10);
@@ -102,8 +175,9 @@ const MeetingChart = ({ meetings = [] }) => {
 
     // Interpolate data points to the 7 day labels
     const dataLen = rawData.length;
-    const points = dayLabels.map((_, i) => {
-      const dataIdx = Math.round((i / (dayLabels.length - 1)) * (dataLen - 1));
+    const points = labels.map((_, i) => {
+      const dataIdx =
+        labels.length > 1 ? Math.round((i / (labels.length - 1)) * (dataLen - 1)) : 0;
       const x = padLeft + i * xStep;
       const y = padTop + chartH - (rawData[dataIdx] / maxVal) * chartH;
       return { x, y };
@@ -161,7 +235,7 @@ const MeetingChart = ({ meetings = [] }) => {
       ctx.lineWidth = 2;
       ctx.stroke();
     });
-  }, [dimensions, meetings]);
+  }, [dimensions, meetings, range]);
 
   return (
     <div
@@ -170,7 +244,19 @@ const MeetingChart = ({ meetings = [] }) => {
     >
       <div className="chart-header">
         <h3>Xử lý cuộc họp</h3>
-        <span className="chart-filter">7 Ngày gần nhất</span>
+        <select
+          className="chart-filter"
+          value={range}
+          onChange={(event) => onRangeChange?.(event.target.value)}
+          disabled={isLoading}
+          aria-label="Chọn khoảng thời gian biểu đồ"
+        >
+          {rangeOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div ref={containerRef} className="chart-canvas-wrap" style={{ flex: 1 }}>
         <canvas ref={canvasRef} />

@@ -1,10 +1,9 @@
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Routes, Route } from "react-router-dom";
 
 import DashboardLayout from "../components/layout/DashboardLayout";
 import DashboardPage from "../pages/dashboard/DashboardPage";
 import UploadPage from "../pages/upload/UploadPage";
-import LargeFileUploadPage from "../pages/upload/LargeFileUploadPage";
 import FileManagerPage from "../pages/meeting/FileManagerPage";
 import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
 import TrashPage from "../pages/trash/TrashPage";
@@ -31,7 +30,7 @@ const AppRoutes = () => {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/meeting/:id" element={<MeetingDetailPage />} />
           <Route path="/upload" element={<UploadPage />} />
-          <Route path="/upload/large" element={<LargeFileUploadPage />} />
+          <Route path="/upload/large" element={<Navigate to="/upload" replace />} />
           <Route path="/history" element={<FileManagerPage />} />
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/trash" element={<TrashPage />} />

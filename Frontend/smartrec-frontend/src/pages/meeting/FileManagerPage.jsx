@@ -50,6 +50,15 @@ const getExtension = (value) => {
 };
 const getBaseName = (value) =>
   value.slice(0, value.length - getExtension(value).length);
+const splitDisplayFileName = (value) => {
+  const name = value || "File không tên";
+  const extension = getExtension(name);
+  return {
+    name,
+    baseName: extension ? name.slice(0, -extension.length) : name,
+    extension,
+  };
+};
 const formatBytes = (value) => {
   if (!value) return "0 B";
   if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
@@ -386,17 +395,18 @@ export default function FileManagerPage() {
             onClick={() => navigate("/upload")}
           >
             <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
+              width="18"
+              height="18"
+              viewBox="0 0 20 20"
               fill="none"
               style={{ marginRight: 8 }}
             >
               <path
-                d="M8 2v12M2 8h12"
+                d="M10 13V3m0 0L6 7m4-4 4 4M4 12v4a1 1 0 001 1h10a1 1 0 001-1v-4"
                 stroke="currentColor"
-                strokeWidth="2"
+                strokeWidth="1.8"
                 strokeLinecap="round"
+                strokeLinejoin="round"
               />
             </svg>
             Tải lên
@@ -570,10 +580,10 @@ export default function FileManagerPage() {
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="min-w-[760px] w-full text-left text-sm">
+            <table className="w-full min-w-[980px] table-fixed text-left text-sm">
               <thead className="border-y border-white/5 bg-white/[0.015] text-[10px] uppercase tracking-wide text-slate-600">
                 <tr>
-                  <th className="w-10 px-4 py-3">
+                  <th className="w-12 px-4 py-3">
                     <input
                       ref={selectAllRef}
                       type="checkbox"
@@ -583,11 +593,11 @@ export default function FileManagerPage() {
                       className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 accent-blue-500"
                     />
                   </th>
-                  <th className="px-5 py-3 font-medium">File</th>
-                  <th className="px-5 py-3 font-medium">Kích thước</th>
-                  <th className="px-5 py-3 font-medium">Ngày tải lên</th>
-                  <th className="px-5 py-3 font-medium">Trạng thái</th>
-                  <th className="px-5 py-3 text-right font-medium">
+                  <th className="w-[44%] px-5 py-3 font-medium">File</th>
+                  <th className="w-32 px-5 py-3 font-medium">Kích thước</th>
+                  <th className="w-44 px-5 py-3 font-medium">Ngày tải lên</th>
+                  <th className="w-36 px-5 py-3 font-medium">Trạng thái</th>
+                  <th className="w-48 px-5 py-3 text-right font-medium">
                     Hành động
                   </th>
                 </tr>
@@ -601,124 +611,137 @@ export default function FileManagerPage() {
                         </td>
                       </tr>
                     ))
-                  : data.content.map((meeting) => (
-                      <tr
-                        key={meeting.id}
-                        onClick={() => openMeetingDetail(meeting)}
-                        className="cursor-pointer transition hover:bg-blue-500/[0.03]"
-                      >
-                        <td className="px-4 py-3">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(meeting.id)}
-                            onClick={(event) => event.stopPropagation()}
-                            onChange={() => toggleMeeting(meeting.id)}
-                            aria-label={`Chọn ${meeting.fileName || meeting.title || "file"}`}
-                            className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 accent-blue-500"
-                          />
-                        </td>
-                        <td className="px-4 py-3 font-medium text-slate-200">
-                          <div className="flex items-center gap-2.5">
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
-                              ▰
-                            </span>
-                            <div className="min-w-0">
-                              <div className="truncate">
-                                {meeting.fileName ||
-                                  meeting.title ||
-                                  "File không tên"}
-                              </div>
-                              <div className="mt-0.5 truncate font-mono text-[10px] text-slate-600">
-                                {shortId(meeting.mediaFileId)}
+                  : data.content.map((meeting) => {
+                      const fileName = meeting.fileName || meeting.title;
+                      const displayFile = splitDisplayFileName(fileName);
+
+                      return (
+                        <tr
+                          key={meeting.id}
+                          onClick={() => openMeetingDetail(meeting)}
+                          className="cursor-pointer transition hover:bg-blue-500/[0.03]"
+                        >
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(meeting.id)}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={() => toggleMeeting(meeting.id)}
+                              aria-label={`Chọn ${displayFile.name}`}
+                              className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 accent-blue-500"
+                            />
+                          </td>
+                          <td className="max-w-0 px-4 py-3 font-medium text-slate-200">
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                                ▰
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div
+                                  className="flex min-w-0 items-center"
+                                  title={displayFile.name}
+                                >
+                                  <span className="min-w-0 truncate">
+                                    {displayFile.baseName}
+                                  </span>
+                                  {displayFile.extension && (
+                                    <span className="shrink-0 text-slate-400">
+                                      {displayFile.extension}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 truncate font-mono text-[10px] text-slate-600">
+                                  {shortId(meeting.mediaFileId)}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-slate-500">
-                          {meeting.fileSizeBytes
-                            ? `${(meeting.fileSizeBytes / 1024 / 1024).toFixed(1)} MB`
-                            : "--"}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-500">
-                          {formatDate(meeting.createdAt)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <MeetingStatusBadge status={meeting.status} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end gap-1">
-                            <button
-                              type="button"
-                              title="Xem"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openMeetingDetail(meeting);
-                              }}
-                              className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
-                            >
-                              <EyeIcon />
-                            </button>
-                            <button
-                              type="button"
-                              title="Tải xuống"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleDownload(meeting);
-                              }}
-                              className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
-                            >
-                              <DownloadIcon />
-                            </button>
-                            <button
-                              type="button"
-                              title="Chia sẻ"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openShare(meeting);
-                              }}
-                              className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
-                            >
-                              <ShareIcon />
-                            </button>
-                            <button
-                              type="button"
-                              title="Xóa file"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setSelectedMeeting(meeting);
-                              }}
-                              className="rounded p-1.5 text-slate-600 transition hover:bg-red-500/10 hover:text-red-300"
-                            >
-                              <TrashIcon />
-                            </button>
-                            <button
-                              type="button"
-                              title="Đổi tên tệp"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openRename(meeting);
-                              }}
-                              className="rounded p-1.5 text-slate-600 transition hover:bg-blue-500/10 hover:text-blue-300"
-                            >
-                              <PencilIcon />
-                            </button>
-                            <button
-                              type="button"
-                              title="Đưa vào Workspace"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setActionMessage(
-                                  `Đã chọn “${meeting.fileName || meeting.title || "tệp"}” để đưa vào quy trình Workspace.`,
-                                );
-                              }}
-                              className="rounded p-1.5 text-slate-600 transition hover:bg-emerald-500/10 hover:text-emerald-300"
-                            >
-                              <PlayIcon />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-500">
+                            {meeting.fileSizeBytes
+                              ? `${(meeting.fileSizeBytes / 1024 / 1024).toFixed(1)} MB`
+                              : "--"}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-500">
+                            {formatDate(meeting.createdAt)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <MeetingStatusBadge status={meeting.status} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex justify-end gap-1">
+                              <button
+                                type="button"
+                                title="Xem"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openMeetingDetail(meeting);
+                                }}
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
+                              >
+                                <EyeIcon />
+                              </button>
+                              <button
+                                type="button"
+                                title="Tải xuống"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleDownload(meeting);
+                                }}
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
+                              >
+                                <DownloadIcon />
+                              </button>
+                              <button
+                                type="button"
+                                title="Chia sẻ"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openShare(meeting);
+                                }}
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
+                              >
+                                <ShareIcon />
+                              </button>
+                              <button
+                                type="button"
+                                title="Xóa file"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSelectedMeeting(meeting);
+                                }}
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-red-500/10 hover:text-red-300"
+                              >
+                                <TrashIcon />
+                              </button>
+                              <button
+                                type="button"
+                                title="Đổi tên tệp"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openRename(meeting);
+                                }}
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-blue-500/10 hover:text-blue-300"
+                              >
+                                <PencilIcon />
+                              </button>
+                              <button
+                                type="button"
+                                title="Đưa vào Workspace"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setActionMessage(
+                                    `Đã chọn “${displayFile.name}” để đưa vào quy trình Workspace.`,
+                                  );
+                                }}
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-emerald-500/10 hover:text-emerald-300"
+                              >
+                                <PlayIcon />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 {!loading && data.content.length === 0 && (
                   <tr>
                     <td

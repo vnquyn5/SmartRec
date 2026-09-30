@@ -1,13 +1,15 @@
 import React, { useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  completeSimpleUpload,
-  uploadSingleFile,
-} from "../../features/files/useSingleUpload";
-import {
   largeUploadStore,
   useLargeUploadStore,
 } from "../../hooks/useLargeUploadStore";
+import {
+  singleUploadStore,
+  useSingleUploadStore,
+} from "../../hooks/useSingleUploadStore";
+import { getAllMeetings } from "../../services/meetingService";
+import { getMediaDuration } from "../../utils/fileSlice";
 
 // Helper format bytes
 const formatBytes = (bytes) => {
@@ -18,10 +20,30 @@ const formatBytes = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 };
 
+const formatDuration = (seconds) => {
+  if (!seconds || !isFinite(seconds)) return "--";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const pad = (n) => n.toString().padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+};
+
+const formatCompletedAt = (value) => {
+  const date = value ? new Date(value) : new Date();
+  return `${date.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })} ${date.toLocaleDateString("vi-VN")}`;
+};
+
 // Allowed extensions
 const ALLOWED_EXTENSIONS = ["mp4", "mkv", "mp3", "m4a"];
-const MAX_FILES = 5;
-const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024;
+const MAX_SINGLE_FILES = 5;
+const MAX_CHUNKED_FILES = 3;
+const SINGLE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
+const CHUNKED_UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024;
 
 // Kiểm tra extension hợp lệ
 const isValidExtension = (fileName) => {
@@ -29,191 +51,231 @@ const isValidExtension = (fileName) => {
   return ALLOWED_EXTENSIONS.includes(ext);
 };
 
+const getFileIdentity = (file) =>
+  `${file.name}-${file.size}-${file.lastModified}`;
+
+const buildQueueIdentitySet = (singleItems, chunkedItems) =>
+  new Set([
+    ...singleItems
+      .filter((item) => item.hasFile !== false)
+      .map(
+        (item) =>
+          `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.file?.lastModified || item.lastModified || ""}`,
+      ),
+    ...chunkedItems
+      .filter((item) => item.hasFile !== false)
+      .map(
+        (item) =>
+          `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.file?.lastModified || item.lastModified || ""}`,
+      ),
+  ]);
+
+const findExistingMeetingFiles = async (files) => {
+  if (files.length === 0) return new Set();
+  const meetingsPage = await getAllMeetings();
+  const meetingKeys = new Set(
+    meetingsPage.content
+      .filter((meeting) => meeting.fileName && meeting.fileSizeBytes)
+      .map((meeting) => `${meeting.fileName}-${meeting.fileSizeBytes}`),
+  );
+  return new Set(
+    files
+      .filter((file) => meetingKeys.has(`${file.name}-${file.size}`))
+      .map(getFileIdentity),
+  );
+};
+
 const UploadPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const singleUploadState = useSingleUploadStore();
   const largeUploadState = useLargeUploadStore();
 
-  // Queue: mảng các file item
-  const [queue, setQueue] = useState([]);
   const [meetingName, setMeetingName] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [savedNotification, setSavedNotification] = useState(null);
+  const [uploadNotice, setUploadNotice] = useState(null);
+  const [savedFilesSummary, setSavedFilesSummary] = useState([]);
+  const [durationByFileId, setDurationByFileId] = useState({});
   const [savingIds, setSavingIds] = useState(() => new Set());
   const [isSavingAll, setIsSavingAll] = useState(false);
-  const [confirmLargeFile, setConfirmLargeFile] = useState(null);
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
-  const speedTrackerRef = useRef({});
-
-  // Cập nhật 1 item trong queue theo id
-  const updateItem = useCallback((id, updates) => {
-    setQueue((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...updates } : item)),
-    );
-  }, []);
-
-  // Bắt đầu upload 1 file
-  const startUpload = useCallback(
-    async (fileItem) => {
-      const controller = new AbortController();
-      const id = fileItem.id;
-
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, abortController: controller } : item,
-        ),
-      );
-
-      updateItem(id, {
-        phase: "uploading",
-        strategy: "single",
-        error: null,
-        speedBps: 0,
-      });
-      speedTrackerRef.current[id] = { lastLoaded: 0, lastTime: Date.now() };
-
-      try {
-        let uploadResponse;
-        if (fileItem.directUpload?.putSucceeded && fileItem.directUpload?.completePayload) {
-          updateItem(id, {
-            phase: "finalizing",
-            progress: 100,
-            speedBps: 0,
-            error: null,
-          });
-          uploadResponse = await completeSimpleUpload(
-            fileItem.directUpload.completePayload,
-            controller.signal,
-          );
-        } else {
-          uploadResponse = await uploadSingleFile(
-            fileItem.file,
-            meetingName,
-            controller.signal,
-            (event) => {
-              if (event.total) {
-                const now = Date.now();
-                const tracker = speedTrackerRef.current[id] || {
-                  lastLoaded: 0,
-                  lastTime: now,
-                };
-                const timeDiff = (now - tracker.lastTime) / 1000;
-
-                const updates = {
-                  progress: Math.round((event.loaded / event.total) * 100),
-                };
-
-                if (timeDiff >= 0.5) {
-                  const bytesDiff = event.loaded - tracker.lastLoaded;
-                  if (bytesDiff > 0) {
-                    updates.speedBps = bytesDiff / timeDiff;
-                  }
-                  tracker.lastTime = now;
-                  tracker.lastLoaded = event.loaded;
-                  speedTrackerRef.current[id] = tracker;
-                }
-
-                updateItem(id, updates);
-              }
-            },
-            (completePayload) => {
-              updateItem(id, {
-                phase: "finalizing",
-                progress: 100,
-                speedBps: 0,
-                directUpload: {
-                  putSucceeded: true,
-                  completePayload,
-                },
-              });
-            },
-          );
-        }
-        updateItem(id, {
-          phase: "success",
-          progress: 100,
-          uploadResponse,
-          directUpload: null,
-        });
-      } catch (err) {
-        if (err.kind === "canceled" || err.message === "canceled") {
-          setQueue((prev) =>
-            prev.map((item) => {
-              if (item.id !== id) return item;
-              if (item.phase === "paused" || item.phase === "canceled")
-                return item;
-              return { ...item, phase: "idle", progress: 0 };
-            }),
-          );
-        } else {
-          updateItem(id, {
-            phase: "error",
-            error: err.message || "Upload thất bại",
-          });
-        }
-      }
-    },
-    [meetingName, updateItem],
-  );
+  const queue = singleUploadState.items;
 
   // Xử lý thêm file(s) vào queue
   const addFilesToQueue = useCallback(
-    (files) => {
+    async (files) => {
       const fileArray = Array.from(files);
 
       const validFiles = [];
       for (const file of fileArray) {
         if (!isValidExtension(file.name)) {
-          alert(
-            `File "${file.name}" không được hỗ trợ. Chỉ chấp nhận .mp4, .mkv, .mp3, .m4a`,
+          setUploadNotice(
+            `File "${file.name}" không được hỗ trợ và đã được bỏ qua.`,
           );
           continue;
         }
-        if (file.size > MAX_FILE_SIZE) {
-          setConfirmLargeFile(file);
+        if (file.size > CHUNKED_UPLOAD_LIMIT) {
+          setUploadNotice(
+            `File "${file.name}" vượt quá giới hạn 5GB và đã được bỏ qua.`,
+          );
           continue;
         }
         validFiles.push(file);
       }
 
-      const activeCount = queue.filter((item) =>
-        ["idle", "uploading", "finalizing", "paused"].includes(item.phase),
-      ).length;
-      const availableSlots = MAX_FILES - activeCount;
+      const uniqueFiles = [];
+      const seenSelectionKeys = new Set();
+      const queueKeys = buildQueueIdentitySet(
+        singleUploadState.items,
+        largeUploadState.items,
+      );
+      const skippedSelectionDuplicates = [];
+      const skippedQueueDuplicates = [];
 
-      if (availableSlots <= 0) {
-        alert(
-          `Chỉ được upload tối đa ${MAX_FILES} file đang hoạt động. Hiện tại đã có ${activeCount} file đang upload hoặc xử lý.`,
+      for (const file of validFiles) {
+        const identity = getFileIdentity(file);
+        if (seenSelectionKeys.has(identity)) {
+          skippedSelectionDuplicates.push(file.name);
+          continue;
+        }
+        seenSelectionKeys.add(identity);
+        if (queueKeys.has(identity)) {
+          skippedQueueDuplicates.push(file.name);
+          continue;
+        }
+        uniqueFiles.push(file);
+      }
+
+      let existingKeys = new Set();
+      try {
+        existingKeys = await findExistingMeetingFiles(uniqueFiles);
+      } catch (error) {
+        setUploadNotice(
+          "Không thể kiểm tra file trùng từ hệ thống. Vui lòng thử lại.",
         );
         return;
       }
 
-      if (validFiles.length === 0) return;
+      const existingFiles = uniqueFiles.filter((file) =>
+        existingKeys.has(getFileIdentity(file)),
+      );
+      const uploadableFiles = uniqueFiles.filter(
+        (file) => !existingKeys.has(getFileIdentity(file)),
+      );
 
-      if (validFiles.length > availableSlots) validFiles.splice(availableSlots);
+      if (uploadableFiles.length > 0) {
+        const durationEntries = await Promise.all(
+          uploadableFiles.map(async (file) => {
+            try {
+              return [getFileIdentity(file), await getMediaDuration(file)];
+            } catch {
+              return [getFileIdentity(file), null];
+            }
+          }),
+        );
+        setDurationByFileId((current) => ({
+          ...current,
+          ...Object.fromEntries(durationEntries),
+        }));
+      }
 
-      const newItems = validFiles.map((file) => ({
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        file,
-        phase: "idle",
-        progress: 0,
-        strategy: "single",
-        chunkInfo: null,
-        error: null,
-        saved: false,
-        uploadResponse: null,
-        directUpload: null,
-        abortController: null,
-      }));
+      const singleFiles = [];
+      const chunkedFiles = [];
+      for (const file of uploadableFiles) {
+        if (file.size <= SINGLE_UPLOAD_LIMIT) {
+          singleFiles.push(file);
+        } else {
+          chunkedFiles.push(file);
+        }
+      }
 
-      setQueue((prev) => [...prev, ...newItems]);
+      const activeSingleCount = singleUploadState.items.filter((item) =>
+        ["idle", "uploading", "finalizing", "paused"].includes(item.phase),
+      ).length;
+      const availableSingleSlots = MAX_SINGLE_FILES - activeSingleCount;
+      const originalSingleCount = singleFiles.length;
 
-      setTimeout(() => {
-        newItems.forEach((item) => startUpload(item));
-      }, 100);
+      if (singleFiles.length > availableSingleSlots) {
+        singleFiles.splice(Math.max(0, availableSingleSlots));
+      }
+
+      const activeChunkedCount = largeUploadState.items.filter((item) =>
+        ["idle", "uploading", "paused", "ready_to_merge", "merging"].includes(
+          item.phase,
+        ),
+      ).length;
+      const availableChunkedSlots = MAX_CHUNKED_FILES - activeChunkedCount;
+      const originalChunkedCount = chunkedFiles.length;
+
+      if (chunkedFiles.length > availableChunkedSlots) {
+        chunkedFiles.splice(Math.max(0, availableChunkedSlots));
+      }
+
+      if (
+        singleFiles.length < originalSingleCount ||
+        chunkedFiles.length < originalChunkedCount ||
+        existingFiles.length > 0 ||
+        skippedSelectionDuplicates.length > 0 ||
+        skippedQueueDuplicates.length > 0
+      ) {
+        const messageParts = [];
+        if (existingFiles.length > 0) {
+          messageParts.push(
+            `${existingFiles.length} file đã tồn tại và được bỏ qua: ${existingFiles
+              .map((file) => file.name)
+              .join(", ")}`,
+          );
+        }
+        if (skippedSelectionDuplicates.length > 0) {
+          messageParts.push(
+            `${skippedSelectionDuplicates.length} file trùng trong lựa chọn được bỏ qua`,
+          );
+        }
+        if (skippedQueueDuplicates.length > 0) {
+          messageParts.push(
+            `${skippedQueueDuplicates.length} file đã có trong hàng chờ được bỏ qua`,
+          );
+        }
+        if (originalSingleCount > 0) {
+          messageParts.push(
+            `Đã chọn ${singleFiles.length}/${originalSingleCount} file thường`,
+          );
+        }
+        if (originalChunkedCount > 0) {
+          messageParts.push(
+            `Đã chọn ${chunkedFiles.length}/${originalChunkedCount} file lớn`,
+          );
+        }
+        setUploadNotice(`${messageParts.join(". ")} theo giới hạn cho phép.`);
+        window.setTimeout(() => setUploadNotice(null), 3500);
+      }
+
+      if (uploadableFiles.length === 0 && existingFiles.length > 0) {
+        setUploadNotice("Tất cả file đã chọn đã tồn tại trong hệ thống.");
+        window.setTimeout(() => setUploadNotice(null), 3500);
+        return;
+      }
+
+      if (singleFiles.length > 0) {
+        singleUploadStore.addFiles(singleFiles, meetingName);
+      }
+
+      if (chunkedFiles.length > 0) {
+        const chunkedIds = chunkedFiles.map(
+          (file) => `${file.name}-${file.size}-${file.lastModified}`,
+        );
+        largeUploadStore.addFiles(chunkedFiles);
+        const hasActiveChunkedUpload = largeUploadState.items.some((item) =>
+          ["uploading", "merging"].includes(item.phase),
+        );
+        if (!hasActiveChunkedUpload) {
+          window.setTimeout(() => largeUploadStore.start(chunkedIds[0]), 0);
+        }
+      }
     },
-    [queue, startUpload],
+    [largeUploadState.items, meetingName, singleUploadState.items],
   );
 
   // Xử lý chọn file qua input
@@ -241,37 +303,20 @@ const UploadPage = () => {
     }
   };
 
-  // Xóa 1 file khỏi queue
-  const handleRemoveFile = useCallback((id) => {
-    setQueue((prev) => {
-      const item = prev.find((i) => i.id === id);
-      if (item && item.abortController) {
-        item.abortController.abort();
-      }
-      const newQueue = prev.filter((i) => i.id !== id);
-      return newQueue;
-    });
+  const removeItemFromUI = useCallback((item) => {
+    if (item.strategy === "chunk") {
+      largeUploadStore.remove(item.id);
+      return;
+    }
+    singleUploadStore.remove(item.id);
   }, []);
 
-  const handlePauseFile = useCallback(
-    (id, strategy = "single") => {
-      if (strategy === "chunk") {
-        largeUploadStore.selectItem(id);
-        largeUploadStore.pause();
-        return;
-      }
-
-      const item = queue.find((queueItem) => queueItem.id === id);
-      if (!item || item.phase !== "uploading") return;
-      item.abortController?.abort();
-      updateItem(id, {
-        phase: "paused",
-        speedBps: 0,
-        abortController: null,
-      });
-    },
-    [queue, updateItem],
-  );
+  const handlePauseFile = useCallback((id, strategy = "single") => {
+    if (strategy === "chunk") {
+      largeUploadStore.selectItem(id);
+      largeUploadStore.pause();
+    }
+  }, []);
 
   const handleCancelFile = useCallback(
     (id, strategy = "single") => {
@@ -281,18 +326,13 @@ const UploadPage = () => {
         return;
       }
 
-      const item = queue.find((queueItem) => queueItem.id === id);
+      const item = singleUploadState.items.find(
+        (queueItem) => queueItem.id === id,
+      );
       if (!item || item.phase === "success") return;
-      item.abortController?.abort();
-      updateItem(id, {
-        phase: "canceled",
-        progress: 0,
-        speedBps: 0,
-        error: "Upload đã huỷ.",
-        abortController: null,
-      });
+      singleUploadStore.cancel(id);
     },
-    [queue, updateItem],
+    [singleUploadState.items],
   );
 
   const handleRetryFile = useCallback(
@@ -300,20 +340,12 @@ const UploadPage = () => {
       if (item.strategy === "chunk") {
         largeUploadStore.selectItem(item.id);
         largeUploadStore.start(item.id);
-        navigate("/upload/large");
         return;
       }
 
-      updateItem(item.id, {
-        phase: "idle",
-        progress: 0,
-        error: null,
-        speedBps: 0,
-        abortController: null,
-      });
-      startUpload({ ...item, progress: 0, error: null });
+      singleUploadStore.retry(item.id, meetingName);
     },
-    [navigate, startUpload, updateItem],
+    [meetingName, navigate],
   );
 
   // The upload API already persists the file; saving here confirms it locally.
@@ -324,77 +356,242 @@ const UploadPage = () => {
     return true;
   }, []);
 
+  const buildSavedSummary = useCallback(
+    (item, completedAt = new Date().toISOString()) => ({
+      id: item.id,
+      fileName:
+        item.uploadResponse?.fileName ||
+        item.mergeResponse?.fileName ||
+        item.fileName ||
+        item.file?.name ||
+        "File không tên",
+      fileSize: item.fileSize || item.file?.size || 0,
+      duration:
+        item.uploadResponse?.durationSeconds ??
+        item.mergeResponse?.durationSeconds ??
+        durationByFileId[item.id] ??
+        durationByFileId[
+          `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.lastModified || item.file?.lastModified || ""}`
+        ] ??
+        null,
+      completedAt,
+      uploadType: item.strategy === "chunk" ? "CHUNKED" : "SINGLE",
+    }),
+    [durationByFileId],
+  );
+
   const handleSaveFile = useCallback(
     async (id) => {
       if (isSavingAllRef.current || savingIdsRef.current.has(id)) return;
 
-      const item = queue.find((queueItem) => queueItem.id === id);
-      if (!item || item.phase !== "success") return;
+      const singleItem = singleUploadState.items.find(
+        (queueItem) => queueItem.id === id,
+      );
+      const chunkItem = largeUploadState.items.find(
+        (queueItem) => queueItem.id === id,
+      );
+      const item = singleItem || chunkItem;
+      if (!item) return;
 
       savingIdsRef.current.add(id);
       setSavingIds(new Set(savingIdsRef.current));
 
       try {
-        await persistFile(item);
-        setQueue((prev) => prev.filter((queueItem) => queueItem.id !== id));
-        setSavedNotification("Đã lưu thành công!");
-        setTimeout(() => setSavedNotification(null), 3000);
+        if (singleItem) {
+          if (singleItem.phase !== "success") return;
+          await persistFile(singleItem);
+          const summary = buildSavedSummary(singleItem);
+          setSavedFilesSummary([summary]);
+          singleUploadStore.markSaved(id);
+        } else {
+          if (chunkItem.phase === "success") {
+            const summary = buildSavedSummary(
+              {
+                ...chunkItem,
+                strategy: "chunk",
+                fileName: chunkItem.fileName || chunkItem.file?.name,
+                fileSize: chunkItem.fileSize || chunkItem.file?.size,
+                lastModified:
+                  chunkItem.lastModified || chunkItem.file?.lastModified,
+              },
+              chunkItem.completedAt || new Date().toISOString(),
+            );
+            setSavedFilesSummary([summary]);
+            largeUploadStore.markSaved(id);
+            return;
+          }
+
+          const canMerge =
+            chunkItem.phase === "ready_to_merge" ||
+            (chunkItem.phase === "merge_failed" &&
+              chunkItem.uploadedChunkIndexes.length ===
+                chunkItem.chunks.length &&
+              !chunkItem.mergeStarted);
+          if (!canMerge) return;
+          largeUploadStore.selectItem(id);
+          const savedItem = await largeUploadStore.merge(id);
+          if (savedItem?.phase === "success") {
+            setSavedFilesSummary([
+              buildSavedSummary(
+                {
+                  ...savedItem,
+                  strategy: "chunk",
+                  fileName: savedItem.fileName || savedItem.file?.name,
+                  fileSize: savedItem.fileSize || savedItem.file?.size,
+                  lastModified:
+                    savedItem.lastModified || savedItem.file?.lastModified,
+                },
+                savedItem.completedAt || new Date().toISOString(),
+              ),
+            ]);
+            largeUploadStore.markSaved(id);
+          }
+        }
       } catch (error) {
-        updateItem(id, {
-          saveError: error.message || "Lưu file thất bại",
-        });
+        if (singleItem) {
+          singleUploadStore.setSaveError(
+            id,
+            error.message || "Lưu file thất bại",
+          );
+        }
       } finally {
         savingIdsRef.current.delete(id);
         setSavingIds(new Set(savingIdsRef.current));
       }
     },
-    [persistFile, queue, updateItem],
+    [
+      buildSavedSummary,
+      largeUploadState.items,
+      persistFile,
+      singleUploadState.items,
+    ],
   );
 
   const handleSaveAll = useCallback(async () => {
     if (isSavingAllRef.current || savingIdsRef.current.size > 0) return;
 
-    const itemsToSave = queue.filter((item) => item.phase === "success");
-    if (itemsToSave.length === 0) return;
+    const singleItemsToSave = singleUploadState.items.filter(
+      (item) => item.phase === "success" && !item.saved,
+    );
+    const chunkItemsToSave = largeUploadState.items.filter(
+      (item) =>
+        (item.phase === "success" && !item.saved) ||
+        item.phase === "ready_to_merge" ||
+        (item.phase === "merge_failed" &&
+          item.uploadedChunkIndexes.length === item.chunks.length &&
+          !item.mergeStarted),
+    );
+    const totalToSave = singleItemsToSave.length + chunkItemsToSave.length;
+    if (totalToSave === 0) return;
 
     isSavingAllRef.current = true;
     setIsSavingAll(true);
 
-    const savedIds = [];
+    const savedSingleIds = [];
+    const successfulSummaries = [];
+    const failedNames = [];
     try {
-      for (const item of itemsToSave) {
+      for (const item of singleItemsToSave) {
         try {
           await persistFile(item);
-          savedIds.push(item.id);
+          savedSingleIds.push(item.id);
+          successfulSummaries.push(buildSavedSummary(item));
         } catch (error) {
-          updateItem(item.id, {
-            saveError: error.message || "Lưu file thất bại",
-          });
+          failedNames.push(
+            item.fileName || item.file?.name || "File không tên",
+          );
+          singleUploadStore.setSaveError(
+            item.id,
+            error.message || "Lưu file thất bại",
+          );
         }
       }
 
-      if (savedIds.length > 0) {
-        setQueue((prev) => prev.filter((item) => !savedIds.includes(item.id)));
-        setSavedNotification(
-          savedIds.length === itemsToSave.length
-            ? "Đã lưu tất cả file thành công!"
-            : `Đã lưu ${savedIds.length}/${itemsToSave.length} file.`,
+      for (const item of chunkItemsToSave) {
+        if (item.phase === "success") {
+          successfulSummaries.push(
+            buildSavedSummary(
+              {
+                ...item,
+                strategy: "chunk",
+                fileName: item.fileName || item.file?.name,
+                fileSize: item.fileSize || item.file?.size,
+                lastModified: item.lastModified || item.file?.lastModified,
+              },
+              item.completedAt || new Date().toISOString(),
+            ),
+          );
+          largeUploadStore.markSaved(item.id);
+          continue;
+        }
+
+        const savedItem = await largeUploadStore.merge(item.id);
+        if (savedItem?.phase === "success") {
+          successfulSummaries.push(
+            buildSavedSummary(
+              {
+                ...savedItem,
+                strategy: "chunk",
+                fileName: savedItem.fileName || savedItem.file?.name,
+                fileSize: savedItem.fileSize || savedItem.file?.size,
+                lastModified:
+                  savedItem.lastModified || savedItem.file?.lastModified,
+              },
+              savedItem.completedAt || new Date().toISOString(),
+            ),
+          );
+          largeUploadStore.markSaved(item.id);
+        } else {
+          failedNames.push(
+            item.fileName || item.file?.name || "File không tên",
+          );
+        }
+      }
+
+      if (successfulSummaries.length > 0) {
+        setSavedFilesSummary(successfulSummaries);
+        savedSingleIds.forEach((id) => singleUploadStore.markSaved(id));
+      }
+
+      if (failedNames.length > 0) {
+        setUploadNotice(
+          `Không thể lưu ${failedNames.length} file: ${failedNames.join(", ")}`,
         );
-        setTimeout(() => setSavedNotification(null), 3000);
+        window.setTimeout(() => setUploadNotice(null), 4000);
       }
     } finally {
       isSavingAllRef.current = false;
       setIsSavingAll(false);
     }
-  }, [persistFile, queue, updateItem]);
+  }, [
+    buildSavedSummary,
+    largeUploadState.items,
+    persistFile,
+    singleUploadState.items,
+  ]);
 
   const activeCount = queue.filter((item) =>
     ["idle", "uploading", "finalizing", "paused"].includes(item.phase),
   ).length;
   const completedCount = queue.filter(
-    (item) => item.phase === "success",
+    (item) => item.phase === "success" && !item.saved,
   ).length;
-  const canAddMore = activeCount < MAX_FILES;
+  const readyChunkedSaveCount = largeUploadState.items.filter(
+    (item) =>
+      (item.phase === "success" && !item.saved) ||
+      item.phase === "ready_to_merge" ||
+      (item.phase === "merge_failed" &&
+        item.uploadedChunkIndexes.length === item.chunks.length &&
+        !item.mergeStarted),
+  ).length;
+  const saveableCount = completedCount + readyChunkedSaveCount;
+  const canAddMore =
+    activeCount < MAX_SINGLE_FILES ||
+    largeUploadState.items.filter((item) =>
+      ["idle", "uploading", "paused", "ready_to_merge", "merging"].includes(
+        item.phase,
+      ),
+    ).length < MAX_CHUNKED_FILES;
   const largeQueueItems = largeUploadState.items.map((item) => ({
     id: item.id,
     file: item.file,
@@ -406,10 +603,20 @@ const UploadPage = () => {
       total: item.chunks.length,
     },
     error: item.error,
-    saved: false,
+    saved: Boolean(item.saved),
+    completedAt: item.completedAt,
     uploadResponse: null,
     abortController: null,
     speedBps: item.speedBps,
+    uploadSessionId: item.uploadSessionId,
+    uploadedChunkIndexes: item.uploadedChunkIndexes,
+    chunks: item.chunks,
+    mergeStarted: item.mergeStarted,
+    mergeResponse: item.mergeResponse,
+    fileName: item.fileName,
+    fileSize: item.fileSize,
+    lastModified: item.lastModified,
+    hasFile: item.hasFile,
   }));
   const displayQueue = [...queue, ...largeQueueItems];
 
@@ -448,7 +655,8 @@ const UploadPage = () => {
               }}
             >
               Tải lên một hoặc nhiều file ghi âm/ghi hình đã có sẵn để hệ thống
-              phân tích và tạo bản ghi. Tối đa {MAX_FILES} file mỗi lần.
+              phân tích và tạo bản ghi. Tối đa {MAX_SINGLE_FILES} file thường và{" "}
+              {MAX_CHUNKED_FILES} file lớn.
             </p>
           </div>
 
@@ -482,6 +690,22 @@ const UploadPage = () => {
                 <polyline points="22 4 12 14.01 9 11.01"></polyline>
               </svg>
               <span style={{ fontWeight: "600" }}>{savedNotification}</span>
+            </div>
+          )}
+
+          {uploadNotice && (
+            <div
+              style={{
+                padding: "12px 16px",
+                background: "rgba(62, 137, 255, 0.1)",
+                color: "#8db7ff",
+                borderRadius: "8px",
+                marginBottom: "16px",
+                fontSize: "13px",
+                border: "1px solid rgba(62, 137, 255, 0.25)",
+              }}
+            >
+              {uploadNotice}
             </div>
           )}
 
@@ -551,12 +775,11 @@ const UploadPage = () => {
                   margin: "0 0 20px",
                 }}
               >
-                Hỗ trợ tải lên tối đa {MAX_FILES} file ({activeCount}/
-                {MAX_FILES})
+                Hỗ trợ file thường đến 2GB và file lớn đến 5GB
               </p>
               <input
                 type="file"
-                accept=".mp4,.mkv,.mp3"
+                accept=".mp4,.mkv,.mp3,.m4a"
                 multiple
                 style={{ display: "none" }}
                 ref={fileInputRef}
@@ -616,12 +839,11 @@ const UploadPage = () => {
                   borderRadius: "50%",
                 }}
               ></span>
-              Định dạng hỗ trợ: .mp4, .mkv, .mp3 - Tối đa {MAX_FILES} file mỗi
-              lần
+              Định dạng hỗ trợ: .mp4, .mkv, .mp3, .m4a
             </span>
           </div>
 
-          {displayQueue.length > 0 && (
+          {saveableCount >= 2 && (
             <div
               style={{
                 display: "flex",
@@ -633,22 +855,22 @@ const UploadPage = () => {
                 type="button"
                 onClick={handleSaveAll}
                 disabled={
-                  isSavingAll || savingIds.size > 0 || completedCount === 0
+                  isSavingAll || savingIds.size > 0 || saveableCount < 2
                 }
                 style={{
                   background:
-                    completedCount > 0 && !isSavingAll
+                    saveableCount >= 2 && !isSavingAll
                       ? "linear-gradient(135deg, #22c55e, #16a34a)"
                       : "rgba(255,255,255,0.08)",
                   border: "none",
                   color:
-                    completedCount > 0 && !isSavingAll ? "#fff" : "#576176",
+                    saveableCount >= 2 && !isSavingAll ? "#fff" : "#576176",
                   padding: "8px 16px",
                   borderRadius: "6px",
                   fontSize: "12px",
                   fontWeight: "700",
                   cursor:
-                    completedCount > 0 && !isSavingAll
+                    saveableCount >= 2 && !isSavingAll
                       ? "pointer"
                       : "not-allowed",
                 }}
@@ -670,18 +892,26 @@ const UploadPage = () => {
             >
               {displayQueue.map((item) => {
                 const isDone = item.phase === "success";
-                const isError = item.phase === "error";
+                const isError =
+                  item.phase === "error" || item.phase === "upload_failed";
+                const isInterruptedSingle =
+                  item.strategy === "single" &&
+                  isError &&
+                  item.error?.includes("gián đoạn");
                 const isCanceled = item.phase === "canceled";
                 const isPaused = item.phase === "paused";
                 const isReadyToMerge = item.phase === "ready_to_merge";
                 const isMerging = item.phase === "merging";
+                const isNeedsFile = item.phase === "needs_file";
+                const isMergeFailed = item.phase === "merge_failed";
                 const canRetryMerge =
                   item.strategy === "chunk" &&
-                  isError &&
-                  item.uploadedChunkIndexes?.length === item.chunks?.length &&
+                  isMergeFailed &&
                   !item.mergeStarted;
                 const isItemUploading = item.phase === "uploading";
                 const isFinalizing = item.phase === "finalizing";
+                const disableRemove =
+                  isItemUploading || isFinalizing || isMerging;
                 const progressColor =
                   item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
 
@@ -712,8 +942,11 @@ const UploadPage = () => {
                 } else if (isPaused) {
                   statusText = "Tạm dừng";
                   statusColor = "#f59e0b";
+                } else if (isNeedsFile) {
+                  statusText = "Cần chọn lại file để tiếp tục";
+                  statusColor = "#f59e0b";
                 } else if (isMerging) {
-                  statusText = "Đang lưu";
+                  statusText = "Đang lưu file...";
                   statusColor = "#f59e0b";
                 } else if (isReadyToMerge) {
                   statusText = "Sẵn sàng lưu";
@@ -724,8 +957,15 @@ const UploadPage = () => {
                 } else if (isDone && item.saved) {
                   statusText = "Đã lưu";
                   statusColor = "#22c55e";
+                } else if (isMergeFailed) {
+                  statusText = "Lưu thất bại";
+                  statusColor = "#020202";
                 } else if (isError || isCanceled) {
-                  statusText = isCanceled ? "Upload đã huỷ" : "Lỗi";
+                  statusText = isCanceled
+                    ? "Đã huỷ"
+                    : isInterruptedSingle
+                      ? "Upload bị gián đoạn"
+                      : "Lỗi";
                   statusColor = "#ff5c5c";
                 }
 
@@ -788,7 +1028,7 @@ const UploadPage = () => {
                             style={{
                               fontSize: "14px",
                               fontWeight: "700",
-                              color: isCanceled ? "#ff5c5c" : "#fff",
+                              color: isCanceled || isError ? "#ff5c5c" : "#fff",
                               marginBottom: "4px",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
@@ -815,7 +1055,6 @@ const UploadPage = () => {
                                 style={{
                                   fontSize: "10px",
                                   fontWeight: "700",
-                                  textTransform: "uppercase",
                                   letterSpacing: "0.5px",
                                   padding: "2px 6px",
                                   borderRadius: "4px",
@@ -831,27 +1070,30 @@ const UploadPage = () => {
                                 }}
                               >
                                 {item.strategy === "chunk"
-                                  ? "Chunked"
-                                  : "Single"}
+                                  ? "File lớn"
+                                  : "File thường"}
                               </span>
                             )}
                           </div>
                         </div>
                       </div>
                       <button
+                        type="button"
                         onClick={() => {
-                          if (item.strategy === "chunk") {
-                            largeUploadStore.selectItem(item.id);
-                            largeUploadStore.cancel();
-                            return;
-                          }
-                          handleRemoveFile(item.id);
+                          if (!disableRemove) removeItemFromUI(item);
                         }}
+                        disabled={disableRemove}
+                        title={
+                          disableRemove
+                            ? "Không thể ẩn khi file đang xử lý"
+                            : "Ẩn khỏi danh sách"
+                        }
                         style={{
                           background: "transparent",
                           border: "none",
-                          color: "#576176",
-                          cursor: "pointer",
+                          color: disableRemove ? "#30384a" : "#576176",
+                          cursor: disableRemove ? "not-allowed" : "pointer",
+                          opacity: disableRemove ? 0.45 : 1,
                           padding: "4px",
                           flexShrink: 0,
                         }}
@@ -873,7 +1115,7 @@ const UploadPage = () => {
                     </div>
 
                     {/* Progress bar + Save button */}
-                    {isError || isCanceled ? (
+                    {(isError || isCanceled) && !isMergeFailed ? (
                       <>
                         <div
                           style={{
@@ -953,29 +1195,33 @@ const UploadPage = () => {
                           </div>
                           {/* Nút Lưu */}
                           {((item.strategy === "chunk" &&
-                            (isReadyToMerge || isMerging || canRetryMerge)) ||
-                            (item.strategy !== "chunk" && isDone)) && (
+                            (isReadyToMerge ||
+                              isMerging ||
+                              canRetryMerge ||
+                              (isDone && !item.saved))) ||
+                            (item.strategy !== "chunk" &&
+                              isDone &&
+                              !item.saved)) && (
                             <button
                               type="button"
-                              onClick={() => {
-                                if (item.strategy === "chunk") {
-                                  largeUploadStore.selectItem(item.id);
-                                  largeUploadStore.merge(item.id);
-                                  return;
-                                }
-                                handleSaveFile(item.id);
-                              }}
+                              onClick={() => handleSaveFile(item.id)}
                               disabled={
-                                isMerging || isSavingAll || savingIds.has(item.id)
+                                isMerging ||
+                                isSavingAll ||
+                                savingIds.has(item.id)
                               }
                               style={{
                                 background:
-                                  isMerging || isSavingAll || savingIds.has(item.id)
+                                  isMerging ||
+                                  isSavingAll ||
+                                  savingIds.has(item.id)
                                     ? "rgba(255,255,255,0.08)"
                                     : "linear-gradient(135deg, #22c55e, #16a34a)",
                                 border: "none",
                                 color:
-                                  isMerging || isSavingAll || savingIds.has(item.id)
+                                  isMerging ||
+                                  isSavingAll ||
+                                  savingIds.has(item.id)
                                     ? "#576176"
                                     : "#fff",
                                 padding: "6px 16px",
@@ -983,22 +1229,24 @@ const UploadPage = () => {
                                 fontSize: "12px",
                                 fontWeight: "700",
                                 cursor:
-                                  isMerging || isSavingAll || savingIds.has(item.id)
+                                  isMerging ||
+                                  isSavingAll ||
+                                  savingIds.has(item.id)
                                     ? "not-allowed"
                                     : "pointer",
                                 flexShrink: 0,
                               }}
                             >
                               {isMerging
-                                ? "Đang gộp file..."
+                                ? "Đang lưu file..."
                                 : savingIds.has(item.id)
                                   ? "Đang lưu..."
                                   : canRetryMerge
-                                    ? "Thử lại merge"
+                                    ? "Thử lại"
                                     : "Lưu"}
                             </button>
                           )}
-                          {(isItemUploading || isPaused) && (
+                          {item.strategy === "single" && isItemUploading && (
                             <div
                               style={{
                                 display: "flex",
@@ -1006,30 +1254,6 @@ const UploadPage = () => {
                                 flexShrink: 0,
                               }}
                             >
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  isPaused
-                                    ? handleRetryFile(item)
-                                    : handlePauseFile(item.id, item.strategy)
-                                }
-                                style={{
-                                  background: isPaused
-                                    ? "rgba(34, 197, 94, 0.15)"
-                                    : "rgba(245, 158, 11, 0.15)",
-                                  border: isPaused
-                                    ? "1px solid rgba(34, 197, 94, 0.3)"
-                                    : "1px solid rgba(245, 158, 11, 0.3)",
-                                  color: isPaused ? "#22c55e" : "#f59e0b",
-                                  padding: "6px 12px",
-                                  borderRadius: "6px",
-                                  fontSize: "12px",
-                                  fontWeight: "700",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                {isPaused ? "Tiếp tục" : "Tạm dừng"}
-                              </button>
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1050,6 +1274,59 @@ const UploadPage = () => {
                               </button>
                             </div>
                           )}
+                          {item.strategy === "chunk" &&
+                            (isItemUploading || isPaused) && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: "6px",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    isPaused
+                                      ? handleRetryFile(item)
+                                      : handlePauseFile(item.id, item.strategy)
+                                  }
+                                  style={{
+                                    background: isPaused
+                                      ? "rgba(34, 197, 94, 0.15)"
+                                      : "rgba(245, 158, 11, 0.15)",
+                                    border: isPaused
+                                      ? "1px solid rgba(34, 197, 94, 0.3)"
+                                      : "1px solid rgba(245, 158, 11, 0.3)",
+                                    color: isPaused ? "#22c55e" : "#f59e0b",
+                                    padding: "6px 12px",
+                                    borderRadius: "6px",
+                                    fontSize: "12px",
+                                    fontWeight: "700",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {isPaused ? "Tiếp tục" : "Tạm dừng"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleCancelFile(item.id, item.strategy)
+                                  }
+                                  style={{
+                                    background: "rgba(255, 92, 92, 0.15)",
+                                    border: "1px solid rgba(255, 92, 92, 0.3)",
+                                    color: "#ff5c5c",
+                                    padding: "6px 12px",
+                                    borderRadius: "6px",
+                                    fontSize: "12px",
+                                    fontWeight: "700",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Huỷ bỏ
+                                </button>
+                              </div>
+                            )}
                         </div>
                         {item.saveError && (
                           <div style={{ color: "#ff5c5c", marginTop: "8px" }}>
@@ -1081,7 +1358,11 @@ const UploadPage = () => {
                                     color: "#f59e0b",
                                   }}
                                 >
-                                  (Chunk {item.chunkInfo.current}/
+                                  (
+                                  {item.chunkInfo.current < item.chunkInfo.total
+                                    ? "Đang tải lên"
+                                    : "Hoàn tất tải lên"}{" "}
+                                  {item.chunkInfo.current}/
                                   {item.chunkInfo.total})
                                 </span>
                               )}
@@ -1125,9 +1406,6 @@ const UploadPage = () => {
                 fontSize: "13px",
               }}
               onClick={() => {
-                displayQueue.forEach((item) => {
-                  if (item.abortController) item.abortController.abort();
-                });
                 navigate("/");
               }}
             >
@@ -1152,56 +1430,127 @@ const UploadPage = () => {
         </div>
       </div>
 
-      {/* Confirmation Popup for Large Files */}
-      {confirmLargeFile && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl">
-            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-amber-500/10 text-amber-500 mb-4 mx-auto">
-              <svg
-                className="w-6 h-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </div>
-            <h3 className="text-lg font-bold text-white text-center mb-2">
-              File dung lượng lớn
-            </h3>
-            <p className="text-sm text-slate-400 text-center mb-6">
-              File{" "}
-              <strong className="text-slate-200">
-                {confirmLargeFile.name}
-              </strong>{" "}
-              có dung lượng lớn hơn 2GB ({formatBytes(confirmLargeFile.size)}).
-              Hệ thống sẽ chuyển sang trang Upload chuyên biệt (Chunked Upload)
-              để đảm bảo tốc độ và độ ổn định.
-            </p>
-            <div className="flex justify-center gap-3">
+      {savedFilesSummary.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(3, 7, 18, 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px",
+            zIndex: 60,
+          }}
+        >
+          <div
+            style={{
+              width: "520px",
+              maxWidth: "100%",
+              background: "#0f172a",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: "12px",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+              padding: "18px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "14px",
+              }}
+            >
+              <div>
+                <h2
+                  style={{
+                    margin: 0,
+                    color: "#fff",
+                    fontSize: "18px",
+                    fontWeight: "800",
+                  }}
+                >
+                  Lưu file thành công
+                </h2>
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "#8d96aa",
+                    fontSize: "12px",
+                  }}
+                >
+                  {savedFilesSummary.length === 1
+                    ? "File đã được lưu vào hệ thống."
+                    : `${savedFilesSummary.length} file đã được lưu vào hệ thống.`}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setConfirmLargeFile(null)}
-                className="px-4 py-2 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const file = confirmLargeFile;
-                  setConfirmLargeFile(null);
-                  navigate("/upload/large", { state: { file } });
+                onClick={() => setSavedFilesSummary([])}
+                style={{
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "rgba(255,255,255,0.04)",
+                  color: "#8d96aa",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
-                className="px-5 py-2 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition"
+                aria-label="Đóng thông báo"
               >
-                Tiếp tục →
+                ×
               </button>
+            </div>
+
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+            >
+              {savedFilesSummary.map((file, index) => (
+                <div
+                  key={`${file.id}-${index}`}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    borderRadius: "8px",
+                    background: "rgba(255,255,255,0.03)",
+                    padding: "12px",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: "#fff",
+                      fontSize: "13px",
+                      fontWeight: "700",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    {savedFilesSummary.length > 1
+                      ? `${index + 1}. ${file.fileName}`
+                      : file.fileName}
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: "6px",
+                      color: "#8d96aa",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <span>Kích thước: {formatBytes(file.fileSize)}</span>
+                    <span>Thời lượng: {formatDuration(file.duration)}</span>
+                    <span>
+                      Hoàn tất lúc: {formatCompletedAt(file.completedAt)}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

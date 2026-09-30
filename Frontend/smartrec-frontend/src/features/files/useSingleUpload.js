@@ -80,7 +80,7 @@ export async function uploadSingleFile(
 }
 
 export function useSingleUpload() {
-  const [phase, setPhase] = useState("idle"); // 'idle' | 'uploading' | 'success' | 'error'
+  const [phase, setPhase] = useState("idle"); // 'idle' | 'uploading' | 'finalizing' | 'success' | 'canceled' | 'error'
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
 
@@ -123,11 +123,13 @@ export function useSingleUpload() {
       setPhase("success");
       return response;
     } catch (err) {
-      if (err.kind === "canceled" || err.message === "canceled") {
-        setPhase("idle");
-        throw { kind: "canceled" };
-      }
       const appErr = err?.kind ? err : toAppError(err);
+      if (appErr.kind === "canceled") {
+        setProgress(0);
+        setError({ ...appErr, message: "Đã huỷ" });
+        setPhase("canceled");
+        throw { kind: "canceled", message: "Đã huỷ" };
+      }
       setError(appErr);
       setPhase("error");
       throw appErr;

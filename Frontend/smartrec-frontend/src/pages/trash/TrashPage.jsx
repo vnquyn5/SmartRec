@@ -40,6 +40,18 @@ const formatDate = (value) =>
       )
     : "--";
 
+const splitDisplayFileName = (value) => {
+  const name = value || "File không tên";
+  const lastDot = name.lastIndexOf(".");
+  const extension =
+    lastDot > 0 && lastDot < name.length - 1 ? name.slice(lastDot) : "";
+  return {
+    name,
+    baseName: extension ? name.slice(0, -extension.length) : name,
+    extension,
+  };
+};
+
 const getRemainingDays = (item) => {
   if (Number.isFinite(Number(item.daysRemaining))) {
     return Math.max(0, Number(item.daysRemaining));
@@ -61,10 +73,13 @@ const toUiStatus = (item) => {
 
 const mapTrashItem = (item) => {
   const name = item.originalName || item.fileName || item.name || "File không tên";
+  const displayName = splitDisplayFileName(name);
   const remainingDays = getRemainingDays(item);
   return {
     id: item.id,
     name,
+    baseName: displayName.baseName,
+    extension: displayName.extension,
     status: toUiStatus(item),
     size: formatBytes(item.fileSize ?? item.fileSizeBytes),
     deletedAt: formatDate(item.deletedAt),
@@ -455,7 +470,7 @@ export default function TrashPage() {
 
         <section className="overflow-hidden rounded-xl border border-white/5 bg-[#101624] shadow-xl shadow-black/10">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left text-sm">
+            <table className="w-full min-w-[980px] table-fixed text-left text-sm">
               <thead className="border-b border-white/5 bg-white/[0.015] text-[10px] uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="w-12 px-5 py-4">
@@ -468,12 +483,12 @@ export default function TrashPage() {
                       className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 accent-blue-500"
                     />
                   </th>
-                  <th className="px-4 py-4 font-bold">Tên file</th>
-                  <th className="px-4 py-4 font-bold">Trạng thái</th>
-                  <th className="px-4 py-4 font-bold">Kích thước</th>
-                  <th className="px-4 py-4 font-bold">Ngày xóa</th>
-                  <th className="px-4 py-4 font-bold">Còn lại</th>
-                  <th className="px-4 py-4 text-right font-bold">Hành động</th>
+                  <th className="w-[42%] px-4 py-4 font-bold">Tên file</th>
+                  <th className="w-32 px-4 py-4 font-bold">Trạng thái</th>
+                  <th className="w-28 px-4 py-4 font-bold">Kích thước</th>
+                  <th className="w-32 px-4 py-4 font-bold">Ngày xóa</th>
+                  <th className="w-28 px-4 py-4 font-bold">Còn lại</th>
+                  <th className="w-32 px-4 py-4 text-right font-bold">Hành động</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -499,10 +514,22 @@ export default function TrashPage() {
                             className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-900 accent-blue-500"
                           />
                         </td>
-                        <td className="px-4 py-4 font-medium text-slate-100">
+                        <td className="max-w-0 px-4 py-4 font-medium text-slate-100">
                           <div className="flex min-w-0 items-center gap-3">
                             <FileIcon type={item.type} status={item.status} />
-                            <span className="truncate">{item.name}</span>
+                            <span
+                              className="flex min-w-0 items-center"
+                              title={item.name}
+                            >
+                              <span className="min-w-0 truncate">
+                                {item.baseName}
+                              </span>
+                              {item.extension && (
+                                <span className="shrink-0 text-slate-400">
+                                  {item.extension}
+                                </span>
+                              )}
+                            </span>
                           </div>
                         </td>
                         <td className="px-4 py-4">
