@@ -15,7 +15,7 @@ matplotlib>=3.7.0
 
 # Sprint 2: Speaker Diarization
 pyannote.audio
-
+webrtc-noise-gain >= 1.2.1
 # # Sprint 3: STT & OCR & LLM
 # faster-whisper
 # opencv-python>=4.8.0.76

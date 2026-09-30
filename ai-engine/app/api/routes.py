@@ -3,7 +3,9 @@ from app.schemas.audio_schemas import (
     AudioExtractionRequest,
     AudioExtractionResponse,
     AudioChunkRequest,
-    AudioChunkResponse
+    AudioChunkResponse,
+    AudioANSRequest,
+    AudioANSResponse
 )
 from app.services.audio_extractor import AudioExtractorService
 from app.services.audio_chunker import (
@@ -11,11 +13,19 @@ from app.services.audio_chunker import (
     AudioDurationExceededError,
     AudioChunkerError
 )
+from app.services.audio_ans import (
+    AudioANSService,
+    InvalidAudioFormatError,
+    AudioSignalLostError,
+    AudioANSError
+)
 from app.services.ffmpeg_wrapper import AudioValidationError
 
 router = APIRouter(prefix="/api/v1/audio", tags=["Audio Preprocessing"])
+
 audio_service = AudioExtractorService()
 chunker_service = AudioChunker()
+ans_service = AudioANSService()
 
 
 @router.post(
@@ -83,3 +93,40 @@ async def chunk_audio(request: AudioChunkRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "FAILED", "error_message": f"Lỗi hệ thống ngoài dự kiến: {str(e)}"}
         )
+
+
+@router.post(
+    "/noise-suppression",
+    response_model=AudioANSResponse,
+    summary="Lọc tạp âm môi trường văn phòng bằng WebRTC ANS",
+    description="Nhận tệp WAV 16kHz Mono từ bước chuẩn hóa, lọc tạp âm (quạt, điều hòa, gõ phím) và bảo toàn timeline."
+)
+async def suppress_noise(request: AudioANSRequest):
+    try:
+        result = ans_service.apply_noise_suppression(
+            input_path=request.input_path,
+            output_path=request.output_path,
+            suppression_level=request.suppression_level
+        )
+        return AudioANSResponse(**result)
+
+    except FileNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "FAILED", "error_message": f"Tệp nguồn không tồn tại: {str(err)}"}
+        )
+    except InvalidAudioFormatError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "FAILED", "error_message": f"Định dạng âm thanh không hợp lệ: {str(err)}"}
+        )
+    except AudioSignalLostError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"status": "FAILED", "error_message": f"Mất tín hiệu âm thanh: {str(err)}"}
+        )
+    except (AudioANSError, Exception) as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "FAILED", "error_message": f"Lỗi hệ thống khi xử lý ANS: {str(err)}"}
+        )        

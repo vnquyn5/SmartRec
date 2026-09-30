@@ -83,3 +83,24 @@ class AudioChunkResponse(BaseModel):
     manifest_file: Optional[str] = Field(None, description="Đường dẫn tệp manifest.json trên ổ đĩa")
     manifest: Optional[AudioManifest] = Field(None, description="Dữ liệu manifest chi tiết")
     error_message: Optional[str] = Field(None, description="Chi tiết lỗi nếu thất bại")
+    
+    
+class AudioANSRequest(BaseModel):
+    """Schema nhận request lọc tạp âm WebRTC ANS."""
+    input_path: str = Field(..., description="Đường dẫn tuyệt đối hoặc tương đối tới file WAV 16kHz Mono")
+    output_path: Optional[str] = Field(None, description="Đường dẫn lưu file sau ANS. Nếu để trống, hệ thống tự sinh đuôi '_ans.wav'")
+    suppression_level: int = Field(3, ge=0, le=3, description="Mức độ triệt tiêu tạp âm: 0 (Mild), 1 (Medium), 2 (High), 3 (Aggressive)")
+
+
+class AudioANSResponse(BaseModel):
+    """Schema trả về kết quả sau khi lọc tạp âm."""
+    status: str = Field(..., description="Trạng thái: SUCCESS hoặc FAILED")
+    input_file: str = Field(..., description="Đường dẫn file nguồn đã xử lý")
+    output_file: Optional[str] = Field(None, description="Đường dẫn file sạch sau lọc")
+    sample_rate: Optional[int] = Field(None, description="Tần số lấy mẫu (chuẩn 16000Hz)")
+    channels: Optional[int] = Field(None, description="Số kênh âm thanh (chuẩn 1 Mono)")
+    suppression_level: Optional[int] = Field(None, description="Mức lọc đã áp dụng (0 - 3)")
+    duration_seconds: Optional[float] = Field(None, description="Thời lượng file sau xử lý")
+    noise_reduction_db: Optional[float] = Field(None, description="Mức năng lượng tạp âm giảm được (dB)")
+    processing_time_seconds: Optional[float] = Field(None, description="Thời gian thực thi (giây)")
+    error_message: Optional[str] = Field(None, description="Thông điệp chi tiết nếu xảy ra lỗi")
