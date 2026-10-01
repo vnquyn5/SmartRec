@@ -104,3 +104,26 @@ class AudioANSResponse(BaseModel):
     noise_reduction_db: Optional[float] = Field(None, description="Mức năng lượng tạp âm giảm được (dB)")
     processing_time_seconds: Optional[float] = Field(None, description="Thời gian thực thi (giây)")
     error_message: Optional[str] = Field(None, description="Thông điệp chi tiết nếu xảy ra lỗi")
+    
+class AudioAECRequest(BaseModel):
+    """Schema nhận request triệt tiêu tiếng vang WebRTC AEC."""
+    capture_path: str = Field(..., description="Đường dẫn file WAV 16kHz Mono từ microphone")
+    reference_path: Optional[str] = Field(None, description="Đường dẫn file WAV 16kHz Mono từ loa ngoài (nếu có)")
+    output_path: Optional[str] = Field(None, description="Đường dẫn lưu file sau AEC (mặc định tự sinh '_aec.wav')")
+
+
+class AudioAECResponse(BaseModel):
+    """Schema phản hồi kết quả sau khi xử lý AEC."""
+    status: str = Field(..., description="Trạng thái: SUCCESS, BYPASS_NO_REFERENCE, hoặc BYPASS_INVALID_REFERENCE")
+    message: str = Field(..., description="Mô tả chi tiết kết quả xử lý")
+    capture_file: str = Field(..., description="Đường dẫn file capture đầu vào")
+    reference_file: Optional[str] = Field(None, description="Đường dẫn file reference đối chiếu (nếu có)")
+    output_file: Optional[str] = Field(None, description="Đường dẫn file âm thanh sau AEC")
+    sample_rate: Optional[int] = Field(None, description="Sample rate (16000Hz)")
+    channels: Optional[int] = Field(None, description="Số kênh âm thanh (1 Mono)")
+    duration_seconds: Optional[float] = Field(None, description="Thời lượng file sau xử lý")
+    erle_db: Optional[float] = Field(None, description="Mức giảm tiếng vang loa thu được (dB)")
+    input_rms: Optional[float] = Field(None, description="Năng lượng tín hiệu trước xử lý")
+    output_rms: Optional[float] = Field(None, description="Năng lượng tín hiệu sau xử lý")
+    processing_time_seconds: Optional[float] = Field(None, description="Thời gian thực thi thuật toán (giây)")
+    error_message: Optional[str] = Field(None, description="Thông báo lỗi chi tiết nếu phát sinh sự cố")

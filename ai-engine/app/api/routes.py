@@ -20,12 +20,29 @@ from app.services.audio_ans import (
     AudioANSError
 )
 from app.services.ffmpeg_wrapper import AudioValidationError
+from app.schemas.audio_schemas import (
+    AudioExtractionRequest,
+    AudioExtractionResponse,
+    AudioChunkRequest,
+    AudioChunkResponse,
+    AudioANSRequest,
+    AudioANSResponse,
+    AudioAECRequest,
+    AudioAECResponse
+)
+from app.services.audio_aec import (
+    AudioAECService,
+    InvalidAudioFormatError as AECInvalidFormatError,
+    AudioSignalLostError as AECSignalLostError,
+    AudioAECError
+)
 
 router = APIRouter(prefix="/api/v1/audio", tags=["Audio Preprocessing"])
 
 audio_service = AudioExtractorService()
 chunker_service = AudioChunker()
 ans_service = AudioANSService()
+aec_service = AudioAECService()
 
 
 @router.post(
@@ -130,3 +147,39 @@ async def suppress_noise(request: AudioANSRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "FAILED", "error_message": f"Lỗi hệ thống khi xử lý ANS: {str(err)}"}
         )        
+        
+@router.post(
+    "/echo-cancellation",
+    response_model=AudioAECResponse,
+    summary="Triệt tiêu tiếng vang phản hồi (AEC)",
+    description="Khử tiếng vang giữa loa và micro bằng WebRTC AEC. Hỗ trợ cơ chế bypass an toàn khi thiếu luồng reference theo điều kiện AEC-07."
+)
+async def cancel_echo_endpoint(request: AudioAECRequest):
+    try:
+        result = aec_service.cancel_echo(
+            capture_path=request.capture_path,
+            reference_path=request.reference_path,
+            output_path=request.output_path
+        )
+        return AudioAECResponse(**result)
+
+    except FileNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "FAILED", "message": f"Tệp nguồn không tồn tại: {str(err)}"}
+        )
+    except AECInvalidFormatError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "FAILED", "message": f"Định dạng audio không hợp lệ: {str(err)}"}
+        )
+    except AECSignalLostError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"status": "FAILED", "message": f"Mất tín hiệu âm thanh: {str(err)}"}
+        )
+    except (AudioAECError, Exception) as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "FAILED", "message": f"Lỗi hệ thống khi xử lý AEC: {str(err)}"}
+        )
