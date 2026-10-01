@@ -32,5 +32,7 @@ public class UploadSession {
 
     private UploadSessionStatus  status;
 
+    private String quickFingerprint;
+
     private LocalDateTime createdAt;
 }

@@ -7,6 +7,7 @@ export interface InitUploadPayload {
   fileName: string;
   fileSize: number;
   totalChunks: number;
+  quickFingerprint?: string | null;
 }
 
 export interface InitUploadResponse {
@@ -41,6 +42,9 @@ export interface UploadSessionStatusResponse {
 export async function initChunkedUpload(
   payload: InitUploadPayload,
 ): Promise<InitUploadResponse> {
+  if (import.meta.env.DEV) {
+    console.log("[chunked-upload:init-request]", payload);
+  }
   return api.post("/upload/init", payload);
 }
 

@@ -13,6 +13,8 @@ import com.example.smartrec.model.dto.MergeUploadRequest;
 import com.example.smartrec.model.dto.SimpleUploadCompleteRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignResponse;
+import com.example.smartrec.model.dto.UploadDuplicateCheckRequest;
+import com.example.smartrec.model.dto.UploadDuplicateCheckResponse;
 import com.example.smartrec.model.dto.UploadInitRequest;
 import com.example.smartrec.model.dto.UploadInitResponse;
 import com.example.smartrec.model.dto.UploadSessionStatusResponse;
@@ -41,6 +43,12 @@ public class UploadController {
 
     private final UploadService  uploadService;
     private final FileService fileService;
+
+    @PostMapping(value = "/check-duplicate", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<UploadDuplicateCheckResponse> checkDuplicate(
+            @Valid @RequestBody UploadDuplicateCheckRequest request) {
+        return ResponseEntity.ok(fileService.checkDuplicate(request));
+    }
 
     @PostMapping(value = "/presign", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<SimpleUploadPresignResponse> presignSimpleUpload(

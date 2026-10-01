@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   largeUploadStore,
@@ -8,8 +8,11 @@ import {
   singleUploadStore,
   useSingleUploadStore,
 } from "../../hooks/useSingleUploadStore";
-import { getAllMeetings } from "../../services/meetingService";
 import { getMediaDuration } from "../../utils/fileSlice";
+import {
+  buildUploadDuplicateNotice,
+  checkFilesForUploadDuplicates,
+} from "../../utils/uploadDuplicateNotice";
 
 // Helper format bytes
 const formatBytes = (bytes) => {
@@ -70,21 +73,6 @@ const buildQueueIdentitySet = (singleItems, chunkedItems) =>
       ),
   ]);
 
-const findExistingMeetingFiles = async (files) => {
-  if (files.length === 0) return new Set();
-  const meetingsPage = await getAllMeetings();
-  const meetingKeys = new Set(
-    meetingsPage.content
-      .filter((meeting) => meeting.fileName && meeting.fileSizeBytes)
-      .map((meeting) => `${meeting.fileName}-${meeting.fileSizeBytes}`),
-  );
-  return new Set(
-    files
-      .filter((file) => meetingKeys.has(`${file.name}-${file.size}`))
-      .map(getFileIdentity),
-  );
-};
-
 const UploadPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -101,7 +89,14 @@ const UploadPage = () => {
   const [isSavingAll, setIsSavingAll] = useState(false);
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
+  const shownChunkedSuccessIdsRef = useRef(new Set());
   const queue = singleUploadState.items;
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log("[duplicate-notice:state]", uploadNotice);
+    }
+  }, [uploadNotice]);
 
   // Xử lý thêm file(s) vào queue
   const addFilesToQueue = useCallback(
@@ -148,22 +143,43 @@ const UploadPage = () => {
         uniqueFiles.push(file);
       }
 
-      let existingKeys = new Set();
+      let existingByIdentity = new Map();
+      let metadataByIdentity = new Map();
+      let existingFiles = [];
+      let uploadableFiles = [];
       try {
-        existingKeys = await findExistingMeetingFiles(uniqueFiles);
+        const duplicateCheckResult = await checkFilesForUploadDuplicates(
+          uniqueFiles,
+          {
+            getIdentity: getFileIdentity,
+            forceFullChecksum: (file) => file.size > SINGLE_UPLOAD_LIMIT,
+          },
+        );
+        existingByIdentity = duplicateCheckResult.duplicatesByIdentity;
+        metadataByIdentity = duplicateCheckResult.metadataByIdentity;
+        existingFiles = duplicateCheckResult.duplicateItems;
+        uploadableFiles = duplicateCheckResult.uploadableFiles;
+        if (import.meta.env.DEV) {
+          console.log("[upload-page:duplicate-result]", {
+            totalUniqueFiles: uniqueFiles.length,
+            duplicates: existingFiles.map(({ file, duplicate }) => ({
+              selectedFileName: file.name,
+              selectedFileSize: file.size,
+              existingFileName: duplicate.existingFileName,
+              mediaFileId: duplicate.mediaFileId,
+            })),
+            uploadableFiles: uploadableFiles.map((file) => ({
+              fileName: file.name,
+              fileSize: file.size,
+            })),
+          });
+        }
       } catch (error) {
         setUploadNotice(
           "Không thể kiểm tra file trùng từ hệ thống. Vui lòng thử lại.",
         );
         return;
       }
-
-      const existingFiles = uniqueFiles.filter((file) =>
-        existingKeys.has(getFileIdentity(file)),
-      );
-      const uploadableFiles = uniqueFiles.filter(
-        (file) => !existingKeys.has(getFileIdentity(file)),
-      );
 
       if (uploadableFiles.length > 0) {
         const durationEntries = await Promise.all(
@@ -190,6 +206,19 @@ const UploadPage = () => {
           chunkedFiles.push(file);
         }
       }
+      if (import.meta.env.DEV) {
+        console.log("[upload-page:split-after-duplicate]", {
+          uploadableCount: uploadableFiles.length,
+          singleFiles: singleFiles.map((file) => ({
+            fileName: file.name,
+            fileSize: file.size,
+          })),
+          chunkedFiles: chunkedFiles.map((file) => ({
+            fileName: file.name,
+            fileSize: file.size,
+          })),
+        });
+      }
 
       const activeSingleCount = singleUploadState.items.filter((item) =>
         ["idle", "uploading", "finalizing", "paused"].includes(item.phase),
@@ -208,6 +237,20 @@ const UploadPage = () => {
       ).length;
       const availableChunkedSlots = MAX_CHUNKED_FILES - activeChunkedCount;
       const originalChunkedCount = chunkedFiles.length;
+      if (import.meta.env.DEV) {
+        console.log("[upload-page:chunked-slots]", {
+          activeChunkedCount,
+          availableChunkedSlots,
+          selectedChunkedCount: originalChunkedCount,
+          currentChunkedItems: largeUploadState.items.map((item) => ({
+            id: item.id,
+            fileName: item.fileName,
+            phase: item.phase,
+            hasFile: item.hasFile,
+            uploadSessionId: item.uploadSessionId || null,
+          })),
+        });
+      }
 
       if (chunkedFiles.length > availableChunkedSlots) {
         chunkedFiles.splice(Math.max(0, availableChunkedSlots));
@@ -221,13 +264,6 @@ const UploadPage = () => {
         skippedQueueDuplicates.length > 0
       ) {
         const messageParts = [];
-        if (existingFiles.length > 0) {
-          messageParts.push(
-            `${existingFiles.length} file đã tồn tại và được bỏ qua: ${existingFiles
-              .map((file) => file.name)
-              .join(", ")}`,
-          );
-        }
         if (skippedSelectionDuplicates.length > 0) {
           messageParts.push(
             `${skippedSelectionDuplicates.length} file trùng trong lựa chọn được bỏ qua`,
@@ -248,28 +284,87 @@ const UploadPage = () => {
             `Đã chọn ${chunkedFiles.length}/${originalChunkedCount} file lớn`,
           );
         }
-        setUploadNotice(`${messageParts.join(". ")} theo giới hạn cho phép.`);
-        window.setTimeout(() => setUploadNotice(null), 3500);
+        if (messageParts.length > 0) {
+          setUploadNotice(`${messageParts.join(". ")} theo giới hạn cho phép.`);
+          window.setTimeout(() => setUploadNotice(null), 3500);
+        }
       }
 
-      if (uploadableFiles.length === 0 && existingFiles.length > 0) {
-        setUploadNotice("Tất cả file đã chọn đã tồn tại trong hệ thống.");
-        window.setTimeout(() => setUploadNotice(null), 3500);
+      if (existingFiles.length > 0) {
+        const notice = buildUploadDuplicateNotice(
+          existingFiles.map(({ duplicate }) => duplicate.existingFileName),
+          uniqueFiles.length,
+        );
+        if (import.meta.env.DEV) {
+          console.log("[duplicate-notice:set]", notice);
+        }
+        setUploadNotice(notice);
+      }
+
+      if (uploadableFiles.length === 0) {
+        if (import.meta.env.DEV) {
+          console.log("[upload-page:stop-before-queue]", {
+            reason: "no-uploadable-files",
+            duplicateCount: existingFiles.length,
+          });
+        }
         return;
       }
 
       if (singleFiles.length > 0) {
-        singleUploadStore.addFiles(singleFiles, meetingName);
+        if (import.meta.env.DEV) {
+          console.log("[upload-page:add-single-files]", {
+            files: singleFiles.map((file) => ({
+              fileName: file.name,
+              fileSize: file.size,
+            })),
+          });
+        }
+        singleUploadStore.addFiles(
+          singleFiles,
+          meetingName,
+          Object.fromEntries(
+            singleFiles.map((file) => [
+              getFileIdentity(file),
+              metadataByIdentity.get(getFileIdentity(file)) || null,
+            ]),
+          ),
+        );
       }
 
       if (chunkedFiles.length > 0) {
         const chunkedIds = chunkedFiles.map(
           (file) => `${file.name}-${file.size}-${file.lastModified}`,
         );
-        largeUploadStore.addFiles(chunkedFiles);
+        if (import.meta.env.DEV) {
+          console.log("[upload-page:add-chunked-files]", {
+            files: chunkedFiles.map((file) => ({
+              fileName: file.name,
+              fileSize: file.size,
+              id: `${file.name}-${file.size}-${file.lastModified}`,
+              duplicateMetadata:
+                metadataByIdentity.get(getFileIdentity(file)) || null,
+            })),
+          });
+        }
+        largeUploadStore.addFiles(
+          chunkedFiles,
+          Object.fromEntries(
+            chunkedFiles.map((file) => [
+              getFileIdentity(file),
+              metadataByIdentity.get(getFileIdentity(file)) || null,
+            ]),
+          ),
+        );
         const hasActiveChunkedUpload = largeUploadState.items.some((item) =>
           ["uploading", "merging"].includes(item.phase),
         );
+        if (import.meta.env.DEV) {
+          console.log("[upload-page:chunked-autostart]", {
+            hasActiveChunkedUpload,
+            startId: chunkedIds[0] || null,
+          });
+        }
         if (!hasActiveChunkedUpload) {
           window.setTimeout(() => largeUploadStore.start(chunkedIds[0]), 0);
         }
@@ -380,6 +475,38 @@ const UploadPage = () => {
     [durationByFileId],
   );
 
+  useEffect(() => {
+    const completedChunkedItems = largeUploadState.items.filter((item) => {
+      const successKey = item.uploadSessionId || item.id;
+      return (
+        item.phase === "success" &&
+        item.saveRequested &&
+        !item.saved &&
+        !shownChunkedSuccessIdsRef.current.has(successKey)
+      );
+    });
+    if (completedChunkedItems.length === 0) return;
+
+    const summaries = completedChunkedItems.map((item) =>
+      buildSavedSummary(
+        {
+          ...item,
+          strategy: "chunk",
+          fileName: item.fileName || item.file?.name,
+          fileSize: item.fileSize || item.file?.size,
+          lastModified: item.lastModified || item.file?.lastModified,
+        },
+        item.completedAt || new Date().toISOString(),
+      ),
+    );
+
+    completedChunkedItems.forEach((item) => {
+      shownChunkedSuccessIdsRef.current.add(item.uploadSessionId || item.id);
+    });
+    setSavedFilesSummary((current) => [...current, ...summaries]);
+    completedChunkedItems.forEach((item) => largeUploadStore.markSaved(item.id));
+  }, [buildSavedSummary, largeUploadState.items]);
+
   const handleSaveFile = useCallback(
     async (id) => {
       if (isSavingAllRef.current || savingIdsRef.current.has(id)) return;
@@ -423,6 +550,7 @@ const UploadPage = () => {
 
           const canMerge =
             chunkItem.phase === "ready_to_merge" ||
+            chunkItem.phase === "merging" ||
             (chunkItem.phase === "merge_failed" &&
               chunkItem.uploadedChunkIndexes.length ===
                 chunkItem.chunks.length &&
@@ -617,6 +745,7 @@ const UploadPage = () => {
     fileSize: item.fileSize,
     lastModified: item.lastModified,
     hasFile: item.hasFile,
+    saveRequested: item.saveRequested,
   }));
   const displayQueue = [...queue, ...largeQueueItems];
 
@@ -705,7 +834,20 @@ const UploadPage = () => {
                 border: "1px solid rgba(62, 137, 255, 0.25)",
               }}
             >
-              {uploadNotice}
+              {typeof uploadNotice === "string" ? (
+                uploadNotice
+              ) : (
+                <>
+                  <div style={{ fontWeight: "600" }}>{uploadNotice.title}</div>
+                  {uploadNotice.names.length > 0 && (
+                    <ul style={{ margin: "8px 0 0", paddingLeft: "18px" }}>
+                      {uploadNotice.names.map((name) => (
+                        <li key={name}>{name}</li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -904,6 +1046,7 @@ const UploadPage = () => {
                 const isMerging = item.phase === "merging";
                 const isNeedsFile = item.phase === "needs_file";
                 const isMergeFailed = item.phase === "merge_failed";
+                const isSaveRequested = Boolean(item.saveRequested);
                 const canRetryMerge =
                   item.strategy === "chunk" &&
                   isMergeFailed &&
@@ -945,14 +1088,20 @@ const UploadPage = () => {
                 } else if (isNeedsFile) {
                   statusText = "Cần chọn lại file để tiếp tục";
                   statusColor = "#f59e0b";
-                } else if (isMerging) {
+                } else if (isMerging && isSaveRequested) {
                   statusText = "Đang lưu file...";
+                  statusColor = "#f59e0b";
+                } else if (isMerging) {
+                  statusText = "Đã tải lên, đang chuẩn bị file...";
                   statusColor = "#f59e0b";
                 } else if (isReadyToMerge) {
                   statusText = "Sẵn sàng lưu";
                   statusColor = "#22c55e";
                 } else if (isDone && !item.saved) {
-                  statusText = "Hoàn thành";
+                  statusText =
+                    item.strategy === "chunk"
+                      ? "Đã xử lý xong, sẵn sàng lưu"
+                      : "Hoàn thành";
                   statusColor = "#22c55e";
                 } else if (isDone && item.saved) {
                   statusText = "Đã lưu";
@@ -1206,22 +1355,22 @@ const UploadPage = () => {
                               type="button"
                               onClick={() => handleSaveFile(item.id)}
                               disabled={
-                                isMerging ||
                                 isSavingAll ||
-                                savingIds.has(item.id)
+                                savingIds.has(item.id) ||
+                                (isMerging && isSaveRequested)
                               }
                               style={{
                                 background:
-                                  isMerging ||
                                   isSavingAll ||
-                                  savingIds.has(item.id)
+                                  savingIds.has(item.id) ||
+                                  (isMerging && isSaveRequested)
                                     ? "rgba(255,255,255,0.08)"
                                     : "linear-gradient(135deg, #22c55e, #16a34a)",
                                 border: "none",
                                 color:
-                                  isMerging ||
                                   isSavingAll ||
-                                  savingIds.has(item.id)
+                                  savingIds.has(item.id) ||
+                                  (isMerging && isSaveRequested)
                                     ? "#576176"
                                     : "#fff",
                                 padding: "6px 16px",
@@ -1229,15 +1378,15 @@ const UploadPage = () => {
                                 fontSize: "12px",
                                 fontWeight: "700",
                                 cursor:
-                                  isMerging ||
                                   isSavingAll ||
-                                  savingIds.has(item.id)
+                                  savingIds.has(item.id) ||
+                                  (isMerging && isSaveRequested)
                                     ? "not-allowed"
                                     : "pointer",
                                 flexShrink: 0,
                               }}
                             >
-                              {isMerging
+                              {isMerging && isSaveRequested
                                 ? "Đang lưu file..."
                                 : savingIds.has(item.id)
                                   ? "Đang lưu..."
@@ -1548,6 +1697,7 @@ const UploadPage = () => {
                     <span>
                       Hoàn tất lúc: {formatCompletedAt(file.completedAt)}
                     </span>
+                    <span>Loại: {file.uploadType || "SINGLE"}</span>
                   </div>
                 </div>
               ))}

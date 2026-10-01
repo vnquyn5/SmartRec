@@ -71,7 +71,7 @@ const updateItem = (id, updates) => {
   }));
 };
 
-const buildItem = (file) => ({
+const buildItem = (file, duplicateMetadata = null) => ({
   id: `${file.name}-${file.size}-${file.lastModified}`,
   file,
   fileName: file.name,
@@ -88,6 +88,7 @@ const buildItem = (file) => ({
   error: null,
   saved: false,
   uploadResponse: null,
+  duplicateMetadata,
   abortController: null,
 });
 
@@ -123,6 +124,7 @@ const startUpload = async (itemId, meetingName = "") => {
     const uploadResponse = await uploadSingleFile(
       item.file,
       meetingName,
+      item.duplicateMetadata,
       controller.signal,
       (event) => {
         if (!event.total) return;
@@ -184,8 +186,10 @@ export const singleUploadStore = {
   getSnapshot() {
     return state;
   },
-  addFiles(files, meetingName = "") {
-    const items = files.map(buildItem);
+  addFiles(files, meetingName = "", duplicateMetadataById = {}) {
+    const items = files.map((file) =>
+      buildItem(file, duplicateMetadataById[`${file.name}-${file.size}-${file.lastModified}`] || null),
+    );
     setState((currentState) => ({
       ...currentState,
       items: [

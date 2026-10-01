@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -24,10 +25,13 @@ import com.example.smartrec.model.dto.FileUploadResponse;
 import com.example.smartrec.model.dto.SimpleUploadCompleteRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignResponse;
+import com.example.smartrec.model.dto.UploadDuplicateCheckRequest;
+import com.example.smartrec.model.dto.UploadDuplicateCheckResponse;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.FileService;
+import com.example.smartrec.service.FileChecksumService;
 import com.example.smartrec.service.MinioService;
 
 import lombok.AllArgsConstructor;
@@ -44,6 +48,7 @@ public class FileServiceImpl implements FileService {
     private final MeetingRepository meetingRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
+    private final FileChecksumService fileChecksumService;
 
     @Override
     @Transactional
@@ -86,7 +91,9 @@ public class FileServiceImpl implements FileService {
                 objectKey,
                 normalizeMimeType(file.getContentType()),
                 file.getSize(),
-                title);
+                title,
+                null,
+                null);
         log.info("[simple-upload] service finished mediaFileId={}, meetingId={}, totalMs={}",
                 response.getId(), response.getMeetingId(), elapsedMs(totalStartNanos));
         return response;
@@ -101,7 +108,7 @@ public class FileServiceImpl implements FileService {
 
         User user = getCurrentUser();
         String safeFileName = sanitizeFileName(request.getFileName());
-        String objectKey = buildObjectKey(user, safeFileName);
+        String objectKey = buildUniqueObjectKey(user, safeFileName);
 
         try {
             String uploadUrl = minioService.presignPutObject(objectKey, SIMPLE_UPLOAD_PRESIGN_EXPIRES_SECONDS);
@@ -113,6 +120,59 @@ public class FileServiceImpl implements FileService {
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "ERR_MINIO_UNAVAILABLE",
                     "Không thể tạo URL upload lên MinIO");
         }
+    }
+
+    @Override
+    public UploadDuplicateCheckResponse checkDuplicate(UploadDuplicateCheckRequest request) {
+        if (request == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Upload request không được null");
+        }
+        validateUploadFileIdentity(request.getFileName(), request.getFileSize());
+
+        User user = getCurrentUser();
+        String checksumSha256 = normalizeHex(request.getChecksumSha256(), 64, "checksumSha256");
+        if (checksumSha256 != null) {
+            List<MediaFile> exactMatches = mediaFileRepository.findActiveByUserAndChecksumSha256(
+                    user.getId(),
+                    checksumSha256);
+            if (!exactMatches.isEmpty()) {
+                return toDuplicateResponse(exactMatches.get(0));
+            }
+
+            String safeFileName = sanitizeFileName(request.getFileName());
+            List<MediaFile> legacyMatches = mediaFileRepository.findActiveDuplicates(
+                    user.getId(),
+                    safeFileName,
+                    request.getFileSize());
+            return legacyMatches.stream()
+                    .filter(item -> item.getChecksumSha256() == null || item.getChecksumSha256().isBlank())
+                    .findFirst()
+                    .map(this::toDuplicateResponse)
+                    .orElseGet(UploadDuplicateCheckResponse::noDuplicate);
+        }
+
+        String quickFingerprint = normalizeHex(request.getQuickFingerprint(), 64, "quickFingerprint");
+        if (quickFingerprint != null) {
+            List<MediaFile> candidates = mediaFileRepository.findActiveByUserAndQuickFingerprint(
+                    user.getId(),
+                    quickFingerprint);
+            if (!candidates.isEmpty()) {
+                return toDuplicateResponse(candidates.get(0));
+            }
+            return UploadDuplicateCheckResponse.noDuplicate();
+        }
+
+        String safeFileName = sanitizeFileName(request.getFileName());
+        List<MediaFile> legacyDuplicates = mediaFileRepository.findActiveDuplicates(
+                user.getId(),
+                safeFileName,
+                request.getFileSize());
+
+        if (legacyDuplicates.isEmpty()) {
+            return UploadDuplicateCheckResponse.noDuplicate();
+        }
+
+        return UploadDuplicateCheckResponse.possibleDuplicate();
     }
 
     @Override
@@ -128,11 +188,11 @@ public class FileServiceImpl implements FileService {
         UUID userId = user.getId();
         UUID workspaceId = userId;
         String safeFileName = sanitizeFileName(request.getFileName());
-        String expectedObjectKey = buildObjectKey(user, safeFileName);
+        String expectedObjectPrefix = buildUserObjectPrefix(user);
         log.info(
-                "[simple-upload] complete received objectKey={}, expectedObjectKey={}, fileName={}, safeFileName={}, requestFileSize={}, mimeType={}, titlePresent={}, userId={}, workspaceId={}",
+                "[simple-upload] complete received objectKey={}, expectedObjectPrefix={}, fileName={}, safeFileName={}, requestFileSize={}, mimeType={}, titlePresent={}, userId={}, workspaceId={}",
                 request.getObjectKey(),
-                expectedObjectKey,
+                expectedObjectPrefix,
                 request.getFileName(),
                 safeFileName,
                 request.getFileSize(),
@@ -140,9 +200,9 @@ public class FileServiceImpl implements FileService {
                 request.getTitle() != null && !request.getTitle().isBlank(),
                 userId,
                 workspaceId);
-        if (!expectedObjectKey.equals(request.getObjectKey())) {
-            log.warn("[simple-upload] complete rejected objectKey mismatch received={}, expected={}, userId={}",
-                    request.getObjectKey(), expectedObjectKey, userId);
+        if (!isValidSimpleUploadObjectKey(request.getObjectKey(), expectedObjectPrefix, safeFileName)) {
+            log.warn("[simple-upload] complete rejected objectKey mismatch received={}, expectedPrefix={}, safeFileName={}, userId={}",
+                    request.getObjectKey(), expectedObjectPrefix, safeFileName, userId);
             throw new BusinessException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY",
                     "Object key không thuộc upload hiện tại");
         }
@@ -173,6 +233,19 @@ public class FileServiceImpl implements FileService {
                     "Kích thước object trên MinIO không khớp metadata upload");
         }
 
+        String checksumSha256 = fileChecksumService.calculateSha256(request.getObjectKey());
+        List<MediaFile> checksumDuplicates = mediaFileRepository.findActiveByUserAndChecksumSha256(
+                userId,
+                checksumSha256);
+        if (!checksumDuplicates.isEmpty()) {
+            MediaFile existingByChecksum = checksumDuplicates.get(0);
+            deleteUploadedDuplicateObject(request.getObjectKey(), existingByChecksum.getObject_key());
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "FILE_ALREADY_EXISTS",
+                    "File đã có trong hệ thống: " + existingByChecksum.getOriginal_name());
+        }
+
         FileUploadResponse response = createUploadRecords(
                 workspaceId,
                 userId,
@@ -180,7 +253,9 @@ public class FileServiceImpl implements FileService {
                 request.getObjectKey(),
                 normalizeMimeType(request.getMimeType()),
                 request.getFileSize(),
-                request.getTitle());
+                request.getTitle(),
+                checksumSha256,
+                normalizeHex(request.getQuickFingerprint(), 64, "quickFingerprint"));
         log.info("[simple-upload] complete finished objectKey={}, mediaFileId={}, meetingId={}, totalMs={}",
                 request.getObjectKey(), response.getId(), response.getMeetingId(), elapsedMs(totalStartNanos));
         return response;
@@ -193,7 +268,9 @@ public class FileServiceImpl implements FileService {
             String objectKey,
             String mimeType,
             Long fileSize,
-            String title) {
+            String title,
+            String checksumSha256,
+            String quickFingerprint) {
         log.info(
                 "[simple-upload] create records start objectKey={}, originalName={}, fileSizeBytes={}, mimeType={}, status={}, uploadedBy={}, workspaceId={}",
                 objectKey,
@@ -211,6 +288,8 @@ public class FileServiceImpl implements FileService {
                 .object_key(objectKey)
                 .mime_type(normalizeMimeType(mimeType))
                 .file_size_bytes(fileSize)
+                .checksumSha256(checksumSha256)
+                .quickFingerprint(quickFingerprint)
                 .status(MediaFileStatus.UPLOADED)
                 .build();
         MediaFile savedMediaFile;
@@ -220,6 +299,14 @@ public class FileServiceImpl implements FileService {
             log.info("[simple-upload] MediaFile DB save success mediaFileId={}, objectKey={}, elapsedMs={}",
                     savedMediaFile.getId(), objectKey, elapsedMs(mediaFileSaveStartNanos));
         } catch (DataAccessException e) {
+            MediaFile existingDuplicate = findChecksumDuplicate(userId, checksumSha256);
+            if (existingDuplicate != null) {
+                deleteUploadedDuplicateObject(objectKey, existingDuplicate.getObject_key());
+                throw new BusinessException(
+                        HttpStatus.CONFLICT,
+                        "FILE_ALREADY_EXISTS",
+                        "File đã có trong hệ thống: " + existingDuplicate.getOriginal_name());
+            }
             log.error(
                     "[simple-upload] MediaFile DB save failed objectKey={}, originalName={}, fileSizeBytes={}, mimeType={}, status={}, uploadedBy={}, workspaceId={}",
                     objectKey,
@@ -262,6 +349,25 @@ public class FileServiceImpl implements FileService {
         }
 
         return toFileUploadResponse(savedMediaFile, savedMeeting);
+    }
+
+    private void deleteUploadedDuplicateObject(String uploadedObjectKey, String existingObjectKey) {
+        if (uploadedObjectKey == null || uploadedObjectKey.equals(existingObjectKey)) {
+            return;
+        }
+        try {
+            minioService.delete(uploadedObjectKey);
+        } catch (Exception e) {
+            log.warn("[simple-upload] could not delete duplicate uploaded object objectKey={}", uploadedObjectKey, e);
+        }
+    }
+
+    private MediaFile findChecksumDuplicate(UUID userId, String checksumSha256) {
+        if (checksumSha256 == null || checksumSha256.isBlank()) {
+            return null;
+        }
+        List<MediaFile> duplicates = mediaFileRepository.findActiveByUserAndChecksumSha256(userId, checksumSha256);
+        return duplicates.isEmpty() ? null : duplicates.get(0);
     }
 
     private FileUploadResponse findExistingUploadResponse(String objectKey, UUID userId) {
@@ -318,11 +424,49 @@ public class FileServiceImpl implements FileService {
     }
 
     private void validateSimpleUploadMetadata(String fileName, Long fileSize, String mimeType) {
-        if (fileSize == null || fileSize <= 0) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_FILE_EMPTY", "File không được để trống ");
-        }
+        validateUploadFileIdentity(fileName, fileSize);
         if (fileSize > MAX_FILE_SIZE) {
             throw new BusinessException(HttpStatus.PAYLOAD_TOO_LARGE, "ERR_FILE_TOO_LARGE", "File không vượt quá 2GB");
+        }
+        normalizeMimeType(mimeType);
+    }
+
+    private void rejectDuplicate(UUID userId, String safeFileName, Long fileSize) {
+        List<MediaFile> duplicates = mediaFileRepository.findActiveDuplicates(userId, safeFileName, fileSize);
+        if (!duplicates.isEmpty()) {
+            MediaFile existing = duplicates.get(0);
+            throw new BusinessException(
+                    HttpStatus.CONFLICT,
+                    "FILE_ALREADY_EXISTS",
+                    "File đã có trong hệ thống: " + existing.getOriginal_name());
+        }
+    }
+
+    private UploadDuplicateCheckResponse toDuplicateResponse(MediaFile existing) {
+        return UploadDuplicateCheckResponse.exactDuplicate(
+                existing.getId(),
+                existing.getOriginal_name(),
+                existing.getFile_size_bytes(),
+                existing.getObject_key());
+    }
+
+    private String normalizeHex(String value, int expectedLength, String fieldName) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim().toLowerCase();
+        if (normalized.length() != expectedLength || !normalized.matches("[0-9a-f]+")) {
+            throw new BusinessException(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_" + fieldName.toUpperCase(),
+                    fieldName + " không hợp lệ");
+        }
+        return normalized;
+    }
+
+    private void validateUploadFileIdentity(String fileName, Long fileSize) {
+        if (fileSize == null || fileSize <= 0) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_FILE_EMPTY", "File không được để trống ");
         }
         if (fileName == null || fileName.isBlank()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILENAME", "Tên file không hợp lệ");
@@ -335,18 +479,32 @@ public class FileServiceImpl implements FileService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILE_TYPE",
                     "Chỉ hổ trợ file .mp4, .mkv, .mp3, .m4a");
         }
-        normalizeMimeType(mimeType);
     }
 
     private String buildObjectKey(User user, String safeFileName) {
+        return buildUserObjectPrefix(user) + safeFileName;
+    }
+
+    private String buildUniqueObjectKey(User user, String safeFileName) {
+        return buildUserObjectPrefix(user) + UUID.randomUUID() + "_" + safeFileName;
+    }
+
+    private String buildUserObjectPrefix(User user) {
         String accountName = sanitizeAccountName(user.getFull_name());
         LocalDate now = LocalDate.now();
         return accountName
                 + "/"
                 + String.format("%02d", now.getMonthValue())
                 + "-" + now.getYear()
-                + "/"
-                + safeFileName;
+                + "/";
+    }
+
+    private boolean isValidSimpleUploadObjectKey(String objectKey, String expectedPrefix, String safeFileName) {
+        if (objectKey == null || objectKey.isBlank()) {
+            return false;
+        }
+        return objectKey.startsWith(expectedPrefix)
+                && (objectKey.endsWith("/" + safeFileName) || objectKey.endsWith("_" + safeFileName));
     }
 
     private String normalizeMimeType(String mimeType) {

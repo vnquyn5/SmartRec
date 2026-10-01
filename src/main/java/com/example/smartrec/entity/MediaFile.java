@@ -53,6 +53,12 @@ public class MediaFile {
     @Column (name = "file_size_bytes",nullable = false)
     private Long file_size_bytes;
 
+    @Column(name = "checksum_sha256", length = 64)
+    private String checksumSha256;
+
+    @Column(name = "quick_fingerprint", length = 64)
+    private String quickFingerprint;
+
     @Column (name = "duration_seconds")
     private Integer duration_seconds;
 

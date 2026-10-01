@@ -9,6 +9,10 @@ import {
   LIMIT_5GB,
   LIMIT_4_HOURS_SEC,
 } from "../../utils/fileSlice";
+import {
+  buildUploadDuplicateNotice,
+  checkFilesForUploadDuplicates,
+} from "../../utils/uploadDuplicateNotice";
 
 // Helper format bytes
 const formatBytes = (bytes: number): string => {
@@ -48,6 +52,11 @@ type SavedFileInfo = {
   status: string;
 };
 
+type DuplicateNotice = {
+  title: string;
+  names: string[];
+};
+
 export default function LargeFileUploadPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -61,6 +70,8 @@ export default function LargeFileUploadPage() {
   const [isSavingAll, setIsSavingAll] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [duplicateNotice, setDuplicateNotice] =
+    useState<DuplicateNotice | null>(null);
 
   const largeUploadState = useLargeUploadStore();
   const visibleItems = largeUploadState.items.filter(
@@ -79,6 +90,12 @@ export default function LargeFileUploadPage() {
   const readyToSaveItems = visibleItems.filter(
     (item) => item.phase === "ready_to_merge",
   );
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log("[duplicate-notice:state]", duplicateNotice);
+    }
+  }, [duplicateNotice]);
 
   useEffect(() => {
     if (activeItem && activeItem.id !== largeUploadState.activeItemId) {
@@ -100,6 +117,7 @@ export default function LargeFileUploadPage() {
 
   const validateAndProcessFiles = async (files: File[], autoStart = false) => {
     setErrorMessage("");
+    setDuplicateNotice(null);
 
     const limitedFiles = files.slice(0, MAX_LARGE_FILES);
     const validFiles: File[] = [];
@@ -117,9 +135,76 @@ export default function LargeFileUploadPage() {
     }
 
     if (validFiles.length === 0) return;
+
+    let duplicateNames: string[] = [];
+    let uploadableFiles: File[] = [];
+    const duplicateMetadataById: Record<
+      string,
+      { quickFingerprint?: string | null; checksumSha256?: string | null } | null
+    > = {};
+    try {
+      const duplicateCheckResult = await checkFilesForUploadDuplicates(
+        validFiles,
+        {
+          getIdentity: getLargeFileKey,
+          forceFullChecksum: () => true,
+        },
+      );
+
+      duplicateNames = duplicateCheckResult.duplicateItems.map(
+        ({ duplicate }) => duplicate.existingFileName,
+      );
+      uploadableFiles = duplicateCheckResult.uploadableFiles;
+      if (import.meta.env.DEV) {
+        console.log("[large-upload-page:duplicate-result]", {
+          totalValidFiles: validFiles.length,
+          duplicates: duplicateCheckResult.duplicateItems.map(
+            ({ file, duplicate }) => ({
+              selectedFileName: file.name,
+              selectedFileSize: file.size,
+              existingFileName: duplicate.existingFileName,
+              mediaFileId: duplicate.mediaFileId,
+            }),
+          ),
+          uploadableFiles: uploadableFiles.map((file) => ({
+            fileName: file.name,
+            fileSize: file.size,
+          })),
+        });
+      }
+      uploadableFiles.forEach((file) => {
+        duplicateMetadataById[getLargeFileKey(file)] =
+          duplicateCheckResult.metadataByIdentity.get(getLargeFileKey(file)) ||
+          null;
+      });
+    } catch {
+      setErrorMessage(
+        "Không thể kiểm tra file trùng từ hệ thống. Vui lòng thử lại.",
+      );
+      return;
+    }
+
+    if (duplicateNames.length > 0) {
+      const notice = buildUploadDuplicateNotice(duplicateNames, validFiles.length);
+      if (import.meta.env.DEV) {
+        console.log("[duplicate-notice:set]", notice);
+      }
+      setDuplicateNotice(notice);
+    }
+
+    if (uploadableFiles.length === 0) {
+      if (import.meta.env.DEV) {
+        console.log("[large-upload-page:stop-before-queue]", {
+          reason: "no-uploadable-files",
+          duplicateCount: duplicateNames.length,
+        });
+      }
+      return;
+    }
+
     const durationUpdates: Record<string, number> = {};
 
-    for (const file of validFiles) {
+    for (const file of uploadableFiles) {
       try {
         const duration = await getMediaDuration(file);
         if (duration > LIMIT_4_HOURS_SEC) {
@@ -135,11 +220,27 @@ export default function LargeFileUploadPage() {
     setDurationByFileId((current) => ({ ...current, ...durationUpdates }));
     setHiddenItemIds((current) => {
       const next = new Set(current);
-      validFiles.forEach((file) => next.delete(getLargeFileKey(file)));
+      uploadableFiles.forEach((file) => next.delete(getLargeFileKey(file)));
       return next;
     });
-    largeUploadStore.addFiles(validFiles);
-    if (autoStart) window.setTimeout(() => largeUploadStore.start(), 0);
+    if (import.meta.env.DEV) {
+      console.log("[large-upload-page:add-files]", {
+        autoStart,
+        files: uploadableFiles.map((file) => ({
+          fileName: file.name,
+          fileSize: file.size,
+          id: getLargeFileKey(file),
+          duplicateMetadata: duplicateMetadataById[getLargeFileKey(file)] || null,
+        })),
+      });
+    }
+    largeUploadStore.addFiles(uploadableFiles, duplicateMetadataById);
+    if (autoStart) {
+      if (import.meta.env.DEV) {
+        console.log("[large-upload-page:autostart]");
+      }
+      window.setTimeout(() => largeUploadStore.start(), 0);
+    }
   };
 
   const handleStartUpload = () => {
@@ -439,6 +540,29 @@ export default function LargeFileUploadPage() {
               }}
             >
               {errorMessage}
+            </div>
+          )}
+
+          {duplicateNotice && (
+            <div
+              style={{
+                padding: "12px 16px",
+                background: "rgba(62, 137, 255, 0.1)",
+                color: "#8db7ff",
+                borderRadius: "8px",
+                marginBottom: "16px",
+                fontSize: "13px",
+                border: "1px solid rgba(62, 137, 255, 0.25)",
+              }}
+            >
+              <div style={{ fontWeight: "600" }}>{duplicateNotice.title}</div>
+              {duplicateNotice.names.length > 0 && (
+                <ul style={{ margin: "8px 0 0", paddingLeft: "18px" }}>
+                  {duplicateNotice.names.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 

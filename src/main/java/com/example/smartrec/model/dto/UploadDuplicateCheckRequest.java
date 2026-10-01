@@ -8,10 +8,7 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class SimpleUploadCompleteRequest {
-    @NotBlank
-    private String objectKey;
-
+public class UploadDuplicateCheckRequest {
     @NotBlank
     private String fileName;
 
@@ -19,9 +16,7 @@ public class SimpleUploadCompleteRequest {
     @Positive
     private Long fileSize;
 
-    private String mimeType;
-
-    private String title;
-
     private String quickFingerprint;
+
+    private String checksumSha256;
 }

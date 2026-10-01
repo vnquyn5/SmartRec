@@ -20,6 +20,7 @@ export async function completeSimpleUpload(payload, signal) {
 export async function uploadSingleFile(
   file,
   meetingName = "",
+  duplicateMetadata = null,
   signal,
   onUploadProgress,
   onFinalize,
@@ -57,6 +58,9 @@ export async function uploadSingleFile(
       fileSize: file.size,
       mimeType: file.type || "application/octet-stream",
       title: meetingName,
+      ...(duplicateMetadata?.quickFingerprint
+        ? { quickFingerprint: duplicateMetadata.quickFingerprint }
+        : {}),
     };
 
     onFinalize?.(completePayload);
@@ -108,6 +112,7 @@ export function useSingleUpload() {
       const response = await uploadSingleFile(
         file,
         meetingName,
+        null,
         controller.signal,
         (event) => {
           if (event.total)

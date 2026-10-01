@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import com.example.smartrec.entity.MediaFile;
@@ -33,6 +34,7 @@ public class ChunkMergeAsyncService {
     private final UploadSessionRepository uploadSessionRepository;
     private final MediaFileRepository mediaFileRepository;
     private final MeetingRepository meetingRepository;
+    private final FileChecksumService fileChecksumService;
 
     public void mergeAsync(MergeJob job) {
         applicationTaskExecutor.execute(() -> runMerge(job));
@@ -40,6 +42,13 @@ public class ChunkMergeAsyncService {
 
     private void runMerge(MergeJob job) {
         long totalStartedAt = System.nanoTime();
+        long composeMs = 0;
+        long verifyMs = 0;
+        long sha256Ms = 0;
+        long statusMs = 0;
+        long mediaFileMs = 0;
+        long meetingMs = 0;
+        long cleanupMs = 0;
         List<String> chunkObjectKeys = new ArrayList<>();
         try {
             Integer totalChunks = job.totalChunks();
@@ -59,21 +68,31 @@ public class ChunkMergeAsyncService {
                     job.receivedChunks(),
                     job.redisUploadedChunkCount());
             minioService.composeObjects(job.finalObjectKey(), chunkObjectKeys);
+            composeMs = elapsedMs(stageStartedAt);
             log.info("[chunked-merge] compose end uploadSessionId={}, finalObjectKey={}, elapsedMs={}",
                     job.uploadSessionId(),
                     job.finalObjectKey(),
-                    elapsedMs(stageStartedAt));
+                    composeMs);
 
             stageStartedAt = System.nanoTime();
             long finalObjectSize = minioService.getObjectSize(job.finalObjectKey());
             if (finalObjectSize <= 0) {
                 throw new IllegalStateException("Final object has invalid size: " + finalObjectSize);
             }
+            verifyMs = elapsedMs(stageStartedAt);
             log.info("[chunked-merge] final object verified uploadSessionId={}, finalObjectKey={}, sizeBytes={}, elapsedMs={}",
                     job.uploadSessionId(),
                     job.finalObjectKey(),
                     finalObjectSize,
-                    elapsedMs(stageStartedAt));
+                    verifyMs);
+
+            stageStartedAt = System.nanoTime();
+            String checksumSha256 = fileChecksumService.calculateSha256(job.finalObjectKey());
+            sha256Ms = elapsedMs(stageStartedAt);
+            log.info("[chunked-merge] checksum calculated uploadSessionId={}, finalObjectKey={}, elapsedMs={}",
+                    job.uploadSessionId(),
+                    job.finalObjectKey(),
+                    sha256Ms);
 
             stageStartedAt = System.nanoTime();
             UploadSession session = job.session();
@@ -90,42 +109,99 @@ public class ChunkMergeAsyncService {
             persistentSession.setReceivedChunks(totalChunks);
             persistentSession.setStatus(UploadSessionStatus.COMPLETED);
             uploadSessionRepository.save(persistentSession);
+            statusMs = elapsedMs(stageStartedAt);
             logMergeStage(job.uploadSessionId(), "update UploadSession COMPLETED", stageStartedAt);
 
             stageStartedAt = System.nanoTime();
-            MediaFile mediaFile = findOrCreateMediaFile(job, finalObjectSize);
+            MediaFile mediaFile = findOrCreateMediaFile(job, finalObjectSize, checksumSha256);
+            mediaFileMs = elapsedMs(stageStartedAt);
             logMergeStage(job.uploadSessionId(), "MediaFile save/reuse", stageStartedAt);
 
             stageStartedAt = System.nanoTime();
             findOrCreateMeeting(job, mediaFile);
+            meetingMs = elapsedMs(stageStartedAt);
             logMergeStage(job.uploadSessionId(), "Meeting save/reuse", stageStartedAt);
 
             stageStartedAt = System.nanoTime();
             cleanupChunks(job.uploadSessionId(), chunkObjectKeys);
+            cleanupMs = elapsedMs(stageStartedAt);
             logMergeStage(job.uploadSessionId(), "cleanup chunks", stageStartedAt);
 
+            long totalMergeMs = elapsedMs(totalStartedAt);
+            log.info(
+                    "[chunked-merge] summary uploadSessionId={}, fileSize={}, totalChunks={}, composeMs={}, verifyMs={}, sha256Ms={}, databaseMs={}, statusMs={}, cleanupMs={}, totalMergeMs={}",
+                    job.uploadSessionId(),
+                    finalObjectSize,
+                    totalChunks,
+                    composeMs,
+                    verifyMs,
+                    sha256Ms,
+                    mediaFileMs + meetingMs,
+                    statusMs,
+                    cleanupMs,
+                    totalMergeMs);
             log.info("[chunked-merge] completed uploadSessionId={}, finalObjectKey={}, elapsedMs={}",
                     job.uploadSessionId(),
                     job.finalObjectKey(),
-                    elapsedMs(totalStartedAt));
+                    totalMergeMs);
         } catch (Exception e) {
             logMergeFailure(job, e, totalStartedAt);
             markMergeFailed(job.uploadSessionId(), job.session());
         }
     }
 
-    private MediaFile findOrCreateMediaFile(MergeJob job, long finalObjectSize) {
+    private MediaFile findOrCreateMediaFile(MergeJob job, long finalObjectSize, String checksumSha256) {
+        List<MediaFile> checksumDuplicates = mediaFileRepository.findActiveByUserAndChecksumSha256(
+                job.userId(),
+                checksumSha256);
+        if (!checksumDuplicates.isEmpty()) {
+            log.info("[chunked-merge] duplicate checksum found uploadSessionId={}, existingMediaFileId={}, existingFileName={}",
+                    job.uploadSessionId(),
+                    checksumDuplicates.get(0).getId(),
+                    checksumDuplicates.get(0).getOriginal_name());
+            deleteDuplicateFinalObject(job.finalObjectKey(), checksumDuplicates.get(0).getObject_key());
+            return checksumDuplicates.get(0);
+        }
+
         return mediaFileRepository.findByObjectKey(job.finalObjectKey())
-                .orElseGet(() -> mediaFileRepository.save(
-                        MediaFile.builder()
-                                .workspace_id(job.userId())
-                                .uploaded_by(job.userId())
-                                .original_name(job.safeFileName())
-                                .object_key(job.finalObjectKey())
-                                .mime_type(detectMimeType(job.safeFileName()))
-                                .file_size_bytes(finalObjectSize)
-                                .status(MediaFileStatus.UPLOADED)
-                                .build()));
+                .orElseGet(() -> saveMediaFile(job, finalObjectSize, checksumSha256));
+    }
+
+    private MediaFile saveMediaFile(MergeJob job, long finalObjectSize, String checksumSha256) {
+        try {
+            return mediaFileRepository.save(
+                    MediaFile.builder()
+                            .workspace_id(job.userId())
+                            .uploaded_by(job.userId())
+                            .original_name(job.safeFileName())
+                            .object_key(job.finalObjectKey())
+                            .mime_type(detectMimeType(job.safeFileName()))
+                            .file_size_bytes(finalObjectSize)
+                            .checksumSha256(checksumSha256)
+                            .quickFingerprint(job.quickFingerprint())
+                            .status(MediaFileStatus.UPLOADED)
+                            .build());
+        } catch (DataIntegrityViolationException e) {
+            List<MediaFile> checksumDuplicates = mediaFileRepository.findActiveByUserAndChecksumSha256(
+                    job.userId(),
+                    checksumSha256);
+            if (!checksumDuplicates.isEmpty()) {
+                deleteDuplicateFinalObject(job.finalObjectKey(), checksumDuplicates.get(0).getObject_key());
+                return checksumDuplicates.get(0);
+            }
+            throw e;
+        }
+    }
+
+    private void deleteDuplicateFinalObject(String finalObjectKey, String existingObjectKey) {
+        if (finalObjectKey == null || finalObjectKey.equals(existingObjectKey)) {
+            return;
+        }
+        try {
+            minioService.delete(finalObjectKey);
+        } catch (Exception e) {
+            log.warn("[chunked-merge] could not delete duplicate final object finalObjectKey={}", finalObjectKey, e);
+        }
     }
 
     private Meeting findOrCreateMeeting(MergeJob job, MediaFile mediaFile) {
@@ -258,6 +334,7 @@ public class ChunkMergeAsyncService {
             String finalObjectKey,
             Integer totalChunks,
             Integer receivedChunks,
-            long redisUploadedChunkCount) {
+            long redisUploadedChunkCount,
+            String quickFingerprint) {
     }
 }

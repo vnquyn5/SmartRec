@@ -41,8 +41,13 @@ export interface LargeUploadItem {
   error: string | null;
   mergeStarted: boolean;
   mergeResponse: unknown;
+  duplicateMetadata?: {
+    quickFingerprint?: string | null;
+    checksumSha256?: string | null;
+  } | null;
   completedAt?: string | null;
   saved?: boolean;
+  saveRequested?: boolean;
 }
 
 interface StoreState {
@@ -65,6 +70,11 @@ interface PersistedItem {
   phase: LargeUploadPhase;
   error?: string | null;
   completedAt?: string | null;
+  saveRequested?: boolean;
+  duplicateMetadata?: {
+    quickFingerprint?: string | null;
+    checksumSha256?: string | null;
+  } | null;
 }
 
 const STORAGE_KEY = "smartrec.largeUpload.sessions.v1";
@@ -112,7 +122,9 @@ const persist = () => {
     progress: item.progress,
     phase: item.phase,
     error: item.error,
+    duplicateMetadata: item.duplicateMetadata || null,
     completedAt: item.completedAt || (item.phase === "success" ? new Date().toISOString() : null),
+    saveRequested: Boolean(item.saveRequested),
   }));
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 };
@@ -213,12 +225,17 @@ const buildRestoredItem = (persistedItem: PersistedItem): LargeUploadItem => {
     error: persistedItem.error || null,
     mergeStarted: persistedItem.phase === "merging",
     mergeResponse: null,
+    duplicateMetadata: persistedItem.duplicateMetadata || null,
     completedAt: persistedItem.completedAt || null,
     saved: false,
+    saveRequested: Boolean(persistedItem.saveRequested),
   };
 };
 
-const buildItem = (file: File): LargeUploadItem => {
+const buildItem = (
+  file: File,
+  duplicateMetadata: LargeUploadItem["duplicateMetadata"] = null,
+): LargeUploadItem => {
   const persistedItem = readPersisted().find(
     (item) =>
       item.fileName === file.name &&
@@ -256,8 +273,10 @@ const buildItem = (file: File): LargeUploadItem => {
     error: null,
     mergeStarted: false,
     mergeResponse: null,
+    duplicateMetadata: duplicateMetadata || persistedItem?.duplicateMetadata || null,
     completedAt: null,
     saved: false,
+    saveRequested: Boolean(persistedItem?.saveRequested),
   };
 };
 
@@ -270,12 +289,32 @@ if (persistedAtStartup.length > 0) {
 }
 
 const ensureSession = async (item: LargeUploadItem) => {
-  if (item.uploadSessionId) return item;
+  if (item.uploadSessionId) {
+    if (import.meta.env.DEV) {
+      console.log("[large-upload-store:ensure-session:reuse]", {
+        id: item.id,
+        fileName: item.fileName,
+        uploadSessionId: item.uploadSessionId,
+      });
+    }
+    return item;
+  }
+
+  if (import.meta.env.DEV) {
+    console.log("[large-upload-store:ensure-session:init]", {
+      id: item.id,
+      fileName: item.file.name,
+      fileSize: item.file.size,
+      totalChunks: item.chunks.length,
+      quickFingerprint: item.duplicateMetadata?.quickFingerprint || null,
+    });
+  }
 
   const initResponse = await initChunkedUpload({
     fileName: item.file.name,
     fileSize: item.file.size,
     totalChunks: item.chunks.length,
+    quickFingerprint: item.duplicateMetadata?.quickFingerprint || null,
   });
   const backendChunkSize = Number(initResponse.chunkSize) || null;
   const chunks = backendChunkSize
@@ -394,18 +433,23 @@ const reconcileUploadCompletion = async (item: LargeUploadItem) => {
     status.receivedChunks >= status.totalChunks &&
     ["READY_TO_MERGE", "MERGING", "COMPLETED"].includes(status.status)
   ) {
+    const nextPhase = status.status === "MERGING"
+      ? "merging"
+      : status.status === "COMPLETED"
+        ? "success"
+        : "ready_to_merge";
     updateItem(item.id, {
-      phase: status.status === "MERGING"
-        ? "merging"
-        : status.status === "COMPLETED"
-          ? "success"
-          : "ready_to_merge",
+      phase: nextPhase,
       progress: 100,
       uploadedChunks: item.chunks.length,
       retryCount: 0,
       error: null,
       speedBps: 0,
+      mergeStarted: status.status === "MERGING",
     });
+    if (status.status === "MERGING") {
+      pollMergeStatus(item.id, item.uploadSessionId).catch(() => {});
+    }
     return true;
   }
 
@@ -523,11 +567,24 @@ const processQueue = (runId: number, controller: AbortController) => {
 
 const mergeUpload = async (item: LargeUploadItem) => {
   const latestItem = state.items.find((currentItem) => currentItem.id === item.id);
-  if (latestItem?.phase === "success") return latestItem;
+  if (!latestItem) return null;
+  if (latestItem.phase === "success") {
+    updateItem(latestItem.id, { saveRequested: true });
+    return {
+      ...latestItem,
+      saveRequested: true,
+    };
+  }
+  if (latestItem.phase === "merging" || latestItem.mergeStarted) {
+    updateItem(latestItem.id, { saveRequested: true });
+    if (latestItem.uploadSessionId) {
+      await pollMergeStatus(latestItem.id, latestItem.uploadSessionId).catch(() => null);
+    }
+    const currentItem = state.items.find((current) => current.id === latestItem.id);
+    return currentItem?.phase === "success" ? currentItem : null;
+  }
   if (
-    !latestItem ||
     !latestItem.uploadSessionId ||
-    latestItem.mergeStarted ||
     latestItem.uploadedChunkIndexes.length !== latestItem.chunks.length
   ) {
     return null;
@@ -536,6 +593,7 @@ const mergeUpload = async (item: LargeUploadItem) => {
   updateItem(latestItem.id, {
     phase: "merging",
     mergeStarted: true,
+    saveRequested: true,
     speedBps: 0,
     error: null,
   });
@@ -551,25 +609,27 @@ const mergeUpload = async (item: LargeUploadItem) => {
         mergeResponse;
     }
     const completedAt = new Date().toISOString();
+    const itemAfterPolling =
+      state.items.find((currentItem) => currentItem.id === latestItem.id) ||
+      latestItem;
     updateItem(latestItem.id, {
       phase: "success",
       progress: 100,
       uploadedChunks: latestItem.chunks.length,
       speedBps: 0,
       mergeResponse: finalMergeResponse,
-      completedAt,
+      completedAt: itemAfterPolling.completedAt || completedAt,
+      saveRequested: true,
     });
-    const currentSuccessItem =
-      state.items.find((currentItem) => currentItem.id === latestItem.id) ||
-      latestItem;
     return {
-      ...currentSuccessItem,
+      ...itemAfterPolling,
       phase: "success" as LargeUploadPhase,
       progress: 100,
       uploadedChunks: latestItem.chunks.length,
       speedBps: 0,
       mergeResponse: finalMergeResponse,
-      completedAt,
+      completedAt: itemAfterPolling.completedAt || completedAt,
+      saveRequested: true,
     };
   } catch (error) {
     const missingChunkIndexes = parseMissingChunkIndexes(error);
@@ -759,10 +819,31 @@ export const largeUploadStore = {
   getSnapshot() {
     return state;
   },
-  addFiles(files: File[]) {
-    const nextItems = files.map(buildItem);
+  addFiles(
+    files: File[],
+    duplicateMetadataById: Record<string, LargeUploadItem["duplicateMetadata"]> = {},
+  ) {
+    const nextItems = files.map((file) =>
+      buildItem(file, duplicateMetadataById[getFileKey(file)] || null),
+    );
 
     setState((currentState) => {
+      if (import.meta.env.DEV) {
+        console.log("[large-upload-store:add-files]", {
+          incomingFiles: files.map((file) => ({
+            id: getFileKey(file),
+            fileName: file.name,
+            fileSize: file.size,
+            duplicateMetadata: duplicateMetadataById[getFileKey(file)] || null,
+          })),
+          currentItems: currentState.items.map((item) => ({
+            id: item.id,
+            fileName: item.fileName,
+            phase: item.phase,
+            uploadSessionId: item.uploadSessionId || null,
+          })),
+        });
+      }
       const itemMap = new Map(currentState.items.map((item) => [item.id, item]));
       nextItems.forEach((item) => {
         const existingItem = itemMap.get(item.id);
@@ -777,6 +858,7 @@ export const largeUploadStore = {
                 lastModified: item.lastModified,
                 hasFile: true,
                 chunks: item.chunks,
+                duplicateMetadata: item.duplicateMetadata || existingItem.duplicateMetadata,
                 phase:
                   existingItem.phase === "needs_file"
                     ? "paused"
@@ -801,7 +883,25 @@ export const largeUploadStore = {
   async start(id?: string) {
     const targetId = id || state.activeItemId;
     const item = state.items.find((currentItem) => currentItem.id === targetId);
-    if (!item || item.phase === "uploading" || item.phase === "merging") return;
+    if (import.meta.env.DEV) {
+      console.log("[large-upload-store:start]", {
+        requestedId: id || null,
+        targetId: targetId || null,
+        found: Boolean(item),
+        phase: item?.phase || null,
+        fileName: item?.fileName || null,
+        uploadSessionId: item?.uploadSessionId || null,
+      });
+    }
+    if (!item || item.phase === "uploading" || item.phase === "merging") {
+      if (import.meta.env.DEV) {
+        console.log("[large-upload-store:start:skip]", {
+          reason: !item ? "item-not-found" : `phase-${item.phase}`,
+          targetId: targetId || null,
+        });
+      }
+      return;
+    }
     const isResumeFromPaused =
       item.phase === "paused" || item.phase === "needs_file";
 
@@ -814,6 +914,15 @@ export const largeUploadStore = {
       item.phase === "merge_failed" ||
       item.phase === "success"
     ) {
+      if (import.meta.env.DEV) {
+        console.log("[large-upload-store:start:completion-branch]", {
+          id: item.id,
+          fileName: item.fileName,
+          phase: item.phase,
+          hasUploadedAllChunks,
+          uploadSessionId: item.uploadSessionId || null,
+        });
+      }
       if (item.uploadSessionId && item.phase !== "success" && item.phase !== "merge_failed") {
         try {
           await reconcileUploadCompletion(item);

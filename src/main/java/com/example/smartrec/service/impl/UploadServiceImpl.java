@@ -87,6 +87,7 @@ public class UploadServiceImpl implements UploadService {
                                         "Tên file không được để trống");
                 }
                 fileName = fileName.trim();
+                String safeFileName = sanitizeFileName(fileName);
 
                 String extension = getExtension(fileName);
                 if (!ALLOWED_EXTENSIONS.contains(extension)) {
@@ -100,8 +101,8 @@ public class UploadServiceImpl implements UploadService {
                 if (fileSize == null || fileSize <= 0) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
-                                        "ERR_INVALID_FILE_SIZE",
-                                        "File size phải lớn hơn 0");
+                                "ERR_INVALID_FILE_SIZE",
+                                "File size phải lớn hơn 0");
                 }
                 Integer totalChunks = request.getTotalChunks();
                 if (totalChunks == null || totalChunks <= 0) {
@@ -118,12 +119,13 @@ public class UploadServiceImpl implements UploadService {
                 UploadSession session = UploadSession.builder()
                                 .uploadSessionId(uploadSessionId)
                                 .userId(user.getId())
-                                .fileName(fileName)
+                                .fileName(safeFileName)
                                 .fileSize(fileSize)
                                 .totalChunks(totalChunks)
                                 .chunkSize(CHUNK_SIZE)
                                 .receivedChunks(0)
                                 .status(UploadSessionStatus.INITIATED)
+                                .quickFingerprint(normalizeHex(request.getQuickFingerprint(), 64, "quickFingerprint"))
                                 .build();
 
                 com.example.smartrec.entity.UploadSession persistentSession =
@@ -611,6 +613,16 @@ public class UploadServiceImpl implements UploadService {
                                 session.getReceivedChunks(),
                                 session.getStatus());
                 logChunkStage(uploadSessionId, chunkIndex, "PostgreSQL progress update", stageStartedAt);
+                if (session.getStatus() == UploadSessionStatus.READY_TO_MERGE) {
+                        try {
+                                startMergeIfReady(uploadSessionId, crusUser, null, totalStartedAt, "auto");
+                        } catch (BusinessException e) {
+                                log.warn("[chunked-merge] auto start skipped uploadSessionId={}, code={}, message={}",
+                                                uploadSessionId,
+                                                e.getCode(),
+                                                e.getMessage());
+                        }
+                }
                 log.info("[chunk-upload] success session={} chunkIndex={} objectKey={} totalElapsedMs={}",
                                 uploadSessionId,
                                 chunkIndex,
@@ -812,157 +824,8 @@ public class UploadServiceImpl implements UploadService {
                 log.info("[chunked-merge] request start uploadSessionId={}", uploadSessionId);
 
                 try {
-                long stageStartedAt = System.nanoTime();
-                User currUser = getCurrentUser();
-                com.example.smartrec.entity.UploadSession persistentSession =
-                                uploadSessionRepository.findByIdAndUserId(uploadSessionId, currUser.getId())
-                                                .orElseThrow(() -> new BusinessException(
-                                                                HttpStatus.NOT_FOUND,
-                                                                "UPLOAD_SESSION_NOT_FOUND",
-                                                                "Không tìm thấy upload session trong PostgreSQL"));
-                UploadSession session = loadRedisSessionForMerge(uploadSessionId, persistentSession, request, currUser);
-                logMergeStage(uploadSessionId, "load session", stageStartedAt);
-
-                if (!session.getUserId().equals(currUser.getId())) {
-                        throw new BusinessException(
-                                        HttpStatus.FORBIDDEN,
-                                        "UPLOAD_SESSION_NOT_OWNED",
-                                        "Upload session không thuộc người dùng hiện tại");
-                }
-
-                String fileName = request.getFileName();
-                if (fileName == null || fileName.isBlank()) {
-                        fileName = session.getFileName();// lay ten file trong upload session
-                }
-                if (fileName == null || fileName.isBlank()) { // neu ca reuest voi session dau khong co ten file
-                        throw new BusinessException(
-                                        HttpStatus.BAD_REQUEST,
-                                        "INVALID_FILENAME",
-                                        "Tên file không được để trống");
-                }
-                fileName = fileName.trim();
-                String safeFileName = sanitizeFileName(fileName);
-                String finalObjectKey = buildUserObjectKey(currUser, safeFileName);
-                String sourceObjectPrefix = "tmp/" + uploadSessionId + "/chunk_";
-
-                if (persistentSession.getStatus() == UploadSessionStatus.COMPLETED) {
-                        ensureCompletedObjectInUserFolder(uploadSessionId, currUser, fileName, safeFileName, finalObjectKey);
-                        MediaFile mediaFile = findOrCreateMediaFile(currUser, session, safeFileName, finalObjectKey);
-                        findOrCreateMeeting(currUser, mediaFile, safeFileName);
-                        return new MergeUploadReponse(
-                                        sessionIdString,
-                                        safeFileName,
-                                        finalObjectKey,
-                                        UploadSessionStatus.COMPLETED.name());
-                }
-                if (persistentSession.getStatus() == UploadSessionStatus.MERGING
-                                || session.getStatus() == UploadSessionStatus.MERGING) {
-                        return new MergeUploadReponse(
-                                        sessionIdString,
-                                        safeFileName,
-                                        finalObjectKey,
-                                        UploadSessionStatus.MERGING.name());
-                }
-                Integer totalChunk = session.getTotalChunks();
-                if (totalChunk == null || totalChunk <= 0) {
-                        throw new BusinessException(
-                                        HttpStatus.BAD_REQUEST,
-                                        "INVALID_TOTAL_CHUNKS",
-                                        "total chunk không hợp lệ ");
-                }
-
-                stageStartedAt = System.nanoTime();
-                long uploadedChunkCount = getUploadedChunkCount(uploadSessionId);
-                logMergeStage(uploadSessionId, "validate uploaded chunk count", stageStartedAt);
-                boolean redisHasAllChunks = uploadedChunkCount == totalChunk;
-                boolean persistentHasAllChunks = persistentSession.getReceivedChunks() != null
-                                && persistentSession.getReceivedChunks().equals(totalChunk);
-                List<Integer> missingChunkIndexes = findMissingChunks(uploadSessionId, totalChunk);
-                redisHasAllChunks = redisHasAllChunks && missingChunkIndexes.isEmpty();
-                if (redisHasAllChunks) {
-                        normalizeReadyToMergeIfComplete(
-                                        uploadSessionId,
-                                        session,
-                                        persistentSession,
-                                        totalChunk,
-                                        uploadedChunkCount);
-                }
-                if (session.getStatus() != UploadSessionStatus.READY_TO_MERGE
-                                && session.getStatus() != UploadSessionStatus.MERGE_FAILED) {
-                        logMergeSnapshot(
-                                        uploadSessionId,
-                                        session,
-                                        persistentSession,
-                                        uploadedChunkCount,
-                                        sourceObjectPrefix,
-                                        finalObjectKey,
-                                        "invalid status before merge");
-                        log.error(
-                                        "Merge rejected session={} status={} persistentStatus={} received={}/{} persistentReceived={}/{} redisCount={}",
-                                        uploadSessionId,
-                                        session.getStatus(),
-                                        persistentSession.getStatus(),
-                                        session.getReceivedChunks(),
-                                        session.getTotalChunks(),
-                                        persistentSession.getReceivedChunks(),
-                                        persistentSession.getTotalChunks(),
-                                        uploadedChunkCount);
-                        throw new BusinessException(
-                                        HttpStatus.CONFLICT,
-                                        "INVALID_UPLOAD_SESSION_STATUS",
-                                        "Upload session không ở trạng thái cho phép merge");
-                }
-                if (!redisHasAllChunks) {
-                        logMergeSnapshot(
-                                        uploadSessionId,
-                                        session,
-                                        persistentSession,
-                                        uploadedChunkCount,
-                                        sourceObjectPrefix,
-                                        finalObjectKey,
-                                        "incomplete uploaded chunks");
-                        throw new BusinessException(
-                                        HttpStatus.CONFLICT,
-                                        "MISSING_UPLOAD_CHUNKS",
-                                        missingChunkIndexes.isEmpty()
-                                                        ? "Upload chưa đủ chunk để merge"
-                                                        : "Thiếu " + missingChunkIndexes.size() + " chunk trước khi merge",
-                                        missingChunkDetails(missingChunkIndexes));
-                }
-
-                session.setStatus(UploadSessionStatus.MERGING);
-                persistentSession.setStatus(UploadSessionStatus.MERGING);
-                persistentSession.setReceivedChunks(totalChunk);
-                uploadSessionRedisService.save(session);
-                uploadSessionRepository.save(persistentSession);
-
-                logMergeSnapshot(
-                                uploadSessionId,
-                                session,
-                                persistentSession,
-                                uploadedChunkCount,
-                                sourceObjectPrefix,
-                                finalObjectKey,
-                                "dispatch async merge");
-
-                chunkMergeAsyncService.mergeAsync(new MergeJob(
-                                uploadSessionId,
-                                currUser.getId(),
-                                session,
-                                safeFileName,
-                                sourceObjectPrefix,
-                                finalObjectKey,
-                                totalChunk,
-                                session.getReceivedChunks(),
-                                uploadedChunkCount));
-
-                log.info("[chunked-merge] request accepted uploadSessionId={}, finalObjectKey={}, totalChunks={}, elapsedMs={}",
-                                uploadSessionId,
-                                finalObjectKey,
-                                totalChunk,
-                                elapsedMs(requestStartedAt));
-                return new MergeUploadReponse(sessionIdString, safeFileName, finalObjectKey,
-                                UploadSessionStatus.MERGING.name());
+                        User currUser = getCurrentUser();
+                        return startMergeIfReady(uploadSessionId, currUser, request, requestStartedAt, "manual");
                 } catch (BusinessException e) {
                         throw e;
                 } catch (Exception e) {
@@ -971,6 +834,168 @@ public class UploadServiceImpl implements UploadService {
                                         elapsedMs(requestStartedAt),
                                         e);
                         throw e;
+                }
+        }
+
+        private MergeUploadReponse startMergeIfReady(
+                        UUID uploadSessionId,
+                        User currUser,
+                        MergeUploadRequest request,
+                        long requestStartedAt,
+                        String trigger) {
+                Object transitionLock = UPLOAD_SESSION_LOCKS.computeIfAbsent(uploadSessionId, ignored -> new Object());
+                synchronized (transitionLock) {
+                        long stageStartedAt = System.nanoTime();
+                        com.example.smartrec.entity.UploadSession persistentSession =
+                                        uploadSessionRepository.findByIdAndUserId(uploadSessionId, currUser.getId())
+                                                        .orElseThrow(() -> new BusinessException(
+                                                                        HttpStatus.NOT_FOUND,
+                                                                        "UPLOAD_SESSION_NOT_FOUND",
+                                                                        "Không tìm thấy upload session trong PostgreSQL"));
+                        UploadSession session = loadRedisSessionForMerge(uploadSessionId, persistentSession, request, currUser);
+                        logMergeStage(uploadSessionId, "load session", stageStartedAt);
+
+                        if (!session.getUserId().equals(currUser.getId())) {
+                                throw new BusinessException(
+                                                HttpStatus.FORBIDDEN,
+                                                "UPLOAD_SESSION_NOT_OWNED",
+                                                "Upload session không thuộc người dùng hiện tại");
+                        }
+
+                        String fileName = request != null ? request.getFileName() : null;
+                        if (fileName == null || fileName.isBlank()) {
+                                fileName = session.getFileName();
+                        }
+                        if (fileName == null || fileName.isBlank()) {
+                                throw new BusinessException(
+                                                HttpStatus.BAD_REQUEST,
+                                                "INVALID_FILENAME",
+                                                "Tên file không được để trống");
+                        }
+                        fileName = fileName.trim();
+                        String safeFileName = sanitizeFileName(fileName);
+                        String finalObjectKey = buildUserObjectKey(currUser, safeFileName);
+                        String sourceObjectPrefix = "tmp/" + uploadSessionId + "/chunk_";
+                        String sessionIdString = uploadSessionId.toString();
+
+                        if (persistentSession.getStatus() == UploadSessionStatus.COMPLETED
+                                        || session.getStatus() == UploadSessionStatus.COMPLETED) {
+                                ensureCompletedObjectInUserFolder(uploadSessionId, currUser, fileName, safeFileName, finalObjectKey);
+                                MediaFile mediaFile = findOrCreateMediaFile(currUser, session, safeFileName, finalObjectKey);
+                                findOrCreateMeeting(currUser, mediaFile, safeFileName);
+                                return new MergeUploadReponse(
+                                                sessionIdString,
+                                                safeFileName,
+                                                finalObjectKey,
+                                                UploadSessionStatus.COMPLETED.name());
+                        }
+                        if (persistentSession.getStatus() == UploadSessionStatus.MERGING
+                                        || session.getStatus() == UploadSessionStatus.MERGING) {
+                                return new MergeUploadReponse(
+                                                sessionIdString,
+                                                safeFileName,
+                                                finalObjectKey,
+                                                UploadSessionStatus.MERGING.name());
+                        }
+                        if (persistentSession.getStatus() == UploadSessionStatus.CANCELLED
+                                        || session.getStatus() == UploadSessionStatus.CANCELLED
+                                        || persistentSession.getStatus() == UploadSessionStatus.FAILED
+                                        || session.getStatus() == UploadSessionStatus.FAILED) {
+                                throw new BusinessException(
+                                                HttpStatus.CONFLICT,
+                                                "INVALID_UPLOAD_SESSION_STATUS",
+                                                "Upload session không ở trạng thái cho phép merge");
+                        }
+                        Integer totalChunk = session.getTotalChunks();
+                        if (totalChunk == null || totalChunk <= 0) {
+                                throw new BusinessException(
+                                                HttpStatus.BAD_REQUEST,
+                                                "INVALID_TOTAL_CHUNKS",
+                                                "total chunk không hợp lệ ");
+                        }
+
+                        stageStartedAt = System.nanoTime();
+                        long uploadedChunkCount = getUploadedChunkCount(uploadSessionId);
+                        logMergeStage(uploadSessionId, "validate uploaded chunk count", stageStartedAt);
+                        boolean redisHasAllChunks = uploadedChunkCount == totalChunk;
+                        List<Integer> missingChunkIndexes = findMissingChunks(uploadSessionId, totalChunk);
+                        redisHasAllChunks = redisHasAllChunks && missingChunkIndexes.isEmpty();
+                        if (redisHasAllChunks) {
+                                normalizeReadyToMergeIfComplete(
+                                                uploadSessionId,
+                                                session,
+                                                persistentSession,
+                                                totalChunk,
+                                                uploadedChunkCount);
+                        }
+                        if (session.getStatus() != UploadSessionStatus.READY_TO_MERGE
+                                        && session.getStatus() != UploadSessionStatus.MERGE_FAILED) {
+                                logMergeSnapshot(
+                                                uploadSessionId,
+                                                session,
+                                                persistentSession,
+                                                uploadedChunkCount,
+                                                sourceObjectPrefix,
+                                                finalObjectKey,
+                                                "invalid status before merge");
+                                throw new BusinessException(
+                                                HttpStatus.CONFLICT,
+                                                "INVALID_UPLOAD_SESSION_STATUS",
+                                                "Upload session không ở trạng thái cho phép merge");
+                        }
+                        if (!redisHasAllChunks) {
+                                logMergeSnapshot(
+                                                uploadSessionId,
+                                                session,
+                                                persistentSession,
+                                                uploadedChunkCount,
+                                                sourceObjectPrefix,
+                                                finalObjectKey,
+                                                "incomplete uploaded chunks");
+                                throw new BusinessException(
+                                                HttpStatus.CONFLICT,
+                                                "MISSING_UPLOAD_CHUNKS",
+                                                missingChunkIndexes.isEmpty()
+                                                                ? "Upload chưa đủ chunk để merge"
+                                                                : "Thiếu " + missingChunkIndexes.size() + " chunk trước khi merge",
+                                                missingChunkDetails(missingChunkIndexes));
+                        }
+
+                        session.setStatus(UploadSessionStatus.MERGING);
+                        persistentSession.setStatus(UploadSessionStatus.MERGING);
+                        persistentSession.setReceivedChunks(totalChunk);
+                        uploadSessionRedisService.save(session);
+                        uploadSessionRepository.save(persistentSession);
+
+                        logMergeSnapshot(
+                                        uploadSessionId,
+                                        session,
+                                        persistentSession,
+                                        uploadedChunkCount,
+                                        sourceObjectPrefix,
+                                        finalObjectKey,
+                                        "dispatch async merge " + trigger);
+
+                        chunkMergeAsyncService.mergeAsync(new MergeJob(
+                                        uploadSessionId,
+                                        currUser.getId(),
+                                        session,
+                                        safeFileName,
+                                        sourceObjectPrefix,
+                                        finalObjectKey,
+                                        totalChunk,
+                                        session.getReceivedChunks(),
+                                        uploadedChunkCount,
+                                        session.getQuickFingerprint()));
+
+                        log.info("[chunked-merge] request accepted trigger={}, uploadSessionId={}, finalObjectKey={}, totalChunks={}, elapsedMs={}",
+                                        trigger,
+                                        uploadSessionId,
+                                        finalObjectKey,
+                                        totalChunk,
+                                        elapsedMs(requestStartedAt));
+                        return new MergeUploadReponse(sessionIdString, safeFileName, finalObjectKey,
+                                        UploadSessionStatus.MERGING.name());
                 }
         }
 
@@ -988,7 +1013,7 @@ public class UploadServiceImpl implements UploadService {
                         if (!postgresHasAllChunks) {
                                 throw e;
                         }
-                        String fileName = request.getFileName();
+                        String fileName = request != null ? request.getFileName() : null;
                         if (fileName == null || fileName.isBlank()) {
                                 log.error(
                                                 "[chunked-merge] Redis session missing and request has no fileName uploadSessionId={}, persistentStatus={}, totalChunks={}, receivedChunks={}",
@@ -1018,8 +1043,23 @@ public class UploadServiceImpl implements UploadService {
                                         .chunkSize(CHUNK_SIZE)
                                         .receivedChunks(persistentSession.getReceivedChunks())
                                         .status(persistentSession.getStatus())
+                                        .quickFingerprint(null)
                                         .build();
                 }
+        }
+
+        private String normalizeHex(String value, int expectedLength, String fieldName) {
+                if (value == null || value.isBlank()) {
+                        return null;
+                }
+                String normalized = value.trim().toLowerCase();
+                if (normalized.length() != expectedLength || !normalized.matches("[0-9a-f]+")) {
+                        throw new BusinessException(
+                                        HttpStatus.BAD_REQUEST,
+                                        "INVALID_" + fieldName.toUpperCase(),
+                                        fieldName + " không hợp lệ");
+                }
+                return normalized;
         }
 
         private long getUploadedChunkCount(UUID uploadSessionId) {

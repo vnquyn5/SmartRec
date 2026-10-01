@@ -23,6 +23,41 @@ public interface MediaFileRepository extends JpaRepository <MediaFile,UUID >{
     @Query("""
             select mf from MediaFile mf
             where mf.uploaded_by = :userId
+              and mf.original_name = :originalName
+              and mf.file_size_bytes = :fileSize
+              and mf.status not in ('TRASHED', 'PURGED')
+            order by mf.created_at asc
+            """)
+    List<MediaFile> findActiveDuplicates(
+            @Param("userId") UUID userId,
+            @Param("originalName") String originalName,
+            @Param("fileSize") Long fileSize);
+
+    @Query("""
+            select mf from MediaFile mf
+            where mf.uploaded_by = :userId
+              and mf.quickFingerprint = :quickFingerprint
+              and mf.status not in ('TRASHED', 'PURGED')
+            order by mf.created_at asc
+            """)
+    List<MediaFile> findActiveByUserAndQuickFingerprint(
+            @Param("userId") UUID userId,
+            @Param("quickFingerprint") String quickFingerprint);
+
+    @Query("""
+            select mf from MediaFile mf
+            where mf.uploaded_by = :userId
+              and mf.checksumSha256 = :checksumSha256
+              and mf.status not in ('TRASHED', 'PURGED')
+            order by mf.created_at asc
+            """)
+    List<MediaFile> findActiveByUserAndChecksumSha256(
+            @Param("userId") UUID userId,
+            @Param("checksumSha256") String checksumSha256);
+
+    @Query("""
+            select mf from MediaFile mf
+            where mf.uploaded_by = :userId
               and mf.status = 'TRASHED'
               and (mf.purge_at is null or mf.purge_at > :now)
               and (

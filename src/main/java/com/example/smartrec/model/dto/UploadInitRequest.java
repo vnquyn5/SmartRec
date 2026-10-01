@@ -19,5 +19,6 @@ public class UploadInitRequest {
     @Positive (message = "Tổng số phần phải lớn hơn 0")
     private Integer totalChunks;
 
+    private String quickFingerprint;
     
 }
