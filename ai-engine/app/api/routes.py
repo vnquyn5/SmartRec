@@ -1,19 +1,185 @@
-from fastapi import APIRouter
-from app.core.config import settings
-from app.services.ffmpeg_wrapper import get_ffmpeg_version
+from fastapi import APIRouter, HTTPException, status
+from app.schemas.audio_schemas import (
+    AudioExtractionRequest,
+    AudioExtractionResponse,
+    AudioChunkRequest,
+    AudioChunkResponse,
+    AudioANSRequest,
+    AudioANSResponse
+)
+from app.services.audio_extractor import AudioExtractorService
+from app.services.audio_chunker import (
+    AudioChunker,
+    AudioDurationExceededError,
+    AudioChunkerError
+)
+from app.services.audio_ans import (
+    AudioANSService,
+    InvalidAudioFormatError,
+    AudioSignalLostError,
+    AudioANSError
+)
+from app.services.ffmpeg_wrapper import AudioValidationError
+from app.schemas.audio_schemas import (
+    AudioExtractionRequest,
+    AudioExtractionResponse,
+    AudioChunkRequest,
+    AudioChunkResponse,
+    AudioANSRequest,
+    AudioANSResponse,
+    AudioAECRequest,
+    AudioAECResponse
+)
+from app.services.audio_aec import (
+    AudioAECService,
+    InvalidAudioFormatError as AECInvalidFormatError,
+    AudioSignalLostError as AECSignalLostError,
+    AudioAECError
+)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/audio", tags=["Audio Preprocessing"])
+
+audio_service = AudioExtractorService()
+chunker_service = AudioChunker()
+ans_service = AudioANSService()
+aec_service = AudioAECService()
 
 
-@router.get("/")
-def root():
-    return {"service": settings.app_name, "status": "UP"}
+@router.post(
+    "/extract-normalize",
+    response_model=AudioExtractionResponse,
+    summary="Trích xuất và chuẩn hóa luồng âm thanh sang WAV 16kHz Mono",
+    description="Nhận tệp media (video/audio) từ storage, trích xuất âm thanh chuẩn PCM 16-bit, 16000Hz, Mono để cung cấp đầu vào cho các module AI."
+)
+async def extract_and_normalize_audio(request: AudioExtractionRequest):
+    response = audio_service.extract_and_normalize(request)
+
+    if response.status == "FAILED":
+        if "không tồn tại" in (response.error_message or ""):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=response.model_dump()
+            )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=response.model_dump()
+        )
+
+    return response
 
 
-@router.get("/health")
-def health():
-    return {
-        "service": settings.app_name,
-        "status": "UP",
-        "ffmpeg": get_ffmpeg_version(),
-    }
+@router.post(
+    "/chunk",
+    response_model=AudioChunkResponse,
+    summary="Phân đoạn audio dài >2h thành các chunk 30–45 phút và tạo Manifest",
+    description="Kiểm tra thời lượng tệp WAV: Nếu <= 2h thì bỏ qua; nếu 2h < duration <= 4h thì chia thành các chunk 40 phút và sinh manifest.json; nếu > 4h thì từ chối xử lý."
+)
+async def chunk_audio(request: AudioChunkRequest):
+    try:
+        result = chunker_service.process_audio(
+            input_path=request.input_path,
+            output_dir=request.output_dir,
+            target_chunk_duration=request.target_chunk_duration
+        )
+        return AudioChunkResponse(
+            status=result["status"],
+            message=result["message"],
+            total_duration_seconds=result.get("total_duration_seconds"),
+            is_chunked=result["is_chunked"],
+            manifest_file=result.get("manifest_file"),
+            manifest=result.get("manifest")
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "FAILED", "error_message": f"Tệp nguồn không tồn tại: {str(e)}"}
+        )
+    except AudioDurationExceededError as e:
+        # Lỗi vi phạm business boundary (>4h)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "FAILED", "error_message": str(e)}
+        )
+    except (AudioValidationError, AudioChunkerError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"status": "FAILED", "error_message": f"Lỗi xử lý âm thanh: {str(e)}"}
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "FAILED", "error_message": f"Lỗi hệ thống ngoài dự kiến: {str(e)}"}
+        )
+
+
+@router.post(
+    "/noise-suppression",
+    response_model=AudioANSResponse,
+    summary="Lọc tạp âm môi trường văn phòng bằng WebRTC ANS",
+    description="Nhận tệp WAV 16kHz Mono từ bước chuẩn hóa, lọc tạp âm (quạt, điều hòa, gõ phím) và bảo toàn timeline."
+)
+async def suppress_noise(request: AudioANSRequest):
+    try:
+        result = ans_service.apply_noise_suppression(
+            input_path=request.input_path,
+            output_path=request.output_path,
+            suppression_level=request.suppression_level
+        )
+        return AudioANSResponse(**result)
+
+    except FileNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "FAILED", "error_message": f"Tệp nguồn không tồn tại: {str(err)}"}
+        )
+    except InvalidAudioFormatError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "FAILED", "error_message": f"Định dạng âm thanh không hợp lệ: {str(err)}"}
+        )
+    except AudioSignalLostError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"status": "FAILED", "error_message": f"Mất tín hiệu âm thanh: {str(err)}"}
+        )
+    except (AudioANSError, Exception) as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "FAILED", "error_message": f"Lỗi hệ thống khi xử lý ANS: {str(err)}"}
+        )        
+        
+@router.post(
+    "/echo-cancellation",
+    response_model=AudioAECResponse,
+    summary="Triệt tiêu tiếng vang phản hồi (AEC)",
+    description="Khử tiếng vang giữa loa và micro bằng WebRTC AEC. Hỗ trợ cơ chế bypass an toàn khi thiếu luồng reference theo điều kiện AEC-07."
+)
+async def cancel_echo_endpoint(request: AudioAECRequest):
+    try:
+        result = aec_service.cancel_echo(
+            capture_path=request.capture_path,
+            reference_path=request.reference_path,
+            output_path=request.output_path
+        )
+        return AudioAECResponse(**result)
+
+    except FileNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "FAILED", "message": f"Tệp nguồn không tồn tại: {str(err)}"}
+        )
+    except AECInvalidFormatError as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "FAILED", "message": f"Định dạng audio không hợp lệ: {str(err)}"}
+        )
+    except AECSignalLostError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"status": "FAILED", "message": f"Mất tín hiệu âm thanh: {str(err)}"}
+        )
+    except (AudioAECError, Exception) as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "FAILED", "message": f"Lỗi hệ thống khi xử lý AEC: {str(err)}"}
+        )
