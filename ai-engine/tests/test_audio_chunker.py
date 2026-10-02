@@ -31,7 +31,7 @@ def create_synthetic_audio(output_path: str, duration_seconds: float):
 
 def run_chunker_tests():
     print("==================================================")
-    print("  BẮT ĐẦU KIỂM THỬ ĐỘC LẬP AUDIO CHUNKER (TASK 2.8.2)")
+    print("  BẮT ĐẦU KIỂM THỬ ĐỘC LẬP AUDIO CHUNKER")
     print("==================================================")
 
     wrapper = FFmpegWrapper()

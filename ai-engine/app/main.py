@@ -8,7 +8,7 @@ app = FastAPI(
 )
 
 # Đăng ký router tiền xử lý âm thanh
-app.include_router(audio_router)
+app.include_router(audio_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health Check"])

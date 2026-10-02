@@ -62,7 +62,7 @@ def generate_synthetic_audio_dataset(test_dir: str):
     for i in range(total_samples):
         echo_val = 0.5 * ref_samples[i]
         echo_only_samples.append(echo_val)
-        
+
         # Mixed: Giọng nói + Tiếng vang loa + chút nhiễu nền ngẫu nhiên
         ambient_noise = random.randint(-400, 400)
         mixed_samples.append(echo_val + voice_samples[i] + ambient_noise)
@@ -80,7 +80,7 @@ def generate_synthetic_audio_dataset(test_dir: str):
 
 def run_aec_verification_tests():
     print("\n" + "=" * 75)
-    print(">>> BẮT ĐẦU KIỂM THỬ ĐỘC LẬP WEBRTC AEC (TASK 2.9 - SUBTASK 2.9.2) <<<")
+    print(">>> BẮT ĐẦU KIỂM THỬ ĐỘC LẬP WEBRTC AEC <<<")
     print("=" * 75 + "\n")
 
     test_dir = os.path.join(BASE_DIR, "tests", "output", "aec")
@@ -207,7 +207,7 @@ def run_aec_verification_tests():
     print("[TEST 6] Kiểm tra tương thích Regression: Output AEC -> Input ANS Service...")
     ans_service = AudioANSService(default_suppression_level=3)
     out_ans_chained = os.path.join(test_dir, "out_aec_then_ans.wav")
-    
+
     res6 = ans_service.apply_noise_suppression(
         input_path=out_echo,
         output_path=out_ans_chained

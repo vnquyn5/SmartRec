@@ -66,7 +66,7 @@ class AudioANSService:
         """Xử lý 1 frame 10ms (320 bytes) qua WebRTC APM Process10ms."""
         result = processor.Process10ms(frame_bytes)
         return result.audio if hasattr(result, "audio") else result
-    
+
     @staticmethod
     def _calculate_rms(pcm_data: bytes) -> float:
         """Tính toán năng lượng hiệu dụng (RMS) của dữ liệu âm thanh PCM 16-bit."""
@@ -86,7 +86,7 @@ class AudioANSService:
     ) -> Dict[str, Any]:
         """
         Thực hiện lọc tạp âm WebRTC ANS trên tệp âm thanh đầu vào.
-        
+
         Quy trình:
         1. Kiểm tra tồn tại và xác thực định dạng (16kHz, Mono, 16-bit).
         2. Cắt thành các frame 10ms (320 bytes).
@@ -94,15 +94,17 @@ class AudioANSService:
         4. Bảo toàn timeline tuyệt đối qua zero-padding và unpadding.
         5. Ghi tệp WAV đầu ra và kiểm định chất lượng tín hiệu.
         """
+        start_time = time.time()
         input_path = os.path.abspath(input_path)
         if not os.path.isfile(input_path):
             raise FileNotFoundError(f"File nguồn không tồn tại: {input_path}")
 
+        # Chuẩn hóa suppression_level thành int, fallback về default
         level = self.default_suppression_level if suppression_level is None else suppression_level
         if level not in (0, 1, 2, 3):
             raise ValueError("suppression_level phải nằm trong khoảng [0, 3].")
 
-        # 1. Đọc và xác thực cấu trúc WAV bằng module wave tiêu chuẩn
+        # 1. Đọc và xác thực cấu trúc WAV
         try:
             with wave.open(input_path, "rb") as wf:
                 channels = wf.getnchannels()
@@ -113,7 +115,9 @@ class AudioANSService:
         except Exception as e:
             raise InvalidAudioFormatError(f"Không thể đọc cấu trúc tệp WAV: {str(e)}")
 
-        # Kiểm tra tiêu chuẩn khắt khe của pipeline
+        if total_frames == 0:
+            raise InvalidAudioFormatError("File âm thanh đầu vào rỗng (0 frames).")
+
         if sample_rate != self.SAMPLE_RATE:
             raise InvalidAudioFormatError(
                 f"Sample rate {sample_rate}Hz không đúng chuẩn pipeline ({self.SAMPLE_RATE}Hz). "
@@ -129,20 +133,21 @@ class AudioANSService:
             )
 
         total_bytes = len(raw_audio_bytes)
-        input_duration = total_frames / float(sample_rate)
-
-        # Tính năng lượng gốc
         input_rms = self._calculate_rms(raw_audio_bytes)
 
-        # Thiết lập đường dẫn output mặc định nếu không truyền
+        # Thiết lập đường dẫn output
         if not output_path:
             base_dir = os.path.dirname(input_path)
             base_name = os.path.splitext(os.path.basename(input_path))[0]
             output_path = os.path.join(base_dir, f"{base_name}_ans.wav")
         output_path = os.path.abspath(output_path)
+
+        if output_path == input_path:
+            raise AudioANSError("output_path không được trùng với input_path (tránh ghi đè file nguồn).")
+
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # 2. Xử lý zero-padding để chia vừa vặn các frame 320 bytes (ANS-06)
+        # 2. Xử lý zero-padding khớp frame 320 bytes (ANS-06)
         remainder = total_bytes % self.FRAME_SIZE_BYTES
         padding_length = 0
         padded_bytes = raw_audio_bytes
@@ -150,26 +155,23 @@ class AudioANSService:
             padding_length = self.FRAME_SIZE_BYTES - remainder
             padded_bytes += b"\x00" * padding_length
 
-        # 3. Chạy qua bộ xử lý WebRTC ANS theo từng frame 10ms
+        # 3. WebRTC ANS theo frame 10ms
         processor = self._create_processor(suppression_level=level)
         processed_chunks = []
-        start_time = time.time()
 
         for offset in range(0, len(padded_bytes), self.FRAME_SIZE_BYTES):
             frame = padded_bytes[offset:offset + self.FRAME_SIZE_BYTES]
             cleaned_frame = self._process_frame(processor, frame)
             processed_chunks.append(cleaned_frame)
 
-        elapsed_time = time.time() - start_time
-
-        # 4. Ghép frame và cắt bỏ phần padding dư để khớp chính xác timeline gốc
+        # 4. Ghép frame và cắt padding dư
         combined_cleaned_bytes = b"".join(processed_chunks)
         if padding_length > 0:
             final_audio_bytes = combined_cleaned_bytes[:-padding_length]
         else:
             final_audio_bytes = combined_cleaned_bytes
 
-        # 5. Ghi dữ liệu sạch ra tệp WAV đầu ra
+        # 5. Ghi WAV đầu ra
         try:
             with wave.open(output_path, "wb") as out_wf:
                 out_wf.setnchannels(self.CHANNELS)
@@ -181,45 +183,33 @@ class AudioANSService:
                 os.remove(output_path)
             raise AudioANSError(f"Lỗi khi ghi tệp WAV đầu ra: {str(e)}")
 
-        # 6. Kiểm định chất lượng đầu ra (Acceptance Criteria ANS-01 -> ANS-07)
-        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            raise AudioANSError(f"File output rỗng hoặc không tồn tại: {output_path}")
-
-        # Kiểm tra tính toàn vẹn duration
+        # 6. Kiểm định chất lượng (Acceptance Criteria ANS-01 -> ANS-07)
         with wave.open(output_path, "rb") as check_wf:
             out_frames = check_wf.getnframes()
             output_duration = out_frames / float(self.SAMPLE_RATE)
 
-        # Chặn nếu duration bị lệch quá 1 mili-giây
-        if abs(output_duration - input_duration) > 0.001:
+        # P2: Bảo toàn Zero Sample Drift tuyệt đối (0 mẫu lệch)
+        if out_frames != total_frames:
             raise AudioANSError(
-                f"Lỗi bảo toàn thời lượng: Duration gốc {input_duration:.3f}s != "
-                f"Duration sau ANS {output_duration:.3f}s"
+                f"Lỗi bảo toàn timeline (ANS-06): Input ({total_frames} samples) != Output ({out_frames} samples)."
             )
 
         output_rms = self._calculate_rms(final_audio_bytes)
 
-        # Nếu file gốc có âm thanh (RMS > 50) nhưng file sau ANS hoàn toàn im lặng (RMS < 1.0) -> Cảnh báo mất tín hiệu
         if input_rms > 50.0 and output_rms < 1.0:
-            raise AudioSignalLostError("Cảnh báo: Tín hiệu âm thanh bị triệt tiêu hoàn toàn sau khi lọc!")
+            raise AudioSignalLostError("Cảnh báo ANS-03: Tín hiệu giọng nói bị triệt tiêu hoàn toàn!")
 
-        # Tính tỷ lệ giảm ồn (Noise Reduction Ratio theo dB tương đối)
-        db_reduction = 0.0
+        noise_reduction_db = 0.0
         if input_rms > 0 and output_rms > 0:
-            db_reduction = round(20 * math.log10(input_rms / output_rms), 2)
+            noise_reduction_db = max(0.0, 20 * math.log10(input_rms / output_rms))
 
         return {
             "status": "SUCCESS",
-            "input_file": input_path,
+            "message": "Đã khử tạp âm nền môi trường thành công.",
+            "output_path": output_path,
             "output_file": output_path,
-            "sample_rate": self.SAMPLE_RATE,
-            "channels": self.CHANNELS,
+            "noise_reduction_db": round(float(noise_reduction_db), 2),
+            "processing_time_seconds": round(time.time() - start_time, 3),
             "suppression_level": level,
-            "duration_seconds": round(output_duration, 3),
-            "input_rms": round(input_rms, 2),
-            "output_rms": round(output_rms, 2),
-            "noise_reduction_db": db_reduction,
-            "processing_time_seconds": round(elapsed_time, 3)
+            "duration_seconds": round(output_duration, 3)
         }
