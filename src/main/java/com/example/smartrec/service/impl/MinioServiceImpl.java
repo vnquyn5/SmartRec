@@ -1,10 +1,24 @@
 package com.example.smartrec.service.impl;
 
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.service.MinioService;
+
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
-import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.GetObjectArgs;
+import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
@@ -12,15 +26,6 @@ import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class MinioServiceImpl implements MinioService {
@@ -278,5 +283,23 @@ public class MinioServiceImpl implements MinioService {
 
     private long elapsedMs(long startedAtNanos) {
         return (System.nanoTime() - startedAtNanos) / 1_000_000;
+    }
+
+    @Override 
+    public InputStream downloadObject(String objectKey){
+        try {
+            // goi mini cline de lay object/file tu mini
+            return minioClient.getObject(GetObjectArgs.builder()
+                                                      .bucket(bucket)
+                                                      .object(objectKey)
+                                                      .build()
+        );
+        } catch (Exception e) {
+           throw new BusinessException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "ERR_MINIO_UNAVAILABLE",
+                "Không thể đọc file từ MinIO"
+        );
+        }
     }
 }

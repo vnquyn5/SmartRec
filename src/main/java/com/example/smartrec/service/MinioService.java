@@ -1,5 +1,6 @@
 package com.example.smartrec.service;
 
+import java.io.InputStream;
 import java.util.List;
 import java.io.InputStream;
 
@@ -19,4 +20,6 @@ public interface MinioService {
     boolean objectExists(String objectKey);
 
     void composeObjects( String finalObjectKey,List<String> chunkObjectKeys) throws Exception;
+
+    InputStream downloadObject(String objectKey);
 }
