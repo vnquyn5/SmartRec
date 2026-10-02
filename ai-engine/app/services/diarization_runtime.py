@@ -148,7 +148,7 @@ class DiarizationRuntimeManager:
 
     def diarize(self, audio_input: Union[str, Path, Dict[str, Any]], **kwargs) -> Annotation:
         """
-        Interface thực thi inference chuẩn hóa cho các task downstream (2.10.2 & 2.10.3).
+        Interface thực thi inference chuẩn hóa.
         Tự động bóc tách và kiểm tra nghiêm ngặt kiểu trả về pyannote.core.Annotation.
         """
         pipeline = self.load_pipeline()

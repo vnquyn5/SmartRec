@@ -121,7 +121,7 @@ class AudioANSService:
         if sample_rate != self.SAMPLE_RATE:
             raise InvalidAudioFormatError(
                 f"Sample rate {sample_rate}Hz không đúng chuẩn pipeline ({self.SAMPLE_RATE}Hz). "
-                "Cần chuẩn hóa qua Task 2.8 trước khi đưa vào ANS."
+                "Cần chuẩn hóa sample rate trước khi xử lý ANS."
             )
         if channels != self.CHANNELS:
             raise InvalidAudioFormatError(

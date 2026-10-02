@@ -223,7 +223,7 @@ def test_inference_and_interface_readiness():
     assert isinstance(first_speaker, str)
     print(f"  * Số lượt phát biểu thực tế: {len(turns)}")
     print(f"  * Phân đoạn đầu tiên: [{first_turn.start:.2f}s -> {first_turn.end:.2f}s] - {first_speaker}")
-    print("  --> [PASS] Nghiệm thu Test 8: Sẵn sàng 100% bàn giao cho Task 2.10.2!")
+    print("  --> [PASS] Nghiệm thu Test 8: Sẵn sàng 100% cho Inference thực tế với Interface diarize()!")
 
 
 def run_all_diarization_runtime_tests():
