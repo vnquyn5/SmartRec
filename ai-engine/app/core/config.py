@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +13,16 @@ class Settings(BaseSettings):
     chroma_host: str = "localhost"
     chroma_port: int = 8001
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # Pyannote Speaker Diarization Settings
+    hf_token: Optional[str] = None
+    pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
+    pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
 
 settings = Settings()

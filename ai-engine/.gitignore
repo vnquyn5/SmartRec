@@ -2,3 +2,4 @@
 poc/data/
 tests/output/
 *.wav
+.env
