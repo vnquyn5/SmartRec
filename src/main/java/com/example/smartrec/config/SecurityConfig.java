@@ -41,7 +41,7 @@ public class SecurityConfig {
             .httpBasic(basic -> basic.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/register","/api/auth/login").permitAll()
+                .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
                 .requestMatchers("/meetings/upload").authenticated()
                 .requestMatchers("/meetings", "/meetings/**").authenticated()
                 .requestMatchers("/upload/init").authenticated()
