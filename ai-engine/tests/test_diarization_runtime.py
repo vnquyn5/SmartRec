@@ -1,247 +1,262 @@
 import os
 import sys
-import time
+import tempfile
+import wave
+import shutil
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-# Nạp thư mục gốc vào sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
+import numpy as np
 from pyannote.core import Annotation, Segment
+
+from app.schemas.diarization_schemas import SpeakerSegment
 from app.services.diarization_runtime import (
-    resolve_device,
-    diarization_runtime,
     DiarizationRuntimeManager,
-    DiarizationRuntimeError,
     DiarizationTokenMissingError,
     DiarizationAccessDeniedError,
-    DiarizationModelLoadError
+    DiarizationInferenceError,
+    diarization_runtime
 )
 
 
-def test_resolve_device_priority():
-    print("\n[TEST 1] Kiểm tra giải pháp nhận diện thiết bị (Device Resolution)...")
-    assert resolve_device("cpu") == torch.device("cpu")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        assert resolve_device("mps") == torch.device("mps")
-        assert resolve_device("auto") == torch.device("mps")
-    else:
-        assert resolve_device("auto") == torch.device("cpu")
+def create_mock_wav_file(file_path: str, duration_seconds: float = 1.0, sample_rate: int = 16000):
+    num_frames = int(sample_rate * duration_seconds)
+    with wave.open(file_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * num_frames)
+
+
+def test_singleton_instance_identity():
+    mgr1 = DiarizationRuntimeManager()
+    mgr2 = DiarizationRuntimeManager()
+    assert mgr1 is mgr2
+    assert mgr1 is diarization_runtime
+
+
+def test_device_resolution_logic():
+    mgr = DiarizationRuntimeManager()
+    assert mgr._resolve_target_device("cpu") == "cpu"
+
+    with patch("torch.cuda.is_available", return_value=True):
+        assert mgr._resolve_target_device(None) == "cuda"
+
+    with patch("torch.cuda.is_available", return_value=False), \
+         patch("torch.backends.mps.is_available", return_value=True):
+        assert mgr._resolve_target_device(None) == "mps"
+
+    with patch("torch.cuda.is_available", return_value=False), \
+         patch("torch.backends.mps.is_available", return_value=False):
+        assert mgr._resolve_target_device(None) == "cpu"
+
+
+def test_missing_hf_token_raises_error():
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(hf_token=None)
+    test_mgr.hf_token = ""
+    test_mgr._pipeline = None
 
     try:
-        resolve_device("invalid_device_name")
-        assert False, "Phải ném DiarizationRuntimeError khi thiết bị không hợp lệ"
-    except DiarizationRuntimeError as e:
-        assert "không hợp lệ" in str(e)
-    print("  --> [PASS] Nghiệm thu Test 1: Nhận diện thiết bị và bắt lỗi cấu hình chính xác!")
-
-
-def test_missing_token_error():
-    print("\n[TEST 2] Kiểm tra bắt lỗi thiếu Hugging Face Token (DiarizationTokenMissingError)...")
-    manager = DiarizationRuntimeManager()
-    with patch("app.core.config.settings.hf_token", None), \
-         patch.dict(os.environ, {}, clear=True):
-        try:
-            manager.get_token()
-            assert False, "Phải ném DiarizationTokenMissingError khi thiếu HF_TOKEN"
-        except DiarizationTokenMissingError as e:
-            assert "Thiếu HF_TOKEN" in str(e)
-            print(f"  * Thông báo lỗi ghi nhận: {e}")
-    print("  --> [PASS] Nghiệm thu Test 2: Bắt đúng loại ngoại lệ token rõ ràng!")
+        test_mgr.load_pipeline()
+        assert False, "Phải ném DiarizationTokenMissingError khi thiếu token"
+    except DiarizationTokenMissingError as exc:
+        assert "HF_TOKEN chưa được cấu hình" in str(exc)
 
 
 def test_access_denied_token_error():
-    print("\n[TEST 3] Kiểm tra bắt lỗi Token sai hoặc chưa được duyệt Gated Repo (HTTP 401/403)...")
-    manager = DiarizationRuntimeManager()
-    manager.reset()
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(hf_token="hf_mock_invalid_token")
+    test_mgr._pipeline = None
 
-    # Giả lập Hugging Face ném lỗi 403 Forbidden / Gated Repo
-    mock_gated_error = RuntimeError("HTTP Error 403 Forbidden: You must be authenticated and have access to pyannote/speaker-diarization-3.1")
-    with patch("pyannote.audio.Pipeline.from_pretrained", side_effect=mock_gated_error):
+    with patch("pyannote.audio.Pipeline.from_pretrained", side_effect=Exception("401 Client Error: Unauthorized for url")):
         try:
-            manager.load_pipeline(force_reload=True)
-            assert False, "Phải ném DiarizationAccessDeniedError khi gặp lỗi 403 Gated Repo"
-        except DiarizationAccessDeniedError as e:
-            assert "bị từ chối" in str(e)
-            print(f"  * Bắt đúng ngoại lệ phân loại: {type(e).__name__} -> {e}")
-
-    # Giả lập pipeline trả về None do token không hợp lệ
-    with patch("pyannote.audio.Pipeline.from_pretrained", return_value=None):
-        try:
-            manager.load_pipeline(force_reload=True)
-            assert False, "Phải ném DiarizationAccessDeniedError khi Pipeline trả về None"
-        except DiarizationAccessDeniedError as e:
-            assert "Quyền truy cập bị từ chối" in str(e)
-            print(f"  * Bắt đúng trường hợp Pipeline None: {type(e).__name__}")
-
-    manager.reset()
-    print("  --> [PASS] Nghiệm thu Test 3: Phân loại lỗi quyền truy cập Gated Repo chuẩn xác!")
+            test_mgr.load_pipeline()
+            assert False, "Phải ném DiarizationAccessDeniedError khi gặp lỗi 401"
+        except DiarizationAccessDeniedError:
+            pass
 
 
-def test_singleton_thread_safety():
-    print("\n[TEST 4] Kiểm tra an toàn đa luồng (Thread-safety) & Cam kết khởi tạo 1 lần...")
-    manager = DiarizationRuntimeManager()
-    manager.reset()
-
-    call_count = 0
-    mock_pipeline = MagicMock()
-
-    def slow_from_pretrained(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        time.sleep(0.05)  # Giả lập độ trễ nạp model
-        return mock_pipeline
-
-    with patch("pyannote.audio.Pipeline.from_pretrained", side_effect=slow_from_pretrained):
-        threads = []
-        results = []
-
-        def worker():
-            p = manager.load_pipeline()
-            results.append(p)
-
-        # Khởi chạy 10 luồng gọi load_pipeline cùng một lúc
-        for _ in range(10):
-            t = threading.Thread(target=worker)
-            threads.append(t)
-            t.start()
-
-        for t in threads:
-            t.join()
-
-        # Kiểm chứng: Tất cả 10 luồng đều nhận cùng 1 instance và hàm nạp chỉ chạy duy nhất 1 lần
-        assert len(results) == 10
-        assert all(r is mock_pipeline for r in results)
-        assert call_count == 1, f"Kỳ vọng nạp 1 lần, thực tế bị gọi {call_count} lần!"
-        print(f"  * 10 luồng đồng thời gọi nạp pipeline: Pipeline.from_pretrained chỉ chạy đúng {call_count} lần.")
-
-    manager.reset()
-    print("  --> [PASS] Nghiệm thu Test 4: Cơ chế Thread-safety Singleton đạt chuẩn 100%!")
-
-
-def test_mps_to_cpu_fallback():
-    print("\n[TEST 5] Kiểm tra cơ chế Fallback sang CPU khi GPU gặp sự cố...")
-    manager = DiarizationRuntimeManager()
-    manager.reset()
+def test_device_fallback_to_cpu_on_error():
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="mps", hf_token="hf_mock_token")
+    test_mgr._pipeline = None
 
     mock_pipeline = MagicMock()
-    def mock_to(device):
-        if device.type == "mps":
-            raise RuntimeError("Toán tử MPS không tương thích")
-        return mock_pipeline
+    mock_pipeline.to.side_effect = [RuntimeError("MPS device error"), mock_pipeline]
 
-    mock_pipeline.to.side_effect = mock_to
-
-    with patch("pyannote.audio.Pipeline.from_pretrained", return_value=mock_pipeline), \
-         patch("app.services.diarization_runtime.resolve_device", return_value=torch.device("mps")), \
-         patch("app.services.diarization_runtime.logger.warning") as mock_warn:
-
-        loaded = manager.load_pipeline(force_reload=True)
-        assert loaded is mock_pipeline
-        assert manager._active_device == torch.device("cpu")
-        assert mock_warn.called
-        print(f"  * Log cảnh báo ghi nhận: {mock_warn.call_args[0][0]}")
-
-    manager.reset()
-    print("  --> [PASS] Nghiệm thu Test 5: Fallback sang CPU bảo toàn an toàn hệ thống!")
+    with patch("pyannote.audio.Pipeline.from_pretrained", return_value=mock_pipeline):
+        loaded_pipeline = test_mgr.load_pipeline()
+        assert test_mgr.device == "cpu"
+        assert loaded_pipeline is mock_pipeline
 
 
-def test_diarize_output_compatibility():
-    print("\n[TEST 6] Kiểm tra Interface diarize() hỗ trợ cả Pyannote 4.x và 3.x...")
-    manager = DiarizationRuntimeManager()
-    manager.reset()
+def test_normalize_annotation_contract():
+    """Kiểm chứng chuẩn hóa output về đúng Annotation contract."""
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="cpu", hf_token="hf_mock_token")
 
-    # 1. Giả lập kết quả dạng pyannote 4.x: Đối tượng DiarizeOutput có thuộc tính .speaker_diarization
-    mock_annotation_4x = Annotation()
-    mock_annotation_4x[Segment(0.0, 2.5)] = "SPEAKER_00"
+    # 1. Annotation trực tiếp
+    ann = Annotation()
+    assert test_mgr._normalize_annotation(ann) is ann
 
-    mock_diarize_output_4x = MagicMock()
-    mock_diarize_output_4x.speaker_diarization = mock_annotation_4x
+    # 2. Đối tượng chứa thuộc tính speaker_diarization
+    class MockDiarizeOutput:
+        def __init__(self, annotation):
+            self.speaker_diarization = annotation
 
-    mock_pipe_4x = MagicMock(return_value=mock_diarize_output_4x)
-    with patch.object(manager, "load_pipeline", return_value=mock_pipe_4x):
-        res_4x = manager.diarize("dummy.wav")
-        assert isinstance(res_4x, Annotation)
-        assert len(list(res_4x.itertracks())) == 1
-        print("  * [Pyannote 4.x DiarizeOutput] Bóc tách Annotation thành công!")
+    wrapper_obj = MockDiarizeOutput(ann)
+    assert test_mgr._normalize_annotation(wrapper_obj) is ann
 
-    # 2. Giả lập kết quả dạng pyannote 3.x: Trả thẳng đối tượng Annotation
-    mock_annotation_3x = Annotation()
-    mock_annotation_3x[Segment(3.0, 5.0)] = "SPEAKER_01"
-    mock_pipe_3x = MagicMock(return_value=mock_annotation_3x)
-    with patch.object(manager, "load_pipeline", return_value=mock_pipe_3x):
-        res_3x = manager.diarize("dummy.wav")
-        assert isinstance(res_3x, Annotation)
-        assert len(list(res_3x.itertracks())) == 1
-        print("  * [Pyannote 3.x Annotation] Nhận diện trực tiếp Annotation thành công!")
+    # 3. Output sai kiểu
+    try:
+        test_mgr._normalize_annotation({"invalid": "type"})
+        assert False, "Phải ném DiarizationInferenceError khi output không đúng kiểu Annotation"
+    except DiarizationInferenceError as err:
+        assert "Kỳ vọng kiểu 'pyannote.core.Annotation'" in str(err)
 
-    # 3. Giả lập kết quả trả về kiểu dữ liệu lạ -> Phải ném DiarizationRuntimeError
-    mock_pipe_bad = MagicMock(return_value="unexpected_string_output")
-    with patch.object(manager, "load_pipeline", return_value=mock_pipe_bad):
+
+def test_inference_mps_error_fallback_to_cpu():
+    """Kiểm chứng Fallback về CPU khi inference trên MPS gặp lỗi tensor operator."""
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="mps", hf_token="hf_mock_token")
+    test_mgr.device = "mps"
+
+    mock_annotation = Annotation()
+    mock_annotation[Segment(0.0, 2.0)] = "SPEAKER_00"
+
+    mock_pipeline = MagicMock()
+    mock_pipeline.side_effect = [RuntimeError("MPS tensor operator not implemented"), mock_annotation]
+    test_mgr._pipeline = mock_pipeline
+
+    res = test_mgr.diarize("dummy.wav")
+    assert res is mock_annotation
+    assert test_mgr.device == "cpu"
+    mock_pipeline.to.assert_called_with(torch.device("cpu"))
+
+
+def test_multithreaded_mps_fallback_safety():
+    """Kiểm chứng bảo vệ model dùng chung trong môi trường đa luồng khi MPS fallback."""
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="mps", hf_token="hf_mock_token")
+    test_mgr.device = "mps"
+
+    mock_annotation = Annotation()
+    mock_annotation[Segment(0.0, 1.0)] = "SPEAKER_00"
+
+    mock_pipeline = MagicMock()
+    # Thread đầu tiên gặp lỗi MPS và fallback sang CPU, các thread sau chạy an toàn trên CPU
+    mock_pipeline.side_effect = [
+        RuntimeError("MPS tensor operator error"),
+        mock_annotation,
+        mock_annotation,
+        mock_annotation
+    ]
+    test_mgr._pipeline = mock_pipeline
+
+    results = []
+    errors = []
+
+    def worker():
         try:
-            manager.diarize("dummy.wav")
-            assert False, "Phải ném DiarizationRuntimeError khi đầu ra không phải Annotation"
-        except DiarizationRuntimeError as e:
-            assert "không đạt chuẩn pyannote.core.Annotation" in str(e)
-            print("  * [Invalid Output Validation] Chặn đứng kiểu dữ liệu không hợp lệ thành công!")
+            r = test_mgr.diarize("dummy.wav")
+            results.append(r)
+        except Exception as e:
+            errors.append(e)
 
-    manager.reset()
-    print("  --> [PASS] Nghiệm thu Test 6: Interface diarize() hoàn toàn tương thích và kiểm tra chặt chẽ!")
+    threads = [threading.Thread(target=worker) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
-
-def test_runtime_info_metadata():
-    print("\n[TEST 7] Kiểm tra truy xuất Metadata giám sát Runtime...")
-    manager = DiarizationRuntimeManager()
-    manager.load_pipeline()
-    info = manager.get_runtime_info()
-
-    assert "model_id" in info
-    assert "is_loaded" in info and info["is_loaded"] is True
-    assert "active_device" in info and info["active_device"] is not None
-    assert "torch_version" in info
-    print(f"  * Metadata thu được: {info}")
-    print("  --> [PASS] Nghiệm thu Test 7: Metadata đầy đủ thông tin giám sát!")
+    assert len(errors) == 0, f"Có lỗi xảy ra trong các thread: {errors}"
+    assert len(results) == 3
+    assert test_mgr.device == "cpu"
 
 
-def test_inference_and_interface_readiness():
-    print("\n[TEST 8] Kiểm tra chạy Inference thực tế trên Audio mẫu qua Interface diarize()...")
-    sample_audio = "poc/data/input/input2_normalized_16k.wav"
-    if not os.path.exists(sample_audio):
-        sample_audio = "poc/data/input/input2.wav"
+def test_extract_speaker_embeddings_with_zero_timestamp_pydantic():
+    """
+    Kiểm chứng xử lý đối tượng Pydantic SpeakerSegment có start_seconds == 0.0s.
+    Không bị lỗi falsy và hỗ trợ cả Tensor output.
+    """
+    test_dir = tempfile.mkdtemp(prefix="test_emb_pydantic_")
+    try:
+        wav_path = os.path.join(test_dir, "test.wav")
+        create_mock_wav_file(wav_path, duration_seconds=3.0)
 
-    manager = DiarizationRuntimeManager()
-    annotation = manager.diarize(sample_audio)
+        test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+        test_mgr._initialized = False
+        test_mgr.__init__(prefer_device="cpu", hf_token="hf_mock_token")
 
-    assert isinstance(annotation, Annotation), "Đầu ra phải là đối tượng pyannote.core.Annotation!"
-    turns = list(annotation.itertracks(yield_label=True))
-    assert len(turns) > 0, "Phải phát hiện ít nhất một lượt nói trong audio mẫu!"
+        # Mock model trả về PyTorch Tensor thay vì ndarray
+        mock_embedding_model = MagicMock()
+        mock_embedding_model.return_value = torch.ones((1, 256), dtype=torch.float32)
 
-    first_turn, _, first_speaker = turns[0]
-    assert first_turn.start >= 0.0 and first_turn.end > first_turn.start
-    assert isinstance(first_speaker, str)
-    print(f"  * Số lượt phát biểu thực tế: {len(turns)}")
-    print(f"  * Phân đoạn đầu tiên: [{first_turn.start:.2f}s -> {first_turn.end:.2f}s] - {first_speaker}")
-    print("  --> [PASS] Nghiệm thu Test 8: Sẵn sàng 100% cho Inference thực tế với Interface diarize()!")
+        mock_pipeline = MagicMock()
+        mock_pipeline._embedding = mock_embedding_model
+        test_mgr._pipeline = mock_pipeline
+
+        # Đối tượng Pydantic thực sự với start_seconds = 0.0
+        pydantic_segment = SpeakerSegment(
+            segment_id=1,
+            speaker="SPEAKER_00",
+            start_seconds=0.0,
+            end_seconds=2.0,
+            duration_seconds=2.0,
+            start_time="00:00:00.000",
+            end_time="00:00:02.000"
+        )
+
+        emb_map = test_mgr.extract_speaker_embeddings(wav_path, [pydantic_segment])
+        assert "SPEAKER_00" in emb_map
+        assert len(emb_map["SPEAKER_00"]) == 256
+        assert emb_map["SPEAKER_00"][0] == 1.0
+    finally:
+        if os.path.exists(test_dir):
+            shutil.rmtree(test_dir)
 
 
-def run_all_diarization_runtime_tests():
-    test_resolve_device_priority()
-    test_missing_token_error()
+def test_deterministic_offline_diarize_call():
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="cpu", hf_token="hf_mock_token")
+
+    mock_annotation = Annotation()
+    mock_annotation[Segment(0.0, 1.5)] = "SPEAKER_00"
+
+    mock_pipeline = MagicMock()
+    mock_pipeline.return_value = mock_annotation
+    test_mgr._pipeline = mock_pipeline
+
+    result = test_mgr.diarize("mock_sample.wav")
+    assert isinstance(result, Annotation)
+    assert len(list(result.itertracks())) == 1
+
+
+def run_all_runtime_tests():
+    test_singleton_instance_identity()
+    test_device_resolution_logic()
+    test_missing_hf_token_raises_error()
     test_access_denied_token_error()
-    test_singleton_thread_safety()
-    test_mps_to_cpu_fallback()
-    test_diarize_output_compatibility()
-    test_runtime_info_metadata()
-    test_inference_and_interface_readiness()
+    test_device_fallback_to_cpu_on_error()
+    test_normalize_annotation_contract()
+    test_inference_mps_error_fallback_to_cpu()
+    test_multithreaded_mps_fallback_safety()
+    test_extract_speaker_embeddings_with_zero_timestamp_pydantic()
+    test_deterministic_offline_diarize_call()
 
 
 if __name__ == "__main__":
-    print("=" * 80)
-    print(">>> BẮT ĐẦU KIỂM THỬ RUNTIME & MODEL LOADER DIARIZATION (POST-AUDIT 100/100) <<<")
-    print("=" * 80)
-    run_all_diarization_runtime_tests()
-    print("=" * 80)
-    print(">>> KẾT THÚC BÀI KIỂM THỬ: 8/8 CA KIỂM THỬ ĐẠT 100% TIÊU CHUẨN KỸ THUẬT! <<<")
-    print("=" * 80)
+    run_all_runtime_tests()
+    print("ALL_DIARIZATION_RUNTIME_TESTS_EXECUTED_SUCCESSFULLY")

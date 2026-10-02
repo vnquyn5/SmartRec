@@ -2,6 +2,13 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
+class AudioDiarizationRequest(BaseModel):
+    """Yêu cầu thực thi Speaker Diarization & VAD Pipeline."""
+    input_path: str = Field(..., description="Đường dẫn tới file WAV audio 16kHz đã chuẩn hóa")
+    output_json_path: Optional[str] = Field(None, description="Đường dẫn file JSON đầu ra tùy chọn")
+    job_id: Optional[str] = Field(None, description="Mã định danh job xử lý")
+
+
 class SpeakerSegment(BaseModel):
     """Chi tiết một phân đoạn phát biểu dạng phẳng trên timeline."""
     segment_id: int = Field(..., description="Chỉ số thứ tự phân đoạn tăng dần")
@@ -23,7 +30,7 @@ class SpeechActivityInterval(BaseModel):
 
 
 class SpeakerSegmentationResponse(BaseModel):
-    """Kết quả phân đoạn giọng nói và VAD"""
+    """Kết quả phân đoạn giọng nói và VAD từ Task 2.10.2."""
     job_id: Optional[str] = None
     status: str = Field(..., description="SUCCESS | NO_SPEECH_DETECTED | FAILED")
     audio_duration_seconds: float = Field(..., description="Tổng thời lượng audio đầu vào")
@@ -82,5 +89,9 @@ class DiarizationExportPayload(BaseModel):
     timeline: List[SpeakerSegment] = Field(
         default_factory=list,
         description="Danh sách tuần tự toàn bộ các segments theo timestamp"
+    )
+    embeddings_status: Optional[str] = Field(
+        "NOT_AVAILABLE",
+        description="Trạng thái trích xuất embeddings: COMPLETED | PARTIAL | FAILED | NOT_AVAILABLE"
     )
     error_message: Optional[str] = None

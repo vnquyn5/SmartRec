@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, List, Tuple
 
@@ -12,6 +13,7 @@ from app.schemas.diarization_schemas import (
     DiarizationExportPayload
 )
 from app.services.speaker_diarizer import speaker_diarization_service
+from app.services.diarization_runtime import diarization_runtime
 
 logger = logging.getLogger("smartrec.speaker_labeling")
 
@@ -19,7 +21,7 @@ logger = logging.getLogger("smartrec.speaker_labeling")
 class SpeakerLabelingService:
     """
     Dịch vụ ánh xạ nhãn người nói (Speaker 1, Speaker 2...), trích xuất embedding
-    và xuất kết quả JSON chuẩn hóa cho các downstream AI modules.
+    và xuất kết quả JSON chuẩn hóa an toàn tuyệt đối cho downstream AI modules.
     """
 
     def generate_speaker_labels(
@@ -27,14 +29,12 @@ class SpeakerLabelingService:
         raw_segments: List[SpeakerSegment]
     ) -> Dict[str, str]:
         """
-        Ánh xạ raw_speaker_id (SPEAKER_00, SPEAKER_01...) sang label thân thiện
-        (Speaker 1, Speaker 2...) theo đúng thứ tự xuất hiện đầu tiên trên timeline thực tế.
-        Tự động sắp xếp lại theo timestamp trước khi map để chống sai lệch thứ tự đầu vào.
+        Ánh xạ raw_speaker_id sang label thân thiện (Speaker 1, Speaker 2...)
+        theo đúng thứ tự xuất hiện đầu tiên trên timeline thực tế.
         """
         mapping: Dict[str, str] = {}
         speaker_idx = 1
 
-        # Sắp xếp theo mốc thời gian bắt đầu trước khi xác định thứ tự xuất hiện đầu tiên
         sorted_segments = sorted(raw_segments, key=lambda s: (s.start_seconds, s.end_seconds))
 
         for seg in sorted_segments:
@@ -49,13 +49,14 @@ class SpeakerLabelingService:
         self,
         segmentation_res: SpeakerSegmentationResponse,
         audio_file_path: Union[str, Path],
-        speaker_embeddings: Optional[Dict[str, List[float]]] = None
+        speaker_embeddings: Optional[Dict[str, List[float]]] = None,
+        embeddings_error: Optional[str] = None
     ) -> DiarizationExportPayload:
         """
         Tổ chức cấu trúc dữ liệu JSON đáp ứng:
         1. Phân cấp: Speaker -> Segment (start, end)
         2. Tuyến tính: Timeline sorted segments
-        3. Speaker embedding/features nếu pipeline cung cấp
+        3. Minh bạch trạng thái Speaker Embeddings (COMPLETED | PARTIAL | FAILED | NOT_AVAILABLE)
         """
         audio_name = Path(audio_file_path).name
         embeddings_map = speaker_embeddings or {}
@@ -72,19 +73,17 @@ class SpeakerLabelingService:
                 speaker_mapping={},
                 speakers=[],
                 timeline=[],
+                embeddings_status="NOT_AVAILABLE",
                 error_message=segmentation_res.error_message
             )
 
-        # 1. Sắp xếp danh sách segments theo thứ tự thời gian toàn cục ngay từ đầu
         sorted_raw_segments = sorted(
             segmentation_res.segments,
             key=lambda s: (s.start_seconds, s.end_seconds)
         )
 
-        # 2. Tạo mapping nhất quán dựa trên thứ tự timeline thực tế
         label_mapping = self.generate_speaker_labels(sorted_raw_segments)
 
-        # 3. Chuẩn hóa danh sách Timeline phẳng
         timeline_segments: List[SpeakerSegment] = []
         for seg in sorted_raw_segments:
             friendly_label = label_mapping[seg.speaker]
@@ -102,11 +101,9 @@ class SpeakerLabelingService:
                 embedding=spk_emb
             ))
 
-        # Đánh lại segment_id tăng dần 1, 2, 3... theo timeline sau khi đã sắp xếp
         for idx, seg in enumerate(timeline_segments, start=1):
             seg.segment_id = idx
 
-        # 4. Tạo cấu trúc phân cấp: Speaker -> Segments
         speakers_dict: Dict[str, Dict[str, Any]] = {}
         for raw_spk, friendly_label in label_mapping.items():
             speakers_dict[friendly_label] = {
@@ -139,6 +136,21 @@ class SpeakerLabelingService:
                 segments=data["segments"]
             ))
 
+        # Xác định trạng thái Embeddings minh bạch
+        total_spk_count = len(speakers_list)
+        embedded_spk_count = sum(1 for s in speakers_list if s.embedding is not None)
+
+        if embeddings_error:
+            emb_status = "FAILED"
+        elif total_spk_count == 0:
+            emb_status = "NOT_AVAILABLE"
+        elif embedded_spk_count == total_spk_count:
+            emb_status = "COMPLETED"
+        elif embedded_spk_count > 0:
+            emb_status = "PARTIAL"
+        else:
+            emb_status = "NOT_AVAILABLE"
+
         return DiarizationExportPayload(
             job_id=segmentation_res.job_id,
             audio_file=audio_name,
@@ -149,7 +161,8 @@ class SpeakerLabelingService:
             total_speakers=len(speakers_list),
             speaker_mapping=label_mapping,
             speakers=speakers_list,
-            timeline=timeline_segments
+            timeline=timeline_segments,
+            embeddings_status=emb_status
         )
 
     def export_to_json_file(
@@ -159,10 +172,16 @@ class SpeakerLabelingService:
     ) -> Path:
         """
         Xác thực dữ liệu Pydantic và ghi ra file JSON nguyên tử (Atomic file write).
-        Phát hiện và thông báo lỗi rõ ràng nếu không thể ghi file.
+        Sử dụng tempfile.NamedTemporaryFile trong cùng thư mục đích kèm os.fsync()
+        để đảm bảo không bao giờ tạo file rác hoặc ghi hỏng khi nhiều tiến trình ghi đồng thời.
         """
         target_path = Path(output_path).resolve()
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as dir_err:
+            logger.error(f"Không thể tạo thư mục đích '{target_path.parent}': {dir_err}")
+            raise IOError(f"Không thể tạo thư mục lưu file JSON: {dir_err}") from dir_err
 
         try:
             json_str = payload.model_dump_json(indent=2)
@@ -170,16 +189,33 @@ class SpeakerLabelingService:
             logger.error(f"Lỗi validate schema trước khi ghi file JSON: {val_err}")
             raise ValueError(f"Dữ liệu JSON không hợp lệ theo Schema: {val_err}") from val_err
 
-        temp_file = target_path.with_suffix(".tmp")
+        temp_file_path: Optional[Path] = None
         try:
-            with open(temp_file, "w", encoding="utf-8") as f:
-                f.write(json_str)
-            temp_file.replace(target_path)
+            # Tạo file tạm duy nhất ngay trong cùng thư mục đích để bảo đảm cùng filesystem
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(target_path.parent),
+                prefix=f"{target_path.stem}_",
+                suffix=".tmp",
+                delete=False
+            ) as tf:
+                temp_file_path = Path(tf.name)
+                tf.write(json_str)
+                tf.flush()
+                os.fsync(tf.fileno())
+
+            # Atomic replace (Last-writer-wins an toàn)
+            os.replace(temp_file_path, target_path)
             logger.info(f"Xuất file kết quả JSON thành công: {target_path}")
             return target_path
+
         except Exception as io_err:
-            if temp_file.exists():
-                temp_file.unlink(missing_ok=True)
+            if temp_file_path and temp_file_path.exists():
+                try:
+                    temp_file_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
             logger.error(f"Lỗi ghi file JSON ra đĩa tại '{target_path}': {io_err}")
             raise IOError(f"Không thể lưu file JSON kết quả: {io_err}") from io_err
 
@@ -191,13 +227,29 @@ class SpeakerLabelingService:
         speaker_embeddings: Optional[Dict[str, List[float]]] = None
     ) -> Tuple[DiarizationExportPayload, Optional[Path]]:
         """
-        Quy trình trọn gói: VAD/Segmentation -> Labeling & Structuring -> JSON File Export.
+        Quy trình trọn gói: VAD/Segmentation -> Sinh Embeddings -> Labeling -> JSON File Export.
         """
         seg_res = speaker_diarization_service.segment_speech(audio_path, job_id=job_id)
+
+        effective_embeddings = speaker_embeddings
+        embeddings_error_msg = None
+
+        if effective_embeddings is None and seg_res.status == "SUCCESS" and seg_res.segments:
+            try:
+                effective_embeddings = diarization_runtime.extract_speaker_embeddings(
+                    audio_path=audio_path,
+                    speaker_segments=seg_res.segments
+                )
+            except Exception as emb_err:
+                logger.error(f"Không thể tự động sinh speaker embeddings: {emb_err}")
+                embeddings_error_msg = str(emb_err)
+                effective_embeddings = {}
+
         payload = self.build_export_payload(
             seg_res,
             audio_file_path=audio_path,
-            speaker_embeddings=speaker_embeddings
+            speaker_embeddings=effective_embeddings,
+            embeddings_error=embeddings_error_msg
         )
 
         saved_path = None

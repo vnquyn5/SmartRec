@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
 
 from app.schemas.audio_schemas import (
@@ -15,6 +16,11 @@ from app.schemas.audio_schemas import (
     AudioPipelineRequest,
     AudioPipelineResponse
 )
+from app.schemas.diarization_schemas import (
+    AudioDiarizationRequest,
+    DiarizationExportPayload
+)
+from app.core.path_security import validate_safe_read_path, validate_safe_write_path
 from app.services.audio_extractor import AudioExtractorService
 from app.services.audio_chunker import AudioChunker
 from app.services.audio_ans import (
@@ -28,6 +34,7 @@ from app.services.audio_aec import (
     AudioSignalLostError as AECSignalLostError
 )
 from app.services.audio_pipeline import AudioPipelineOrchestrator
+from app.services.speaker_labeling_service import speaker_labeling_service
 
 logger = logging.getLogger("api_routes")
 router = APIRouter(prefix="/audio", tags=["Audio Preprocessing"])
@@ -40,6 +47,7 @@ pipeline_orchestrator = AudioPipelineOrchestrator(
     aec_service=aec_service,
     ans_service=ans_service
 )
+
 
 @router.post(
     "/extract",
@@ -166,7 +174,7 @@ async def cancel_echo_endpoint(request: AudioAECRequest):
     "/pipeline/process",
     response_model=AudioPipelineResponse,
     summary="Chuỗi tiền xử lý âm thanh hợp nhất",
-    description="Validate -> AEC -> ANS -> Quality Check theo chuẩn bất biến 16kHz Mono. Ngăn chặn triệt để HTTP 200 cho file lỗi."
+    description="Validate -> AEC -> ANS -> Quality Check theo chuẩn bất biến 16kHz Mono."
 )
 async def process_pipeline_endpoint(request: AudioPipelineRequest):
     try:
@@ -175,7 +183,6 @@ async def process_pipeline_endpoint(request: AudioPipelineRequest):
             request
         )
 
-        # H7: Nếu không đạt chuẩn chất lượng hoặc overall_status != SUCCESS, trả ngay HTTP 422
         if response.overall_status != "SUCCESS" or (response.quality_check and not response.quality_check.passed):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -195,4 +202,55 @@ async def process_pipeline_endpoint(request: AudioPipelineRequest):
                 "overall_status": "FAILED",
                 "error_message": f"Lỗi máy chủ nội bộ: {str(err)}"
             }
+        )
+
+
+@router.post(
+    "/diarize",
+    response_model=DiarizationExportPayload,
+    summary="Speaker Diarization & VAD Pipeline",
+    description="Chạy VAD, Diarization, tự động trích xuất Speaker Embeddings và chuẩn hóa JSON phân cấp."
+)
+async def diarize_audio_endpoint(request: AudioDiarizationRequest):
+    try:
+        safe_input = validate_safe_read_path(request.input_path)
+        safe_output = validate_safe_write_path(request.output_json_path) if request.output_json_path else None
+
+        payload, _ = await asyncio.to_thread(
+            speaker_labeling_service.process_and_export,
+            audio_path=safe_input,
+            output_json_path=safe_output,
+            job_id=request.job_id
+        )
+
+        if payload.status == "FAILED":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=payload.model_dump()
+            )
+
+        return payload
+
+    except HTTPException:
+        raise
+    except FileNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "FAILED", "message": str(err)}
+        )
+    except PermissionError as perm_err:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"status": "FAILED", "message": str(perm_err)}
+        )
+    except ValueError as val_err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "FAILED", "message": str(val_err)}
+        )
+    except Exception as err:
+        logger.exception("Lỗi nghiêm trọng trong Diarize endpoint")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "FAILED", "message": f"Lỗi xử lý Diarization: {str(err)}"}
         )

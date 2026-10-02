@@ -1,186 +1,307 @@
-import os
 import logging
+import os
 import threading
-from typing import Optional, Dict, Any, Union
+import wave
 from pathlib import Path
-import torch
-from pyannote.core import Annotation
+from typing import Optional, Union, Any, Dict, List
 
-from app.core.config import settings
+import numpy as np
+import torch
+from pyannote.audio import Pipeline
+from pyannote.core import Annotation
 
 logger = logging.getLogger("smartrec.diarization_runtime")
 
 
+def _get_field_value(obj: Any, field_name: str, default: Optional[Any] = None) -> Optional[Any]:
+    """
+    Trích xuất giá trị trường an toàn từ dict hoặc object/Pydantic model.
+    Phân biệt rõ ràng giá trị 0.0 (hợp lệ) và None, chống lỗi biểu thức 'or' khi gặp 0.0.
+    """
+    if isinstance(obj, dict):
+        if field_name in obj:
+            return obj[field_name]
+    elif hasattr(obj, field_name):
+        val = getattr(obj, field_name)
+        if val is not None:
+            return val
+    return default
+
+
 class DiarizationRuntimeError(Exception):
-    """Lỗi nền tảng runtime của module Diarization."""
+    """Lỗi chung cho quá trình khởi tạo và thực thi Diarization Pipeline."""
     pass
 
 
 class DiarizationTokenMissingError(DiarizationRuntimeError):
-    """Lỗi thiếu token Hugging Face để tải gated model."""
+    """Ngoại lệ khi không tìm thấy Hugging Face token hợp lệ."""
     pass
 
 
 class DiarizationAccessDeniedError(DiarizationRuntimeError):
-    """Lỗi token không hợp lệ hoặc tài khoản chưa được duyệt quyền repo gated (HTTP 401/403)."""
+    """Ngoại lệ khi Hugging Face token bị từ chối quyền truy cập pretrained model."""
     pass
 
 
-class DiarizationModelLoadError(DiarizationRuntimeError):
-    """Lỗi nạp pretrained model thất bại do nguyên nhân hệ thống/mạng/cấu hình."""
+class DiarizationInferenceError(DiarizationRuntimeError):
+    """Ngoại lệ khi quá trình inference gặp lỗi hoặc trả về output không đúng contract."""
     pass
-
-
-def resolve_device(preferred_device: str = "auto") -> torch.device:
-    """
-    Xác định thiết bị thực thi tối ưu nhất, ưu tiên GPU local.
-    Thứ tự ưu tiên: CUDA -> MPS (Apple Silicon GPU) -> CPU.
-    """
-    pref = preferred_device.lower().strip()
-    if pref == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
-    elif pref == "cuda":
-        if not torch.cuda.is_available():
-            raise DiarizationRuntimeError("Yêu cầu thiết bị CUDA nhưng hệ thống không hỗ trợ.")
-        return torch.device("cuda")
-    elif pref == "mps":
-        if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
-            raise DiarizationRuntimeError("Yêu cầu thiết bị MPS nhưng hệ thống không hỗ trợ.")
-        return torch.device("mps")
-    elif pref == "cpu":
-        return torch.device("cpu")
-    else:
-        raise DiarizationRuntimeError(f"Cấu hình thiết bị không hợp lệ: '{preferred_device}'")
 
 
 class DiarizationRuntimeManager:
     """
-    Quản lý vòng đời (Lifecycle) và nạp pretrained model cho Speaker Diarization theo mẫu Singleton.
-    Đảm bảo an toàn đa luồng (Thread-safe) với cơ chế Double-Checked Locking.
+    Quản lý vòng đời mô hình pyannote/speaker-diarization-3.1 theo mẫu Singleton.
+    Đảm bảo:
+    - Thread-safe khởi tạo qua Double-Checked Locking.
+    - Thread-safe inference và device-fallback qua _inference_lock.
+    - Chuẩn hóa nghiêm ngặt contract trả về kiểu Annotation.
+    - Trích xuất Speaker Embeddings 256 chiều an toàn với mọi mốc thời gian (kể cả 0.0s).
     """
-    _instance: Optional["DiarizationRuntimeManager"] = None
-    _init_lock = threading.Lock()
-    _load_lock = threading.Lock()
-    _pipeline = None
-    _active_device: Optional[torch.device] = None
-    _model_id: Optional[str] = None
 
-    def __new__(cls) -> "DiarizationRuntimeManager":
-        if cls._instance is None:
-            with cls._init_lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(DiarizationRuntimeManager, cls).__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
-    def get_token(self) -> str:
-        """Lấy Hugging Face token từ settings hoặc biến môi trường."""
-        token = settings.hf_token or os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
-        if not token or not token.strip():
-            raise DiarizationTokenMissingError(
-                "Thiếu HF_TOKEN. Model pyannote/speaker-diarization-3.1 yêu cầu Hugging Face token hợp lệ "
-                "đã chấp nhận điều khoản tại https://huggingface.co/pyannote/speaker-diarization-3.1."
-            )
-        return token.strip()
+    def __init__(
+        self,
+        model_name: str = "pyannote/speaker-diarization-3.1",
+        hf_token: Optional[str] = None,
+        prefer_device: Optional[str] = None
+    ):
+        if self._initialized:
+            return
 
-    def load_pipeline(self, force_reload: bool = False, device_override: Optional[str] = None):
+        with self._lock:
+            if self._initialized:
+                return
+
+            self.model_name = model_name
+            self.hf_token = hf_token or os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+            self._pipeline: Optional[Pipeline] = None
+            self._init_lock = threading.Lock()
+            self._inference_lock = threading.RLock()
+            self.device = self._resolve_target_device(prefer_device)
+            self._initialized = True
+            logger.info(f"Đã khởi tạo DiarizationRuntimeManager (mô hình: {self.model_name}, thiết bị: {self.device})")
+
+    def _resolve_target_device(self, prefer_device: Optional[str] = None) -> str:
+        """Xác định thiết bị tính toán tối ưu dựa trên phần cứng."""
+        if prefer_device:
+            return prefer_device
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    def load_pipeline(self) -> Pipeline:
         """
-        Nạp pipeline Pyannote vào bộ nhớ và gán vào thiết bị tối ưu.
-        Đảm bảo Thread-safe: chỉ nạp duy nhất một lần khi có nhiều luồng cùng gọi đồng thời.
+        Nạp pipeline vào bộ nhớ (Lazy Loading, Thread-safe qua Double-Checked Locking).
         """
-        if self._pipeline is not None and not force_reload:
+        if self._pipeline is not None:
             return self._pipeline
 
-        with self._load_lock:
-            # Double-Checked Locking kiểm tra lại sau khi giữ lock
-            if self._pipeline is not None and not force_reload:
+        with self._init_lock:
+            if self._pipeline is not None:
                 return self._pipeline
 
-            model_id = settings.pyannote_model_id
-            target_device_str = device_override or settings.pyannote_device
-            target_device = resolve_device(target_device_str)
-            token = self.get_token()
+            if not self.hf_token:
+                logger.error("Không tìm thấy Hugging Face token (biến môi trường HF_TOKEN hoặc HUGGING_FACE_HUB_TOKEN)")
+                raise DiarizationTokenMissingError(
+                    "HF_TOKEN chưa được cấu hình. pyannote-audio yêu cầu token xác thực để nạp model gated."
+                )
 
-            logger.info(f"Bắt đầu nạp pretrained model '{model_id}' trên thiết bị '{target_device}'...")
-
+            logger.info(f"Đang tải pretrained pipeline '{self.model_name}' từ Hugging Face Hub...")
             try:
-                from pyannote.audio import Pipeline
-            except ImportError as e:
-                raise DiarizationRuntimeError(f"Chưa cài đặt dependency pyannote.audio: {e}") from e
-
-            try:
-                pipeline = Pipeline.from_pretrained(model_id, token=token)
-                if pipeline is None:
-                    raise DiarizationAccessDeniedError(
-                        f"Không thể khởi tạo Pipeline từ '{model_id}'. Quyền truy cập bị từ chối hoặc token không hợp lệ."
-                    )
-
-                # Chuyển pipeline lên thiết bị (ưu tiên GPU), hỗ trợ fallback sang CPU nếu MPS gặp lỗi
-                try:
-                    pipeline.to(target_device)
-                    self._active_device = target_device
-                except Exception as dev_err:
-                    if target_device.type == "mps":
-                        logger.warning(f"Không thể gán pipeline lên MPS ({dev_err}), tự động fallback về CPU.")
-                        pipeline.to(torch.device("cpu"))
-                        self._active_device = torch.device("cpu")
-                    else:
-                        raise dev_err
-
-                self._pipeline = pipeline
-                self._model_id = model_id
-                logger.info(f"Nạp model '{model_id}' thành công trên thiết bị: {self._active_device}")
-                return self._pipeline
-
-            except (DiarizationTokenMissingError, DiarizationAccessDeniedError):
-                raise
+                pipeline = Pipeline.from_pretrained(
+                    self.model_name,
+                    use_auth_token=self.hf_token
+                )
             except Exception as e:
                 err_msg = str(e).lower()
-                # Bắt các mã lỗi HTTP 401, 403, Gated repo hoặc unauthorized từ huggingface_hub
-                if any(k in err_msg for k in ["401", "403", "gated", "unauthorized", "access denied", "forbidden", "restricted"]):
+                if "401" in err_msg or "gated" in err_msg or "unauthorized" in err_msg or "access" in err_msg:
+                    logger.error(f"Từ chối quyền truy cập pretrained model: {e}")
                     raise DiarizationAccessDeniedError(
-                        f"Quyền truy cập model '{model_id}' bị từ chối (401/403 hoặc chưa chấp nhận điều khoản repo): {e}"
+                        f"Quyền truy cập model '{self.model_name}' bị từ chối. Vui lòng chấp thuận điều khoản tại Hugging Face: {e}"
                     ) from e
-                raise DiarizationModelLoadError(f"Lỗi trong quá trình nạp model '{model_id}': {e}") from e
+                logger.error(f"Không thể nạp pretrained pipeline: {e}")
+                raise DiarizationRuntimeError(f"Lỗi nạp mô hình pyannote: {e}") from e
+
+            if pipeline is None:
+                raise DiarizationAccessDeniedError(
+                    f"Không thể khởi tạo pipeline từ model '{self.model_name}'. Kiểm tra lại quyền sở hữu token."
+                )
+
+            try:
+                target_dev = torch.device(self.device)
+                pipeline.to(target_dev)
+                logger.info(f"Đã đưa pipeline '{self.model_name}' lên thiết bị: {self.device}")
+            except Exception as dev_err:
+                logger.warning(
+                    f"Không thể đưa pipeline lên thiết bị '{self.device}' ({dev_err}). Fallback về 'cpu'..."
+                )
+                self.device = "cpu"
+                pipeline.to(torch.device("cpu"))
+
+            self._pipeline = pipeline
+            return self._pipeline
+
+    def _normalize_annotation(self, raw_output: Any) -> Annotation:
+        """
+        Chuẩn hóa kết quả inference đảm bảo trả về đúng kiểu pyannote.core.Annotation.
+        Hỗ trợ cả Annotation trực tiếp và đối tượng chứa thuộc tính speaker_diarization.
+        """
+        if isinstance(raw_output, Annotation):
+            return raw_output
+        if hasattr(raw_output, "speaker_diarization"):
+            annot = getattr(raw_output, "speaker_diarization")
+            if isinstance(annot, Annotation):
+                return annot
+        raise DiarizationInferenceError(
+            f"Kết quả diarization không hợp lệ. Kỳ vọng kiểu 'pyannote.core.Annotation', nhưng nhận được '{type(raw_output).__name__}'."
+        )
 
     def diarize(self, audio_input: Union[str, Path, Dict[str, Any]], **kwargs) -> Annotation:
         """
-        Interface thực thi inference chuẩn hóa.
-        Tự động bóc tách và kiểm tra nghiêm ngặt kiểu trả về pyannote.core.Annotation.
+        Thực thi Speaker Diarization trên audio đầu vào.
+        Thread-safe: Sử dụng _inference_lock bảo vệ model dùng chung khi fallback MPS -> CPU.
         """
+        with self._inference_lock:
+            pipeline = self.load_pipeline()
+
+            try:
+                raw_output = pipeline(audio_input, **kwargs)
+                return self._normalize_annotation(raw_output)
+            except Exception as inf_err:
+                if self.device == "mps":
+                    logger.warning(
+                        f"Inference trên thiết bị 'mps' gặp lỗi ({inf_err}). Tự động fallback về 'cpu' và chạy lại..."
+                    )
+                    try:
+                        self.device = "cpu"
+                        pipeline.to(torch.device("cpu"))
+                        raw_output = pipeline(audio_input, **kwargs)
+                        logger.info("Chạy lại Diarization inference trên CPU thành công sau fallback!")
+                        return self._normalize_annotation(raw_output)
+                    except Exception as cpu_err:
+                        logger.error(f"Thực thi trên CPU cũng thất bại: {cpu_err}")
+                        raise DiarizationInferenceError(
+                            f"Diarization inference thất bại trên cả MPS và CPU: {cpu_err}"
+                        ) from cpu_err
+                else:
+                    logger.error(f"Lỗi khi thực thi Diarization: {inf_err}")
+                    raise DiarizationInferenceError(f"Diarization inference thất bại: {inf_err}") from inf_err
+
+    def extract_speaker_embeddings(
+        self,
+        audio_path: Union[str, Path],
+        speaker_segments: List[Any],
+        max_duration_per_speaker: float = 30.0
+    ) -> Dict[str, List[float]]:
+        """
+        Trích xuất vector đặc trưng âm học (Speaker Embeddings 256 chiều) cho từng speaker.
+        Xử lý an toàn với mọi mốc thời gian (bao gồm start_seconds = 0.0s trên Pydantic models).
+        Hỗ trợ cả đầu ra NumPy ndarray và PyTorch Tensor.
+        """
+        if not speaker_segments:
+            return {}
+
         pipeline = self.load_pipeline()
-        raw_output = pipeline(audio_input, **kwargs)
+        emb_model = getattr(pipeline, "_embedding", None)
+        if emb_model is None:
+            logger.warning("Pipeline không có mô hình _embedding. Bỏ qua trích xuất vector đặc trưng.")
+            return {}
 
-        # Bóc tách Annotation từ DiarizeOutput (pyannote 4.x) hoặc trả về trực tiếp (pyannote 3.x)
-        annotation = getattr(raw_output, "speaker_diarization", raw_output)
+        audio_path_str = str(audio_path)
+        if not os.path.exists(audio_path_str):
+            logger.warning(f"File âm thanh không tồn tại để trích xuất embeddings: {audio_path_str}")
+            return {}
 
-        if not isinstance(annotation, Annotation):
-            raise DiarizationRuntimeError(
-                f"Đầu ra của pipeline không đạt chuẩn pyannote.core.Annotation (kiểu thực tế: {type(annotation).__name__})"
-            )
+        # Gom nhóm các segments theo speaker an toàn
+        speaker_map: Dict[str, List[Any]] = {}
+        for seg in speaker_segments:
+            spk = _get_field_value(seg, "speaker") or _get_field_value(seg, "raw_speaker_id")
+            if spk:
+                speaker_map.setdefault(spk, []).append(seg)
 
-        return annotation
+        embeddings_result: Dict[str, List[float]] = {}
 
-    def get_runtime_info(self) -> Dict[str, Any]:
-        """Trả về thông tin trạng thái runtime phục vụ giám sát pipeline."""
-        return {
-            "model_id": self._model_id or settings.pyannote_model_id,
-            "is_loaded": self._pipeline is not None,
-            "active_device": str(self._active_device) if self._active_device else None,
-            "torch_version": torch.__version__,
-            "cuda_available": torch.cuda.is_available(),
-            "mps_available": hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        }
+        try:
+            with wave.open(audio_path_str, "rb") as wf:
+                sr = wf.getframerate()
+                sampwidth = wf.getsampwidth()
+                n_channels = wf.getnchannels()
+                total_frames = wf.getnframes()
+
+                for speaker, segs in speaker_map.items():
+                    # Lấy phân đoạn dài nhất của người nói để có vector đặc trưng tốt nhất
+                    sorted_segs = sorted(
+                        segs,
+                        key=lambda s: _get_field_value(s, "duration_seconds", _get_field_value(s, "duration", 0.0)),
+                        reverse=True
+                    )
+                    best_seg = sorted_segs[0]
+
+                    # Đọc start_seconds và end_seconds tuyệt đối an toàn với 0.0s
+                    start_sec = _get_field_value(best_seg, "start_seconds", _get_field_value(best_seg, "start", 0.0))
+                    end_sec = _get_field_value(best_seg, "end_seconds", _get_field_value(best_seg, "end", 0.0))
+
+                    start_frame = max(0, int(start_sec * sr))
+                    end_frame = min(total_frames, int(end_sec * sr))
+                    num_frames = end_frame - start_frame
+
+                    if num_frames < sr * 0.2:  # Bỏ qua nếu quá ngắn (< 0.2s)
+                        continue
+
+                    wf.setpos(start_frame)
+                    raw_data = wf.readframes(num_frames)
+
+                    if sampwidth == 2:
+                        audio_np = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
+                    else:
+                        continue
+
+                    if n_channels > 1:
+                        audio_np = audio_np.reshape(-1, n_channels).mean(axis=1)
+
+                    # Định dạng cho pyannote embedding: (batch, channel, samples) -> (1, 1, N)
+                    waveform = torch.from_numpy(audio_np).unsqueeze(0).unsqueeze(0)
+
+                    # Gọi model embedding và hỗ trợ cả Tensor lẫn ndarray
+                    emb_output = emb_model(waveform)
+                    if isinstance(emb_output, torch.Tensor):
+                        emb_output = emb_output.detach().cpu().numpy()
+
+                    if isinstance(emb_output, np.ndarray):
+                        emb_vec = emb_output.flatten().tolist()
+                        embeddings_result[speaker] = [round(float(x), 6) for x in emb_vec]
+
+        except Exception as e:
+            logger.error(f"Lỗi khi trích xuất speaker embeddings từ audio '{audio_path}': {e}")
+            raise IOError(f"Lỗi đọc audio trích xuất embeddings: {e}") from e
+
+        return embeddings_result
 
     def reset(self):
-        """Giải phóng pipeline khỏi bộ nhớ (dùng cho testing/cleanup)."""
-        with self._load_lock:
-            self._pipeline = None
-            self._active_device = None
-            self._model_id = None
+        """Giải phóng tài nguyên pipeline và bộ nhớ GPU."""
+        with self._lock:
+            with self._init_lock:
+                if self._pipeline is not None:
+                    del self._pipeline
+                    self._pipeline = None
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                    torch.mps.empty_cache()
+                logger.info("Đã giải phóng tài nguyên Diarization pipeline.")
 
 
 diarization_runtime = DiarizationRuntimeManager()

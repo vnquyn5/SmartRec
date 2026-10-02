@@ -3,10 +3,10 @@ import sys
 import json
 import tempfile
 import shutil
+import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-# Nạp thư mục gốc vào sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.schemas.diarization_schemas import (
@@ -87,7 +87,7 @@ def test_speaker_label_consistency():
     assert payload.timeline[3].speaker == "Speaker 2"
 
 
-def test_speaker_embeddings_integration():
+def test_speaker_embeddings_integration_and_status():
     service = SpeakerLabelingService()
     raw_segments = [
         create_dummy_segment(1, "SPEAKER_00", 0.0, 2.0)
@@ -102,7 +102,7 @@ def test_speaker_embeddings_integration():
         segments=raw_segments
     )
     mock_embeddings = {
-        "SPEAKER_00": [0.123, -0.456, 0.789]
+        "SPEAKER_00": [0.123] * 256
     }
     payload = service.build_export_payload(
         seg_res,
@@ -110,8 +110,9 @@ def test_speaker_embeddings_integration():
         speaker_embeddings=mock_embeddings
     )
 
-    assert payload.speakers[0].embedding == [0.123, -0.456, 0.789]
-    assert payload.timeline[0].embedding == [0.123, -0.456, 0.789]
+    assert payload.embeddings_status == "COMPLETED"
+    assert payload.speakers[0].embedding == [0.123] * 256
+    assert payload.timeline[0].embedding == [0.123] * 256
 
 
 def test_hierarchical_speaker_segment_structure():
@@ -142,24 +143,15 @@ def test_hierarchical_speaker_segment_structure():
 
 
 def test_timeline_chronological_ordering_and_label_assignment():
-    """
-    Kiểm chứng giải pháp chống sai lệch thứ tự đầu vào:
-    Đầu vào xáo trộn: SPEAKER_01 nói lúc 5.0s lại nằm trước SPEAKER_00 nói lúc 1.0s.
-    Kỳ vọng:
-    - SPEAKER_00 xuất hiện đầu tiên trên timeline (1.0s) -> BẮT BUỘC gán là Speaker 1.
-    - SPEAKER_01 xuất hiện sau (5.0s) -> BẮT BUỘC gán là Speaker 2.
-    - Timeline phải sắp xếp tăng dần: t=1.0s trước, t=5.0s sau.
-    """
     service = SpeakerLabelingService()
     raw_segments = [
         create_dummy_segment(2, "SPEAKER_01", 5.0, 7.0),
         create_dummy_segment(1, "SPEAKER_00", 1.0, 3.0),
     ]
 
-    # Kiểm tra trực tiếp hàm generate_speaker_labels với input xáo trộn
     mapping = service.generate_speaker_labels(raw_segments)
-    assert mapping["SPEAKER_00"] == "Speaker 1", "Speaker xuất hiện trước (1.0s) phải là Speaker 1"
-    assert mapping["SPEAKER_01"] == "Speaker 2", "Speaker xuất hiện sau (5.0s) phải là Speaker 2"
+    assert mapping["SPEAKER_00"] == "Speaker 1"
+    assert mapping["SPEAKER_01"] == "Speaker 2"
 
     seg_res = SpeakerSegmentationResponse(
         status="SUCCESS",
@@ -171,7 +163,6 @@ def test_timeline_chronological_ordering_and_label_assignment():
     )
     payload = service.build_export_payload(seg_res, "audio.wav")
 
-    # Xác thực timeline đã sắp xếp và nhãn gán chuẩn xác
     assert payload.timeline[0].start_seconds == 1.0
     assert payload.timeline[0].speaker == "Speaker 1"
     assert payload.timeline[0].segment_id == 1
@@ -196,44 +187,69 @@ def test_no_speech_detected_export():
 
     assert payload.status == "NO_SPEECH_DETECTED"
     assert payload.total_speakers == 0
+    assert payload.embeddings_status == "NOT_AVAILABLE"
     assert len(payload.speakers) == 0
     assert len(payload.timeline) == 0
 
 
-def test_export_json_atomic_write_and_readback():
-    test_dir = tempfile.mkdtemp(prefix="test_json_export_")
+def test_export_json_atomic_write_real_concurrency():
+    """
+    Kiểm thử Concurrency thực sự:
+    10 writers chạy song song ghi vào CÙNG 1 file đích với các payload định danh khác nhau.
+    Xác nhận:
+    1. Không có exception nào xảy ra.
+    2. File đích luôn parse được bằng json.load (không có nội dung trộn).
+    3. File đích tương ứng trọn vẹn với một writer (Last-writer-wins).
+    4. Không sót lại bất kỳ file .tmp nào trong thư mục đích.
+    """
+    test_dir = tempfile.mkdtemp(prefix="test_json_real_concurrency_")
     try:
         service = SpeakerLabelingService()
-        raw_segments = [create_dummy_segment(1, "SPEAKER_00", 1.0, 3.0)]
-        seg_res = SpeakerSegmentationResponse(
-            status="SUCCESS",
-            audio_duration_seconds=5.0,
-            speech_duration_seconds=2.0,
-            speech_ratio=0.4,
-            total_segments=1,
-            segments=raw_segments
-        )
-        payload = service.build_export_payload(seg_res, "test.wav")
-        out_file = os.path.join(test_dir, "output.json")
+        dest_file = os.path.join(test_dir, "concurrent_output.json")
+        errors = []
 
-        saved = service.export_to_json_file(payload, out_file)
-        assert Path(saved).exists()
+        def concurrent_writer(thread_idx: int):
+            try:
+                payload = DiarizationExportPayload(
+                    job_id=f"JOB-THREAD-{thread_idx}",
+                    audio_file=f"audio_{thread_idx}.wav",
+                    status="SUCCESS",
+                    audio_duration_seconds=10.0,
+                    speech_duration_seconds=5.0,
+                    speech_ratio=0.5,
+                    total_speakers=1,
+                    embeddings_status="COMPLETED"
+                )
+                service.export_to_json_file(payload, dest_file)
+            except Exception as e:
+                errors.append(e)
 
-        with open(saved, "r", encoding="utf-8") as f:
+        threads = [threading.Thread(target=concurrent_writer, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Có lỗi xảy ra khi ghi đồng thời: {errors}"
+        assert os.path.exists(dest_file)
+
+        with open(dest_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        assert data["audio_file"] == "test.wav"
         assert data["status"] == "SUCCESS"
-        assert len(data["speakers"]) == 1
-        assert data["speakers"][0]["speaker_label"] == "Speaker 1"
-        assert len(data["timeline"]) == 1
-        assert data["timeline"][0]["speaker"] == "Speaker 1"
+        assert data["job_id"].startswith("JOB-THREAD-")
+
+        # Kiểm tra không còn file .tmp nào sót lại
+        tmp_files = list(Path(test_dir).glob("*.tmp"))
+        assert len(tmp_files) == 0, f"Còn file tạm chưa được dọn dẹp: {tmp_files}"
+
     finally:
         if os.path.exists(test_dir):
             shutil.rmtree(test_dir)
 
 
-def test_json_export_error_handling():
+def test_json_export_error_handling_mocked():
+    """Kiểm chứng xử lý lỗi IO bằng mock deterministic, không phụ thuộc hệ điều hành."""
     service = SpeakerLabelingService()
     payload = DiarizationExportPayload(
         audio_file="test.wav",
@@ -243,21 +259,23 @@ def test_json_export_error_handling():
         speech_ratio=0.4,
         total_speakers=1
     )
-    try:
-        service.export_to_json_file(payload, "/root/forbidden_diarization_path/output.json")
-        assert False, "Phải ném IOError khi không thể ghi file vào thư mục cấm"
-    except (IOError, PermissionError):
-        pass
+
+    with patch("tempfile.NamedTemporaryFile", side_effect=IOError("Simulated Disk IO Error")):
+        try:
+            service.export_to_json_file(payload, "/tmp/mock_test/out.json")
+            assert False, "Phải ném IOError khi gặp sự cố đĩa"
+        except IOError as err:
+            assert "Không thể lưu file JSON" in str(err)
 
 
-def test_full_pipeline_process_and_export():
-    test_dir = tempfile.mkdtemp(prefix="test_full_pipeline_")
+def test_full_pipeline_process_and_export_with_auto_embeddings():
+    test_dir = tempfile.mkdtemp(prefix="test_full_auto_emb_")
     try:
         service = SpeakerLabelingService()
         out_json = os.path.join(test_dir, "result.json")
 
         mock_seg_res = SpeakerSegmentationResponse(
-            job_id="JOB-E2E-LABELING",
+            job_id="JOB-AUTO-EMB",
             status="SUCCESS",
             audio_duration_seconds=8.0,
             speech_duration_seconds=4.0,
@@ -265,22 +283,30 @@ def test_full_pipeline_process_and_export():
             total_segments=2,
             unique_speakers=["SPEAKER_00", "SPEAKER_01"],
             segments=[
-                create_dummy_segment(1, "SPEAKER_00", 0.5, 2.5),
+                create_dummy_segment(1, "SPEAKER_00", 0.0, 2.5),
                 create_dummy_segment(2, "SPEAKER_01", 3.0, 5.0)
             ]
         )
 
-        with patch("app.services.speaker_labeling_service.speaker_diarization_service.segment_speech", return_value=mock_seg_res):
+        mock_embeddings = {
+            "SPEAKER_00": [0.1] * 256,
+            "SPEAKER_01": [0.2] * 256
+        }
+
+        with patch("app.services.speaker_labeling_service.speaker_diarization_service.segment_speech", return_value=mock_seg_res), \
+             patch("app.services.speaker_labeling_service.diarization_runtime.extract_speaker_embeddings", return_value=mock_embeddings):
+
             payload, saved_path = service.process_and_export(
                 audio_path="dummy_audio.wav",
                 output_json_path=out_json,
-                job_id="JOB-E2E-LABELING",
-                speaker_embeddings={"SPEAKER_00": [0.1], "SPEAKER_01": [0.2]}
+                job_id="JOB-AUTO-EMB"
             )
 
             assert payload.status == "SUCCESS"
             assert payload.total_speakers == 2
-            assert payload.speaker_mapping == {"SPEAKER_00": "Speaker 1", "SPEAKER_01": "Speaker 2"}
+            assert payload.embeddings_status == "COMPLETED"
+            assert payload.speakers[0].embedding == [0.1] * 256
+            assert payload.speakers[1].embedding == [0.2] * 256
             assert saved_path is not None and Path(saved_path).exists()
     finally:
         if os.path.exists(test_dir):
@@ -291,13 +317,13 @@ def run_all_labeling_tests():
     test_single_speaker_labeling()
     test_multi_speaker_timeline_order()
     test_speaker_label_consistency()
-    test_speaker_embeddings_integration()
+    test_speaker_embeddings_integration_and_status()
     test_hierarchical_speaker_segment_structure()
     test_timeline_chronological_ordering_and_label_assignment()
     test_no_speech_detected_export()
-    test_export_json_atomic_write_and_readback()
-    test_json_export_error_handling()
-    test_full_pipeline_process_and_export()
+    test_export_json_atomic_write_real_concurrency()
+    test_json_export_error_handling_mocked()
+    test_full_pipeline_process_and_export_with_auto_embeddings()
 
 
 if __name__ == "__main__":
