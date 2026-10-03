@@ -1,0 +1,7 @@
+{
+  "model_name": "smartrec-audio-ai",
+  "version": "1.0.0",
+  "runtime": "onnx",
+  "device": "cpu",
+  "status": "active"
+}
