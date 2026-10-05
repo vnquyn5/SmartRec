@@ -1,0 +1,2 @@
+- Update tat ca cac file documents trong thu muc documents
+- update tat ca testcase neu can update, neu can thi viet moi

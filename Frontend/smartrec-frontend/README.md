@@ -1,4 +1,4 @@
-# SmartRec - Frontend
+s# SmartRec - Frontend
 Smart Recommendation System Frontend built with ReactJS and Vite.
 
 ## Project Structure

@@ -26,7 +26,7 @@ services:
       - smartrec-net
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: ghcr.io/coollabsio/minio:latest
     container_name: smartrec-minio
     ports:
       - "9000:9000"
@@ -41,9 +41,10 @@ services:
     networks:
       - smartrec-net
 
+
   # Script tự động khởi tạo Bucket cho MinIO
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z
     container_name: smartrec-minio-init
     depends_on:
       - minio
@@ -52,6 +53,8 @@ services:
       sleep 5;
       /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_USER:-minioadmin} ${MINIO_PASSWORD:-minioadmin};
       /usr/bin/mc mb myminio/${MINIO_BUCKET:-smartrec-media} --ignore-existing;
+      printf '%s\n' '[{\"AllowedOrigins\":[\"http://localhost:5173\",\"http://127.0.0.1:5173\"],\"AllowedMethods\":[\"GET\",\"PUT\",\"HEAD\"],\"AllowedHeaders\":[\"Content-Type\",\"Authorization\",\"x-amz-date\",\"x-amz-content-sha256\"],\"ExposeHeaders\":[\"ETag\"],\"MaxAgeSeconds\":3000}]' > /tmp/minio-cors.json;
+      /usr/bin/mc cors set myminio/${MINIO_BUCKET:-smartrec-media} /tmp/minio-cors.json;
       /usr/bin/mc anonymous set public myminio/${MINIO_BUCKET:-smartrec-media};
       exit 0;
       "

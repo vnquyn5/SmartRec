@@ -48,4 +48,11 @@ env/
 node_modules/
 dist/
 build/
-.npm
+.npm.sixthrules/
+
+.sixthrules/
+.sixthrules
+
+# Media and Data files
+*.wav
+*.png

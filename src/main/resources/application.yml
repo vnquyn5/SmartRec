@@ -35,12 +35,13 @@ spring:
       max-file-size: 2GB
       max-request-size: 2GB
 
- # 4. Custom JWT Configuration (Thay thế hoàn toàn Keycloak)
+  # 4. Custom JWT Configuration (Thay thế hoàn toàn Keycloak)
 jwt:
   # Chuỗi khóa bí mật (Secret Key) - Dùng 1 chuỗi Hex 256-bit dài để bảo mật
   secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
   # Thời gian sống của Token: 86400000 milliseconds = 24 giờ
   expiration: ${JWT_EXPIRATION:86400000}
+  refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
 # 5. MinIO Object Storage Configuration
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
@@ -51,3 +52,18 @@ minio:
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+
+trash:
+  retention-days: ${TRASH_RETENTION_DAYS:30}
+  purge-cron: "${TRASH_PURGE_CRON:0 0 2 * * *}"
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+
+media:
+  max-duration-hours: 4
+
+job:
+  max-retry: 5
