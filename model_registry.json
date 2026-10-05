@@ -1,7 +1,18 @@
 {
-  "model_name": "smartrec-audio-ai",
-  "version": "1.0.0",
-  "runtime": "onnx",
-  "device": "cpu",
-  "status": "active"
+  "models": [
+    {
+      "model_name": "pyannote/speaker-diarization-3.1",
+      "version": "3.1.0",
+      "runtime": "local",
+      "device": "cpu",
+      "status": "enabled"
+    },
+    {
+      "model_name": "external-diarization-api",
+      "version": "1.0.0",
+      "runtime": "external_api",
+      "device": "cpu",
+      "status": "disabled"
+    }
+  ]
 }
