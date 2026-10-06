@@ -49,6 +49,15 @@ public class AiUsage {
     @Column(name = "processing_time")
     private Long processingTime;
 
+    @Column(name = "cpu_usage")
+    private Long cpuUsage;
+
+    @Column(name = "ram_usage")
+    private Long ramUsage;
+
+    @Column(name = "vram_usage")
+    private Long vramUsage;
+
     @Column(name = "fallback_used", nullable = false)
     @Builder.Default
     private Boolean fallbackUsed =false;
