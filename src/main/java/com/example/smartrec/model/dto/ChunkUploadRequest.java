@@ -10,5 +10,6 @@ public class ChunkUploadRequest {
     private String uploadSessionId;
     private Integer chunkIndex;
     private String checksumMD5;
+    private String checksumSha256;
     private MultipartFile file;
 }   

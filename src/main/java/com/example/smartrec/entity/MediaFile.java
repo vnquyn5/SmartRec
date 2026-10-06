@@ -59,6 +59,9 @@ public class MediaFile {
     @Column(name = "quick_fingerprint", length = 64)
     private String quickFingerprint;
 
+    @Column(name = "fingerprint_version")
+    private Integer fingerprintVersion;
+
     @Column (name = "duration_seconds")
     private Integer duration_seconds;
 

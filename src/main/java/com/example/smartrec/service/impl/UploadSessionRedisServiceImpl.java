@@ -9,6 +9,8 @@ import java.util.UUID;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.UploadSession;
@@ -19,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class UploadSessionRedisServiceImpl implements UploadSessionRedisService {
+    private static final Logger log = LoggerFactory.getLogger(UploadSessionRedisServiceImpl.class);
 
     private final RedisTemplate<String, Object> redisTemplate;
     private static final String KEY_PREFIX = "upload:session:";
@@ -105,12 +108,17 @@ public class UploadSessionRedisServiceImpl implements UploadSessionRedisService 
 
     @Override 
     public void markChunkUploaded(UUID uploadSessionId,Integer chunkIndex){
+        String key = CHUNK_KEY_PREFIX + uploadSessionId;
         try {
-            String key = CHUNK_KEY_PREFIX + uploadSessionId;
             redisTemplate.opsForSet().add(key, chunkIndex);
-            redisTemplate.expire(key, SESSION_TTL);
         } catch (Exception e) {
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,"REDIS_ERROR","Không thể cập nhật trạng thái của chunk");
+        }
+        try {
+            redisTemplate.expire(key, SESSION_TTL);
+        } catch (Exception e) {
+            log.warn("[chunk-upload] marker accepted; TTL refresh failed uploadSessionId={} chunkIndex={}",
+                    uploadSessionId, chunkIndex, e);
         }
     }
 
@@ -152,6 +160,27 @@ public class UploadSessionRedisServiceImpl implements UploadSessionRedisService 
             return missing;
         } catch (Exception e) {
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,"REDIS_ERROR","Không thể kiểm tra danh sách chunk còn thiếu");
+        }
+    }
+
+    @Override
+    public boolean hasUploadedChunkRange(UUID uploadSessionId, int startInclusive, int endExclusive) {
+        try {
+            String key = CHUNK_KEY_PREFIX + uploadSessionId;
+            Set<Object> members = redisTemplate.opsForSet().members(key);
+            if (members == null || members.size() < endExclusive - startInclusive) return false;
+            Set<Integer> uploaded = new HashSet<>();
+            for (Object member : members) {
+                if (member instanceof Number value) uploaded.add(value.intValue());
+                else if (member != null) uploaded.add(Integer.parseInt(member.toString()));
+            }
+            for (int index = startInclusive; index < endExclusive; index++) {
+                if (!uploaded.contains(index)) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "REDIS_ERROR", "Không thể xác minh nhóm chunk đã tải lên");
         }
     }
 }

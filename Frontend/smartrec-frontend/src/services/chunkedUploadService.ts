@@ -22,6 +22,7 @@ export interface UploadChunkPayload {
   chunkIndex: number;
   blob: Blob;
   signal?: AbortSignal;
+  checksumSha256?: string | null;
 }
 
 export interface MergeUploadResponse {
@@ -60,11 +61,13 @@ export async function uploadChunk({
   chunkIndex,
   blob,
   signal,
+  checksumSha256,
 }: UploadChunkPayload) {
   const formData = new FormData();
   formData.append("uploadSessionId", uploadSessionId);
   formData.append("chunkIndex", String(chunkIndex));
   formData.append("checksumMD5", await calculateMD5(blob));
+  if (checksumSha256) formData.append("checksumSha256", checksumSha256);
   formData.append("file", blob, `chunk_${chunkIndex}`);
 
   return api.post("/upload/chunk", formData, {

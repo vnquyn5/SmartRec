@@ -9,10 +9,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.entity.MediaFile;
@@ -39,6 +42,7 @@ import lombok.AllArgsConstructor;
 @Service
 @AllArgsConstructor
 public class FileServiceImpl implements FileService {
+    private static final int CURRENT_FINGERPRINT_VERSION = 2;
     private static final Logger log = LoggerFactory.getLogger(FileServiceImpl.class);
 
     private static final long MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024;
@@ -49,6 +53,7 @@ public class FileServiceImpl implements FileService {
     private final UserRepository userRepository;
     private final MinioService minioService;
     private final FileChecksumService fileChecksumService;
+    private final TaskExecutor applicationTaskExecutor;
 
     @Override
     @Transactional
@@ -139,126 +144,249 @@ public class FileServiceImpl implements FileService {
                 return toDuplicateResponse(exactMatches.get(0));
             }
 
-            String safeFileName = sanitizeFileName(request.getFileName());
-            List<MediaFile> legacyMatches = mediaFileRepository.findActiveDuplicates(
-                    user.getId(),
-                    safeFileName,
-                    request.getFileSize());
-            return legacyMatches.stream()
-                    .filter(item -> item.getChecksumSha256() == null || item.getChecksumSha256().isBlank())
-                    .findFirst()
-                    .map(this::toDuplicateResponse)
-                    .orElseGet(UploadDuplicateCheckResponse::noDuplicate);
+            return UploadDuplicateCheckResponse.noDuplicate();
         }
 
         String quickFingerprint = normalizeHex(request.getQuickFingerprint(), 64, "quickFingerprint");
         if (quickFingerprint != null) {
-            List<MediaFile> candidates = mediaFileRepository.findActiveByUserAndQuickFingerprint(
+            int fingerprintVersion = request.getFingerprintVersion() == null
+                    ? CURRENT_FINGERPRINT_VERSION : request.getFingerprintVersion();
+            List<MediaFile> candidates = mediaFileRepository.findActiveByUserAndQuickFingerprintVersion(
                     user.getId(),
-                    quickFingerprint);
+                    quickFingerprint,
+                    fingerprintVersion);
             if (!candidates.isEmpty()) {
                 return toDuplicateResponse(candidates.get(0));
             }
             return UploadDuplicateCheckResponse.noDuplicate();
         }
 
-        String safeFileName = sanitizeFileName(request.getFileName());
-        List<MediaFile> legacyDuplicates = mediaFileRepository.findActiveDuplicates(
-                user.getId(),
-                safeFileName,
-                request.getFileSize());
-
-        if (legacyDuplicates.isEmpty()) {
-            return UploadDuplicateCheckResponse.noDuplicate();
-        }
-
-        return UploadDuplicateCheckResponse.possibleDuplicate();
+        return UploadDuplicateCheckResponse.noDuplicate();
     }
 
     @Override
     @Transactional
     public FileUploadResponse completeSimpleUpload(SimpleUploadCompleteRequest request) {
-        long totalStartNanos = System.nanoTime();
-        if (request == null) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Upload request không được null");
+        CompleteTiming timing = new CompleteTiming(
+                request == null ? null : request.getObjectKey(),
+                request == null ? null : request.getFileSize());
+        boolean logAfterTransaction = TransactionSynchronizationManager.isSynchronizationActive();
+        if (logAfterTransaction) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    timing.logAfterTransactionCompletion();
+                }
+            });
         }
-        validateSimpleUploadMetadata(request.getFileName(), request.getFileSize(), request.getMimeType());
-
-        User user = getCurrentUser();
-        UUID userId = user.getId();
-        UUID workspaceId = userId;
-        String safeFileName = sanitizeFileName(request.getFileName());
-        String expectedObjectPrefix = buildUserObjectPrefix(user);
-        log.info(
-                "[simple-upload] complete received objectKey={}, expectedObjectPrefix={}, fileName={}, safeFileName={}, requestFileSize={}, mimeType={}, titlePresent={}, userId={}, workspaceId={}",
-                request.getObjectKey(),
-                expectedObjectPrefix,
-                request.getFileName(),
-                safeFileName,
-                request.getFileSize(),
-                request.getMimeType(),
-                request.getTitle() != null && !request.getTitle().isBlank(),
-                userId,
-                workspaceId);
-        if (!isValidSimpleUploadObjectKey(request.getObjectKey(), expectedObjectPrefix, safeFileName)) {
-            log.warn("[simple-upload] complete rejected objectKey mismatch received={}, expectedPrefix={}, safeFileName={}, userId={}",
-                    request.getObjectKey(), expectedObjectPrefix, safeFileName, userId);
-            throw new BusinessException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY",
-                    "Object key không thuộc upload hiện tại");
-        }
-
-        FileUploadResponse existing = findExistingUploadResponse(request.getObjectKey(), userId);
-        if (existing != null) {
-            log.info("[simple-upload] complete idempotent hit objectKey={}, mediaFileId={}, meetingId={}, totalMs={}",
-                    request.getObjectKey(), existing.getId(), existing.getMeetingId(), elapsedMs(totalStartNanos));
-            return existing;
-        }
-
-        long statStartNanos = System.nanoTime();
-        long objectSize;
         try {
-            objectSize = minioService.getObjectSize(request.getObjectKey());
+            long validateStartNanos = System.nanoTime();
+            if (request == null) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Upload request không được null");
+            }
+            validateSimpleUploadMetadata(request.getFileName(), request.getFileSize(), request.getMimeType());
+
+            User user = getCurrentUser();
+            UUID userId = user.getId();
+            UUID workspaceId = userId;
+            String safeFileName = sanitizeFileName(request.getFileName());
+            String expectedObjectPrefix = buildUserObjectPrefix(user);
+            log.info(
+                    "[simple-upload] complete received objectKey={}, expectedObjectPrefix={}, fileName={}, safeFileName={}, requestFileSize={}, mimeType={}, titlePresent={}, userId={}, workspaceId={}",
+                    request.getObjectKey(), expectedObjectPrefix, request.getFileName(), safeFileName,
+                    request.getFileSize(), request.getMimeType(),
+                    request.getTitle() != null && !request.getTitle().isBlank(), userId, workspaceId);
+            if (!isValidSimpleUploadObjectKey(request.getObjectKey(), expectedObjectPrefix, safeFileName)) {
+                log.warn("[simple-upload] complete rejected objectKey mismatch received={}, expectedPrefix={}, safeFileName={}, userId={}",
+                        request.getObjectKey(), expectedObjectPrefix, safeFileName, userId);
+                throw new BusinessException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY",
+                        "Object key không thuộc upload hiện tại");
+            }
+            timing.validateObjectMs = elapsedMs(validateStartNanos);
+
+            long quickFingerprintStartNanos = System.nanoTime();
+            String quickFingerprint = normalizeHex(request.getQuickFingerprint(), 64, "quickFingerprint");
+            int fingerprintVersion = request.getFingerprintVersion() == null
+                    ? CURRENT_FINGERPRINT_VERSION : request.getFingerprintVersion();
+            if (quickFingerprint != null && fingerprintVersion != CURRENT_FINGERPRINT_VERSION) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_FINGERPRINT_VERSION",
+                        "Fingerprint version không được hỗ trợ");
+            }
+            timing.quickFingerprintMs = elapsedMs(quickFingerprintStartNanos);
+
+            long idempotencyStartNanos = System.nanoTime();
+            FileUploadResponse existing = findExistingUploadResponse(
+                    request.getObjectKey(), userId, quickFingerprint, fingerprintVersion);
+            timing.idempotencyLookupMs = elapsedMs(idempotencyStartNanos);
+            timing.databaseMs += timing.idempotencyLookupMs;
+            if (existing != null) {
+                return existing;
+            }
+
+            long statStartNanos = System.nanoTime();
+            long objectSize;
+            try {
+                objectSize = minioService.getObjectSize(request.getObjectKey());
+            } catch (Exception e) {
+                log.error("[simple-upload] complete statObject failed objectKey={}", request.getObjectKey(), e);
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_NOT_FOUND",
+                        "Không tìm thấy object đã upload trên MinIO");
+            }
+            timing.minioStatMs = elapsedMs(statStartNanos);
+            long verifyStartNanos = System.nanoTime();
+            if (objectSize != request.getFileSize()) {
+                log.warn("[simple-upload] complete rejected size mismatch objectKey={}, statSizeBytes={}, requestSizeBytes={}",
+                        request.getObjectKey(), objectSize, request.getFileSize());
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_SIZE_MISMATCH",
+                        "Kích thước object trên MinIO không khớp metadata upload");
+            }
+            timing.verifyObjectMs = elapsedMs(verifyStartNanos);
+
+            String suppliedChecksum = normalizeHex(request.getChecksumSha256(), 64, "checksumSha256");
+            String checksumSha256 = suppliedChecksum;
+            if (checksumSha256 == null) {
+                long shaStartNanos = System.nanoTime();
+                timing.minioFullObjectStreams = 1;
+                checksumSha256 = fileChecksumService.calculateSha256(request.getObjectKey());
+                timing.sha256Ms = elapsedMs(shaStartNanos);
+            }
+
+            long duplicateStartNanos = System.nanoTime();
+            List<MediaFile> checksumDuplicates = mediaFileRepository.findActiveByUserAndChecksumSha256(
+                    userId, checksumSha256);
+            timing.duplicateCheckMs = elapsedMs(duplicateStartNanos);
+            timing.databaseMs += timing.duplicateCheckMs;
+            if (!checksumDuplicates.isEmpty()) {
+                MediaFile existingByChecksum = checksumDuplicates.get(0);
+                deleteUploadedDuplicateObject(request.getObjectKey(), existingByChecksum.getObject_key());
+                throw new BusinessException(
+                        HttpStatus.CONFLICT,
+                        "FILE_ALREADY_EXISTS",
+                        "File đã có trong hệ thống: " + existingByChecksum.getOriginal_name());
+            }
+
+            FileUploadResponse response = createUploadRecords(
+                    workspaceId,
+                    userId,
+                    safeFileName,
+                    request.getObjectKey(),
+                    normalizeMimeType(request.getMimeType()),
+                    request.getFileSize(),
+                    request.getTitle(),
+                    checksumSha256,
+                    quickFingerprint,
+                    timing);
+            if (suppliedChecksum != null) {
+                UUID mediaFileId = response.getId();
+                String finalChecksum = suppliedChecksum;
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        applicationTaskExecutor.execute(() -> verifyClientChecksumAsync(
+                                mediaFileId, request.getObjectKey(), finalChecksum));
+                    }
+                });
+            }
+            return response;
+        } finally {
+            if (logAfterTransaction) {
+                timing.markServiceExit();
+            } else {
+                timing.logSummary();
+            }
+        }
+    }
+
+    private void verifyClientChecksumAsync(UUID mediaFileId, String objectKey, String clientChecksum) {
+        MediaFile currentMediaFile = mediaFileRepository.findById(mediaFileId).orElse(null);
+        if (currentMediaFile == null) return;
+        long startedAt = System.nanoTime();
+        try {
+            String serverChecksum = fileChecksumService.calculateSha256(objectKey);
+            List<MediaFile> duplicateRows = mediaFileRepository.findActiveByUserAndChecksumSha256ExcludingId(
+                    currentMediaFile.getUploaded_by(),
+                    serverChecksum,
+                    mediaFileId);
+            if (serverChecksum.equalsIgnoreCase(clientChecksum) && duplicateRows.isEmpty()) {
+                log.info("[single-upload] background checksum verified mediaFileId={}, objectKey={}, backgroundSha256Ms={}",
+                        mediaFileId, objectKey, elapsedMs(startedAt));
+                return;
+            }
+            mediaFileRepository.findById(mediaFileId).ifPresent(mediaFile -> {
+                mediaFile.setChecksumSha256(null);
+                mediaFile.setQuickFingerprint(null);
+                mediaFile.setStatus(MediaFileStatus.INTEGRITY_FAILED);
+                mediaFileRepository.save(mediaFile);
+                meetingRepository.findByMediaFileId(mediaFileId).ifPresent(meeting -> {
+                    meeting.setStatus(MeetingStatus.FAILED);
+                    meetingRepository.save(meeting);
+                });
+                if (!duplicateRows.isEmpty()) {
+                    deleteUploadedDuplicateObject(objectKey, duplicateRows.get(0).getObject_key());
+                }
+            });
+            log.error("[single-upload] background checksum validation failed mediaFileId={}, objectKey={}, clientChecksum={}, serverChecksum={}, duplicateMediaFileId={}, backgroundSha256Ms={}",
+                    mediaFileId, objectKey, clientChecksum, serverChecksum,
+                    duplicateRows.isEmpty() ? null : duplicateRows.get(0).getId(), elapsedMs(startedAt));
         } catch (Exception e) {
-            log.error("[simple-upload] complete statObject failed objectKey={}", request.getObjectKey(), e);
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_NOT_FOUND",
-                    "Không tìm thấy object đã upload trên MinIO");
+            currentMediaFile.setChecksumSha256(null);
+            currentMediaFile.setQuickFingerprint(null);
+            currentMediaFile.setStatus(MediaFileStatus.INTEGRITY_FAILED);
+            mediaFileRepository.save(currentMediaFile);
+            log.error("[single-upload] background checksum verification failed mediaFileId={}, objectKey={}, backgroundSha256Ms={}",
+                    mediaFileId, objectKey, elapsedMs(startedAt), e);
         }
-        log.info("[simple-upload] complete statObject objectKey={}, sizeBytes={}, elapsedMs={}",
-                request.getObjectKey(), objectSize, elapsedMs(statStartNanos));
+    }
 
-        if (objectSize != request.getFileSize()) {
-            log.warn("[simple-upload] complete rejected size mismatch objectKey={}, statSizeBytes={}, requestSizeBytes={}",
-                    request.getObjectKey(), objectSize, request.getFileSize());
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_SIZE_MISMATCH",
-                    "Kích thước object trên MinIO không khớp metadata upload");
+    private static final class CompleteTiming {
+        private final long completeStartNanos = System.nanoTime();
+        private final long completeStartEpochMs = System.currentTimeMillis();
+        private final String objectKey;
+        private final Long fileSize;
+        private long validateObjectMs;
+        private long idempotencyLookupMs;
+        private long minioStatMs;
+        private long verifyObjectMs;
+        private long durationProbeMs;
+        private long quickFingerprintMs;
+        private long sha256Ms;
+        private long duplicateCheckMs;
+        private int minioFullObjectStreams;
+        private long mediaFileSaveMs;
+        private long meetingSaveMs;
+        private long databaseMs;
+        private long serviceExitNanos;
+        private boolean summaryLogged;
+
+        private CompleteTiming(String objectKey, Long fileSize) {
+            this.objectKey = objectKey;
+            this.fileSize = fileSize;
         }
 
-        String checksumSha256 = fileChecksumService.calculateSha256(request.getObjectKey());
-        List<MediaFile> checksumDuplicates = mediaFileRepository.findActiveByUserAndChecksumSha256(
-                userId,
-                checksumSha256);
-        if (!checksumDuplicates.isEmpty()) {
-            MediaFile existingByChecksum = checksumDuplicates.get(0);
-            deleteUploadedDuplicateObject(request.getObjectKey(), existingByChecksum.getObject_key());
-            throw new BusinessException(
-                    HttpStatus.CONFLICT,
-                    "FILE_ALREADY_EXISTS",
-                    "File đã có trong hệ thống: " + existingByChecksum.getOriginal_name());
+        private void logSummary() {
+            if (summaryLogged) return;
+            summaryLogged = true;
+            long totalCompleteMs = elapsedMs(completeStartNanos);
+            long measuredMs = validateObjectMs + minioStatMs + quickFingerprintMs + sha256Ms + databaseMs;
+            long otherMs = Math.max(0, totalCompleteMs - measuredMs);
+            log.info("[single-complete] summary completeStartEpochMs={} objectKey={} fileSize={} statObjectMs={} verifyObjectMs={} sha256Ms={} minioFullObjectStreams={} duplicateQueryMs={} durationProbeMs={} mediaFileSaveMs={} meetingSaveMs={} databaseMs={} totalMs={} validateObjectMs={} idempotencyLookupMs={} quickFingerprintMs={} duplicateCheckMs={} otherMs={}",
+                    completeStartEpochMs, objectKey, fileSize, minioStatMs, verifyObjectMs, sha256Ms,
+                    minioFullObjectStreams, duplicateCheckMs, durationProbeMs,
+                    mediaFileSaveMs, meetingSaveMs, databaseMs, totalCompleteMs,
+                    validateObjectMs, idempotencyLookupMs, quickFingerprintMs, duplicateCheckMs, otherMs);
         }
 
-        FileUploadResponse response = createUploadRecords(
-                workspaceId,
-                userId,
-                safeFileName,
-                request.getObjectKey(),
-                normalizeMimeType(request.getMimeType()),
-                request.getFileSize(),
-                request.getTitle(),
-                checksumSha256,
-                normalizeHex(request.getQuickFingerprint(), 64, "quickFingerprint"));
-        log.info("[simple-upload] complete finished objectKey={}, mediaFileId={}, meetingId={}, totalMs={}",
-                request.getObjectKey(), response.getId(), response.getMeetingId(), elapsedMs(totalStartNanos));
-        return response;
+        private void markServiceExit() {
+            serviceExitNanos = System.nanoTime();
+        }
+
+        private void logAfterTransactionCompletion() {
+            if (serviceExitNanos != 0) {
+                long transactionCompletionMs = (System.nanoTime() - serviceExitNanos) / 1_000_000;
+                databaseMs += transactionCompletionMs;
+            }
+            logSummary();
+        }
     }
 
     private FileUploadResponse createUploadRecords(
@@ -271,6 +399,22 @@ public class FileServiceImpl implements FileService {
             String title,
             String checksumSha256,
             String quickFingerprint) {
+        return createUploadRecords(
+                workspaceId, userId, safeFileName, objectKey, mimeType, fileSize,
+                title, checksumSha256, quickFingerprint, null);
+    }
+
+    private FileUploadResponse createUploadRecords(
+            UUID workspaceId,
+            UUID userId,
+            String safeFileName,
+            String objectKey,
+            String mimeType,
+            Long fileSize,
+            String title,
+            String checksumSha256,
+            String quickFingerprint,
+            CompleteTiming timing) {
         log.info(
                 "[simple-upload] create records start objectKey={}, originalName={}, fileSizeBytes={}, mimeType={}, status={}, uploadedBy={}, workspaceId={}",
                 objectKey,
@@ -290,6 +434,7 @@ public class FileServiceImpl implements FileService {
                 .file_size_bytes(fileSize)
                 .checksumSha256(checksumSha256)
                 .quickFingerprint(quickFingerprint)
+                .fingerprintVersion(quickFingerprint == null ? null : CURRENT_FINGERPRINT_VERSION)
                 .status(MediaFileStatus.UPLOADED)
                 .build();
         MediaFile savedMediaFile;
@@ -318,6 +463,11 @@ public class FileServiceImpl implements FileService {
                     workspaceId,
                     e);
             throw e;
+        } finally {
+            if (timing != null) {
+                timing.mediaFileSaveMs = elapsedMs(mediaFileSaveStartNanos);
+                timing.databaseMs += timing.mediaFileSaveMs;
+            }
         }
 
         long meetingSaveStartNanos = System.nanoTime();
@@ -346,6 +496,11 @@ public class FileServiceImpl implements FileService {
                     MeetingStatus.PENDING,
                     e);
             throw e;
+        } finally {
+            if (timing != null) {
+                timing.meetingSaveMs = elapsedMs(meetingSaveStartNanos);
+                timing.databaseMs += timing.meetingSaveMs;
+            }
         }
 
         return toFileUploadResponse(savedMediaFile, savedMeeting);
@@ -370,7 +525,8 @@ public class FileServiceImpl implements FileService {
         return duplicates.isEmpty() ? null : duplicates.get(0);
     }
 
-    private FileUploadResponse findExistingUploadResponse(String objectKey, UUID userId) {
+    private FileUploadResponse findExistingUploadResponse(
+            String objectKey, UUID userId, String quickFingerprint, int fingerprintVersion) {
         List<MediaFile> mediaFiles = mediaFileRepository.findAllByObjectKey(objectKey);
         if (mediaFiles.isEmpty()) {
             log.info("[simple-upload] complete idempotency lookup miss objectKey={}", objectKey);
@@ -384,6 +540,24 @@ public class FileServiceImpl implements FileService {
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY",
                         "Object key không thuộc người dùng hiện tại"));
+
+        // An older/recovered completion may omit metadata. Only fill missing
+        // fields; never replace an existing fingerprint or its version.
+        if (quickFingerprint != null) {
+            boolean changed = false;
+            if (mediaFile.getQuickFingerprint() == null
+                    && (mediaFile.getFingerprintVersion() == null
+                        || mediaFile.getFingerprintVersion() == fingerprintVersion)) {
+                mediaFile.setQuickFingerprint(quickFingerprint);
+                changed = true;
+            }
+            if (mediaFile.getFingerprintVersion() == null
+                    && quickFingerprint.equals(mediaFile.getQuickFingerprint())) {
+                mediaFile.setFingerprintVersion(fingerprintVersion);
+                changed = true;
+            }
+            if (changed) mediaFileRepository.save(mediaFile);
+        }
 
         Meeting meeting = meetingRepository.findByMediaFileId(mediaFile.getId())
                 .orElseGet(() -> {
@@ -544,7 +718,7 @@ public class FileServiceImpl implements FileService {
                         "Không tìm thấy người dùng đăng nhập"));
     }
 
-    private long elapsedMs(long startedAtNanos) {
+    private static long elapsedMs(long startedAtNanos) {
         return (System.nanoTime() - startedAtNanos) / 1_000_000;
     }
 }

@@ -97,12 +97,16 @@ public class UploadController {
             @RequestParam("checksumMD5")
             String checksumMD5,
 
+            @RequestParam(value = "checksumSha256", required = false)
+            String checksumSha256,
+
             @RequestParam("file")
             MultipartFile file) {
        ChunkUploadRequest request = ChunkUploadRequest.builder()
                 .uploadSessionId(uploadSessionId)
                 .chunkIndex(chunkIndex)
                 .checksumMD5(checksumMD5)
+                .checksumSha256(checksumSha256)
                 .file(file)
                 .build();
 

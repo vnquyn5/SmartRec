@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { uploadSingleFile } from "../features/files/useSingleUpload";
+import { removeFileHandle } from "../services/fileHandleStorage";
+import { restoreAvailableFiles, restoreFileFromHandle } from "../services/uploadRecovery";
+import { calculateQuickFingerprint } from "../utils/fileHash";
 
 const STORAGE_KEY = "smartrec.singleUpload.sessions.v1";
 const listeners = new Set();
@@ -23,6 +26,10 @@ const createFilePlaceholder = (item) => ({
 let state = {
   items: readPersisted().map((item) => ({
     ...item,
+    quickFingerprint: item.quickFingerprint || item.duplicateMetadata?.quickFingerprint || null,
+    fingerprintVersion: (item.quickFingerprint || item.duplicateMetadata?.quickFingerprint)
+      ? item.fingerprintVersion ?? item.duplicateMetadata?.fingerprintVersion ?? 2
+      : null,
     file: createFilePlaceholder(item),
     hasFile: false,
     phase: ["uploading", "finalizing"].includes(item.phase) ? "error" : item.phase,
@@ -37,6 +44,16 @@ let state = {
   })),
 };
 
+const attachRecoveredFile = (id, file) => {
+  const item = state.items.find((candidate) => candidate.id === id);
+  if (!item || file.name !== item.fileName || file.size !== item.fileSize) return;
+  updateItem(id, { file, hasFile: true });
+};
+
+window.setTimeout(() => {
+  restoreAvailableFiles(state.items, attachRecoveredFile).catch(() => {});
+}, 0);
+
 const emit = () => listeners.forEach((listener) => listener());
 
 const setState = (updater) => {
@@ -50,6 +67,8 @@ const setState = (updater) => {
         fileSize: item.fileSize,
         fileType: item.file?.type,
         lastModified: item.lastModified,
+        quickFingerprint: item.quickFingerprint,
+        fingerprintVersion: item.fingerprintVersion,
         strategy: "single",
         phase: item.phase,
         progress: item.progress,
@@ -89,6 +108,10 @@ const buildItem = (file, duplicateMetadata = null) => ({
   saved: false,
   uploadResponse: null,
   duplicateMetadata,
+  quickFingerprint: duplicateMetadata?.quickFingerprint || null,
+  fingerprintVersion: duplicateMetadata?.quickFingerprint
+    ? duplicateMetadata.fingerprintVersion ?? 2
+    : null,
   abortController: null,
 });
 
@@ -121,10 +144,15 @@ const startUpload = async (itemId, meetingName = "") => {
   });
 
   try {
+    const quickFingerprint = item.quickFingerprint || await calculateQuickFingerprint(item.file);
+    const fingerprintVersion = item.quickFingerprint ? item.fingerprintVersion ?? 2 : 2;
+    // Persist before presigning/PUT so failures and reloads retain the same metadata.
+    updateItem(item.id, { quickFingerprint, fingerprintVersion });
+    if (controller.signal.aborted) throw { kind: "canceled", message: "canceled" };
     const uploadResponse = await uploadSingleFile(
       item.file,
       meetingName,
-      item.duplicateMetadata,
+      { ...item.duplicateMetadata, quickFingerprint, fingerprintVersion },
       controller.signal,
       (event) => {
         if (!event.total) return;
@@ -206,6 +234,9 @@ export const singleUploadStore = {
   start(id, meetingName = "") {
     return startUpload(id, meetingName);
   },
+  attachRecoveredFile(id, file) {
+    attachRecoveredFile(id, file);
+  },
   cancel(id) {
     const item = state.items.find((currentItem) => currentItem.id === id);
     if (!item || item.phase === "success") return;
@@ -220,24 +251,44 @@ export const singleUploadStore = {
     });
   },
   retry(id, meetingName = "") {
-    updateItem(id, {
-      phase: "idle",
-      progress: 0,
-      uploadedBytes: 0,
-      speedBps: 0,
-      error: null,
-      uploadResponse: null,
-      abortController: null,
-    });
-    return startUpload(id, meetingName);
+    return (async () => {
+      let item = state.items.find((currentItem) => currentItem.id === id);
+      if (!item) return;
+      if (!item.hasFile) {
+        const file = await restoreFileFromHandle(item, true);
+        if (file) {
+          attachRecoveredFile(id, file);
+          item = state.items.find((currentItem) => currentItem.id === id);
+        }
+      }
+      if (!item?.hasFile) {
+        updateItem(id, {
+          phase: "error",
+          error: "Cần chọn lại file để thử lại.",
+        });
+        return false;
+      }
+      updateItem(id, {
+        phase: "idle",
+        progress: 0,
+        uploadedBytes: 0,
+        speedBps: 0,
+        error: null,
+        uploadResponse: null,
+        abortController: null,
+      });
+      return startUpload(id, meetingName);
+    })();
   },
   remove(id) {
+    removeFileHandle(id).catch(() => {});
     setState((currentState) => ({
       ...currentState,
       items: currentState.items.filter((currentItem) => currentItem.id !== id),
     }));
   },
   markSaved(id) {
+    removeFileHandle(id).catch(() => {});
     setState((currentState) => ({
       ...currentState,
       items: currentState.items.filter((item) => item.id !== id),

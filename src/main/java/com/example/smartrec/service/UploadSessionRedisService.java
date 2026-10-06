@@ -15,4 +15,5 @@ public interface UploadSessionRedisService {
     void markChunkUploaded(UUID uploadSessionId,Integer chunkIndex);
     long uploadedChunkCount(UUID uploadSessionId);
     java.util.List<Integer> missingChunkIndexes(UUID uploadSessionId, int totalChunks);
+    boolean hasUploadedChunkRange(UUID uploadSessionId, int startInclusive, int endExclusive);
 }

@@ -18,5 +18,7 @@ public class UploadDuplicateCheckRequest {
 
     private String quickFingerprint;
 
+    private Integer fingerprintVersion;
+
     private String checksumSha256;
 }

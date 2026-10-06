@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { toAppError } from "../../lib/http/errors.js";
 import { api, storageClient } from "../../lib/http/client.js";
+import { calculateFullSha256InWorker, calculateQuickFingerprint } from "../../utils/fileHash.ts";
 
 export async function presignSimpleUpload(file) {
   return api.post("/upload/presign", {
@@ -35,11 +36,26 @@ export async function uploadSingleFile(
   });
 
   try {
+    const quickFingerprint = duplicateMetadata?.quickFingerprint || await calculateQuickFingerprint(file);
+    const fingerprintVersion = duplicateMetadata?.quickFingerprint
+      ? duplicateMetadata.fingerprintVersion ?? 2
+      : 2;
+    if (signal?.aborted) throw { kind: "canceled", message: "canceled" };
     const presign = await presignSimpleUpload(file);
     console.info("[simple-upload] presign received", {
       fileName: file?.name,
       objectKey: presign.objectKey,
       expiresIn: presign.expiresIn,
+    });
+
+    const checksumPromise = calculateFullSha256InWorker(file, signal).catch((error) => {
+      if (error?.name !== "AbortError") {
+        console.warn("[simple-upload] client SHA-256 failed; server fallback enabled", {
+          fileName: file?.name,
+          error,
+        });
+      }
+      return null;
     });
 
     await storageClient.put(presign.uploadUrl, file, {
@@ -58,10 +74,11 @@ export async function uploadSingleFile(
       fileSize: file.size,
       mimeType: file.type || "application/octet-stream",
       title: meetingName,
-      ...(duplicateMetadata?.quickFingerprint
-        ? { quickFingerprint: duplicateMetadata.quickFingerprint }
-        : {}),
+      quickFingerprint,
+      fingerprintVersion,
     };
+    const checksumSha256 = await checksumPromise;
+    if (checksumSha256) completePayload.checksumSha256 = checksumSha256;
 
     onFinalize?.(completePayload);
     const response = await completeSimpleUpload(completePayload, signal);

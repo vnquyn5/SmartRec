@@ -1,7 +1,4 @@
-import { createSHA256 } from "hash-wasm";
-
 const QUICK_BLOCK_SIZE = 2 * 1024 * 1024;
-const FULL_HASH_CHUNK_SIZE = 8 * 1024 * 1024;
 const quickFingerprintCache = new Map<string, Promise<string>>();
 
 async function sha256ArrayBuffer(buffer: ArrayBuffer): Promise<string> {
@@ -108,14 +105,56 @@ async function hashFileRange(
 }
 
 export async function calculateFullSha256(file: File): Promise<string> {
-  const hasher = await createSHA256();
-  hasher.init();
+  return calculateFullSha256InWorker(file);
+}
 
-  for (let start = 0; start < file.size; start += FULL_HASH_CHUNK_SIZE) {
-    const end = Math.min(start + FULL_HASH_CHUNK_SIZE, file.size);
-    const buffer = await readBlob(file.slice(start, end));
-    hasher.update(new Uint8Array(buffer));
+export function calculateFullSha256InWorker(
+  file: File,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (typeof Worker === "undefined") {
+    return Promise.reject(new Error("Web Worker không khả dụng để tính SHA-256."));
   }
-
-  return hasher.digest("hex");
+  return new Promise((resolve, reject) => {
+    const startedAt = performance.now();
+    const worker = new Worker(
+      new URL("../workers/fileSha256Worker.js", import.meta.url),
+      { type: "module" },
+    );
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+      worker.terminate();
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException("Hashing canceled", "AbortError"));
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    worker.onmessage = (event) => {
+      if (event.data?.requestId !== requestId) return;
+      if (!event.data.checksumSha256 && !event.data.error) return;
+      cleanup();
+      if (event.data.error) reject(new Error(event.data.error));
+      else {
+        if (import.meta.env.DEV) {
+          console.info("[file-sha256-worker] completed", {
+            fileName: file.name,
+            fileSize: file.size,
+            elapsedMs: Math.round(performance.now() - startedAt),
+          });
+        }
+        resolve(event.data.checksumSha256);
+      }
+    };
+    worker.onerror = (event) => {
+      cleanup();
+      reject(event.error || new Error(event.message || "SHA-256 worker failed."));
+    };
+    worker.postMessage({ requestId, file });
+  });
 }

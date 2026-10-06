@@ -20,5 +20,7 @@ public class UploadInitRequest {
     private Integer totalChunks;
 
     private String quickFingerprint;
+
+    private Integer fingerprintVersion;
     
 }

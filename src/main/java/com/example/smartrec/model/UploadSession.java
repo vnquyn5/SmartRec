@@ -33,6 +33,9 @@ public class UploadSession {
     private UploadSessionStatus  status;
 
     private String quickFingerprint;
+    private String checksumSha256;
+
+    private Integer fingerprintVersion;
 
     private LocalDateTime createdAt;
 }

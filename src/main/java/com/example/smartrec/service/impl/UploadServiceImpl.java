@@ -60,6 +60,7 @@ import lombok.RequiredArgsConstructor;
 public class UploadServiceImpl implements UploadService {
         private static final Logger log = LoggerFactory.getLogger(UploadServiceImpl.class);
         private static final Map<UUID, Object> UPLOAD_SESSION_LOCKS = new ConcurrentHashMap<>();
+        private static final Set<UUID> FINALIZATION_IN_FLIGHT = ConcurrentHashMap.newKeySet();
         private final AuthController authController;
         private final UserRepository userRepository;
         private final UploadSessionRepository uploadSessionRepository;
@@ -86,6 +87,13 @@ public class UploadServiceImpl implements UploadService {
                                         "Upload request không được null");
                 }
                 User user = getCurrentUser();
+                if (request.getQuickFingerprint() != null
+                                && request.getFingerprintVersion() != null
+                                && request.getFingerprintVersion() != 2) {
+                        throw new BusinessException(HttpStatus.BAD_REQUEST,
+                                        "UNSUPPORTED_FINGERPRINT_VERSION",
+                                        "Fingerprint version không được hỗ trợ");
+                }
                 String fileName = request.getFileName();
                 if (fileName == null || fileName.isBlank()) {
                         throw new BusinessException(
@@ -332,24 +340,30 @@ public class UploadServiceImpl implements UploadService {
         }
 
         @Override
-        @Transactional
         public ChunkUploadResponse uploadChunk(ChunkUploadRequest request) {
+                ChunkRequestTiming timing = new ChunkRequestTiming(request);
                 try {
-                        return uploadChunkInternal(request);
+                        return uploadChunkInternal(request, timing);
                 } catch (Exception e) {
-                        log.error(
-                                        "[chunk-upload] FAILED session={} chunkIndex={} objectKey={}",
-                                        request != null ? request.getUploadSessionId() : null,
-                                        request != null ? request.getChunkIndex() : null,
-                                        request != null && request.getUploadSessionId() != null && request.getChunkIndex() != null
-                                                        ? "tmp/" + request.getUploadSessionId() + "/chunk_" + request.getChunkIndex()
-                                                        : null,
-                                        e);
+                        safeChunkLog(() -> log.error(
+                                        "[chunk-upload] failure session={} chunkIndex={} step={} minioStored={} redisMarked={} accepted={}",
+                                        timing.sessionId, timing.chunkIndex, timing.step,
+                                        timing.minioStored, timing.accepted, timing.accepted, e));
+                        if (timing.accepted) {
+                                return ChunkUploadResponse.builder().uploadSessionId(timing.sessionId)
+                                                .chunkIndex(timing.chunkIndex).status("SUCCESS")
+                                                .message("tmp/" + timing.sessionId + "/chunk_" + timing.chunkIndex).build();
+                        }
                         throw e;
+                } finally {
+                        if (timing.accepted && timing.postAcceptance != null) {
+                                timing.postAcceptance.run();
+                        }
+                        safeChunkLog(timing::logSummary);
                 }
         }
 
-        private ChunkUploadResponse uploadChunkInternal(ChunkUploadRequest request) {
+        private ChunkUploadResponse uploadChunkInternal(ChunkUploadRequest request, ChunkRequestTiming timing) {
                 long totalStartedAt = System.nanoTime();
                 long stageStartedAt = totalStartedAt;
                 log.info("[chunked-upload] /upload/chunk received uploadSessionId={}, chunkIndex={}",
@@ -378,6 +392,9 @@ public class UploadServiceImpl implements UploadService {
                 }
                 User crusUser = getCurrentUser();
                 UploadSession session = uploadSessionRedisService.get(uploadSessionId);
+                timing.totalChunks = session.getTotalChunks();
+                timing.isLastIndex = request.getChunkIndex() != null
+                                && request.getChunkIndex() == session.getTotalChunks() - 1;
                 long redisCountBeforeUpload = getUploadedChunkCount(uploadSessionId);
                 logChunkStage(uploadSessionId, chunkIndexOrNull(request), "session load", stageStartedAt);
 
@@ -431,17 +448,24 @@ public class UploadServiceImpl implements UploadService {
                                 + uploadSessionId
                                 + "/chunk_"
                                 + chunkIndex;
+                timing.postAcceptance = () -> scheduleAcceptedChunkWork(
+                                uploadSessionId, timing.totalChunks, chunkIndex, crusUser, timing);
 
                 // kiem tra chunk da upload chua truoc khi reject theo status de idempotent voi request in-flight
                 stageStartedAt = System.nanoTime();
                 boolean redisMarkedButMinioMissing = false;
                 if (uploadSessionRedisService.isChunkUploaded(uploadSessionId, chunkIndex)) {
                         if (minioService.objectExists(objectKey)) {
+                                timing.minioStored = true;
+                                timing.accepted = true;
                                 log.info("[chunk-upload] success idempotent session={} chunkIndex={} objectKey={}",
                                                 uploadSessionId,
                                                 chunkIndex,
                                                 objectKey);
                                 logChunkStage(uploadSessionId, chunkIndex, "Redis/MinIO duplicate idempotent success", stageStartedAt);
+                                timing.uploadedCount = getUploadedChunkCount(uploadSessionId);
+                                timing.finalizationAllowed = session.getStatus() != UploadSessionStatus.MERGING
+                                                && session.getStatus() != UploadSessionStatus.COMPLETED;
                                 return ChunkUploadResponse.builder()
                                                 .uploadSessionId(sessionIdString)
                                                 .chunkIndex(chunkIndex)
@@ -472,8 +496,7 @@ public class UploadServiceImpl implements UploadService {
                 if (session.getStatus() == UploadSessionStatus.READY_TO_MERGE) {
                         long uploadedChunkCount = getUploadedChunkCount(uploadSessionId);
                         if (uploadedChunkCount >= session.getTotalChunks()
-                                        && !redisMarkedButMinioMissing
-                                        && findMissingChunks(uploadSessionId, session.getTotalChunks()).isEmpty()) {
+                                        && !redisMarkedButMinioMissing) {
                                 throw new BusinessException(
                                                 HttpStatus.CONFLICT,
                                                 "CHUNK_NOT_REGISTERED_AFTER_READY_TO_MERGE",
@@ -490,6 +513,8 @@ public class UploadServiceImpl implements UploadService {
                                         "INVALID_CHUNKSUM",
                                         "Checksum MD5 không được để trống");
                 }
+                String checksumSha256 = normalizeHex(
+                                request.getChecksumSha256(), 64, "checksumSha256");
 
                 String calculatedMD5;
                 stageStartedAt = System.nanoTime();
@@ -544,7 +569,9 @@ public class UploadServiceImpl implements UploadService {
                                 objectKey,
                                 file.getSize());
                 try {
+                        timing.step = "minio-put";
                         minioService.upLoad(file, objectKey);
+                        timing.minioStored = true;
                 } catch (Exception e) {
                         log.error("[chunked-upload] MinIO putObject failed uploadSessionId={}, chunkIndex={}, objectKey={}, checksumMD5={}, sizeBytes={}",
                                         uploadSessionId,
@@ -553,12 +580,12 @@ public class UploadServiceImpl implements UploadService {
                                         checksumMD5,
                                         file.getSize(),
                                         e);
-                        uploadSessionRepository.updateStatusForUser(uploadSessionId, crusUser.getId(), UploadSessionStatus.FAILED);
                         throw new BusinessException(
                                         HttpStatus.INTERNAL_SERVER_ERROR,
                                         "ERR_MINIO_UNAVAILABLE",
                                         "Không thể lưu chunk vào MinIO");
                 }
+                timing.minioPutMs = elapsedMs(stageStartedAt);
                 log.info("[chunk-upload] minio-put-end session={} chunkIndex={} objectKey={}",
                                 uploadSessionId,
                                 chunkIndex,
@@ -570,12 +597,16 @@ public class UploadServiceImpl implements UploadService {
                 synchronized (transitionLock) {
                         stageStartedAt = System.nanoTime();
                         UploadSession latestSession = uploadSessionRedisService.get(uploadSessionId);
+                        timing.step = "redis-marker";
                         uploadSessionRedisService.markChunkUploaded(uploadSessionId, chunkIndex);
+                        timing.accepted = true;
+                        timing.step = "redis-session";
                         log.info("[chunk-upload] redis-sadd session={} chunkIndex={} objectKey={}",
                                         uploadSessionId,
                                         chunkIndex,
                                         objectKey);
                         uploadedChunkCount = uploadSessionRedisService.uploadedChunkCount(uploadSessionId);
+                        timing.uploadedCount = uploadedChunkCount;
                         log.info("[chunk-upload] redis-count session={} chunkIndex={} uploadedCount={} totalChunks={}",
                                         uploadSessionId,
                                         chunkIndex,
@@ -583,8 +614,14 @@ public class UploadServiceImpl implements UploadService {
                                         latestSession.getTotalChunks());
                         UploadSessionStatus oldStatus = latestSession.getStatus();
                         latestSession.setReceivedChunks((int) uploadedChunkCount);
-                        if (uploadedChunkCount >= latestSession.getTotalChunks()
-                                        && findMissingChunks(uploadSessionId, latestSession.getTotalChunks()).isEmpty()) {
+                        if (checksumSha256 != null) {
+                                latestSession.setChecksumSha256(checksumSha256);
+                        }
+                        boolean uploadActive = latestSession.getStatus() == UploadSessionStatus.INITIATED
+                                        || latestSession.getStatus() == UploadSessionStatus.UPLOADING
+                                        || latestSession.getStatus() == UploadSessionStatus.READY_TO_MERGE;
+                        timing.finalizationAllowed = uploadActive;
+                        if (uploadActive && uploadedChunkCount >= latestSession.getTotalChunks()) {
                                 latestSession.setReceivedChunks(latestSession.getTotalChunks());
                                 latestSession.setStatus(UploadSessionStatus.READY_TO_MERGE);
                         } else if (latestSession.getStatus() == UploadSessionStatus.INITIATED
@@ -602,34 +639,28 @@ public class UploadServiceImpl implements UploadService {
                         uploadSessionRedisService.save(latestSession);
                         session = latestSession;
                 }
+                timing.redisMarkMs = elapsedMs(stageStartedAt);
                 logChunkStage(uploadSessionId, chunkIndex, "Redis mark/save", stageStartedAt);
 
                 stageStartedAt = System.nanoTime();
-                if (session.getStatus() == UploadSessionStatus.READY_TO_MERGE
+                timing.step = "db-progress";
+                if (timing.finalizationAllowed && (session.getStatus() == UploadSessionStatus.READY_TO_MERGE
                                 || session.getReceivedChunks() == 1
-                                || session.getReceivedChunks() % 25 == 0) {
+                                || session.getReceivedChunks() % 25 == 0)) {
                         uploadSessionRepository.updateProgressForUser(
                                         uploadSessionId,
                                         crusUser.getId(),
                                         session.getReceivedChunks(),
                                         session.getStatus());
                 }
+                timing.dbUpdateMs = elapsedMs(stageStartedAt);
                 log.info("[chunk-upload] db-update session={} chunkIndex={} receivedChunks={} status={}",
                                 uploadSessionId,
                                 chunkIndex,
                                 session.getReceivedChunks(),
                                 session.getStatus());
                 logChunkStage(uploadSessionId, chunkIndex, "PostgreSQL progress update", stageStartedAt);
-                if (session.getStatus() == UploadSessionStatus.READY_TO_MERGE) {
-                        try {
-                                startMergeIfReady(uploadSessionId, crusUser, null, totalStartedAt, "auto");
-                        } catch (BusinessException e) {
-                                log.warn("[chunked-merge] auto start skipped uploadSessionId={}, code={}, message={}",
-                                                uploadSessionId,
-                                                e.getCode(),
-                                                e.getMessage());
-                        }
-                }
+                timing.step = "accepted";
                 log.info("[chunk-upload] success session={} chunkIndex={} objectKey={} totalElapsedMs={}",
                                 uploadSessionId,
                                 chunkIndex,
@@ -646,6 +677,122 @@ public class UploadServiceImpl implements UploadService {
 
         private Integer chunkIndexOrNull(ChunkUploadRequest request) {
                 return request == null ? null : request.getChunkIndex();
+        }
+
+        private static void safeChunkLog(Runnable logging) {
+                try {
+                        logging.run();
+                } catch (RuntimeException | LinkageError ignored) {
+                        // Diagnostic code must not invalidate an accepted chunk.
+                }
+        }
+
+        private void scheduleAcceptedChunkWork(UUID sessionId, int totalChunks, int chunkIndex,
+                        User user, ChunkRequestTiming timing) {
+                long startedAt = System.nanoTime();
+                try {
+                        chunkMergeAsyncService.stageChunkGroupAsync(sessionId, totalChunks, chunkIndex);
+                } catch (Exception e) {
+                        safeChunkLog(() -> log.error("[chunk-upload] accepted; stage scheduling failed session={} chunkIndex={}",
+                                        sessionId, chunkIndex, e));
+                } finally {
+                        timing.stageTriggerMs = elapsedMs(startedAt);
+                }
+                startedAt = System.nanoTime();
+                try {
+                        if (timing.finalizationAllowed && timing.uploadedCount >= totalChunks) {
+                                scheduleAutoFinalization(sessionId, user, timing.startedAt);
+                        }
+                } catch (Exception e) {
+                        safeChunkLog(() -> log.error("[chunk-upload] accepted; finalization scheduling failed session={} chunkIndex={}",
+                                        sessionId, chunkIndex, e));
+                } finally {
+                        timing.mergeTriggerMs = elapsedMs(startedAt);
+                }
+        }
+
+        private void scheduleAutoFinalization(UUID uploadSessionId, User user, long requestStartedAt) {
+                if (!FINALIZATION_IN_FLIGHT.add(uploadSessionId)) {
+                        log.debug("[chunked-finalization] already scheduled uploadSessionId={}", uploadSessionId);
+                        return;
+                }
+                try {
+                        chunkMergeAsyncService.executeAsync(() -> {
+                                try {
+                                        log.info("[chunked-finalization] scheduled uploadSessionId={}", uploadSessionId);
+                                        startMergeIfReady(uploadSessionId, user, null, System.nanoTime(), "auto-background");
+                                } catch (BusinessException e) {
+                                        log.warn("[chunked-finalization] rejected uploadSessionId={}, code={}, message={}",
+                                                        uploadSessionId, e.getCode(), e.getMessage());
+                                        if ("MISSING_UPLOAD_CHUNKS".equals(e.getCode())) {
+                                                markAutoFinalizationFailed(uploadSessionId, user.getId());
+                                        }
+                                } catch (Exception e) {
+                                        log.error("[chunked-finalization] failed uploadSessionId={}", uploadSessionId, e);
+                                        markAutoFinalizationFailed(uploadSessionId, user.getId());
+                                } finally {
+                                        FINALIZATION_IN_FLIGHT.remove(uploadSessionId);
+                                }
+                        });
+                } catch (Exception e) {
+                        FINALIZATION_IN_FLIGHT.remove(uploadSessionId);
+                        log.error("[chunked-finalization] could not enqueue uploadSessionId={}, requestElapsedMs={}",
+                                        uploadSessionId, elapsedMs(requestStartedAt), e);
+                }
+        }
+
+        private void markAutoFinalizationFailed(UUID uploadSessionId, UUID userId) {
+                markAutoFinalizationFailed(uploadSessionId, userId, false);
+        }
+
+        private void markAutoFinalizationFailed(UUID uploadSessionId, UUID userId, boolean dispatchFailed) {
+                try {
+                        UploadSession session = uploadSessionRedisService.get(uploadSessionId);
+                        if ((session.getStatus() == UploadSessionStatus.MERGING && !dispatchFailed)
+                                        || session.getStatus() == UploadSessionStatus.MERGE_FAILED
+                                        || session.getStatus() == UploadSessionStatus.COMPLETED) return;
+                        session.setStatus(UploadSessionStatus.MERGE_FAILED);
+                        uploadSessionRedisService.save(session);
+                        uploadSessionRepository.updateStatusForUser(
+                                        uploadSessionId, userId, UploadSessionStatus.MERGE_FAILED);
+                } catch (Exception statusError) {
+                        log.error("[chunked-finalization] could not persist failure state uploadSessionId={}",
+                                        uploadSessionId, statusError);
+                }
+        }
+
+        private static final class ChunkRequestTiming {
+                private final String sessionId;
+                private final Integer chunkIndex;
+                private final long startedAt = System.nanoTime();
+                private int totalChunks;
+                private boolean isLastIndex;
+                private long minioPutMs;
+                private long redisMarkMs;
+                private long dbUpdateMs;
+                private long missingCheckMs;
+                private long stageTriggerMs;
+                private long mergeTriggerMs;
+                private boolean minioStored;
+                private boolean accepted;
+                private boolean finalizationAllowed = true;
+                private long uploadedCount;
+                private String step = "validation";
+                private Runnable postAcceptance;
+
+                private ChunkRequestTiming(ChunkUploadRequest request) {
+                        sessionId = request == null ? null : request.getUploadSessionId();
+                        chunkIndex = request == null ? null : request.getChunkIndex();
+                }
+
+                private void logSummary() {
+                        long totalMs = elapsedMs(startedAt);
+                        long otherMs = Math.max(0, totalMs - minioPutMs - redisMarkMs - dbUpdateMs
+                                        - missingCheckMs - stageTriggerMs - mergeTriggerMs);
+                        log.info("[chunk-upload] summary { uploadSessionId={}, chunkIndex={}, totalChunks={}, isLastIndex={}, minioPutMs={}, redisMarkMs={}, dbUpdateMs={}, missingCheckMs={}, stageTriggerMs={}, mergeTriggerMs={}, otherMs={}, totalMs={} }",
+                                        sessionId, chunkIndex, totalChunks, isLastIndex, minioPutMs, redisMarkMs,
+                                        dbUpdateMs, missingCheckMs, stageTriggerMs, mergeTriggerMs, otherMs, totalMs);
+                }
         }
 
         @Override
@@ -925,7 +1072,9 @@ public class UploadServiceImpl implements UploadService {
                         long uploadedChunkCount = getUploadedChunkCount(uploadSessionId);
                         logMergeStage(uploadSessionId, "validate uploaded chunk count", stageStartedAt);
                         boolean redisHasAllChunks = uploadedChunkCount == totalChunk;
-                        List<Integer> missingChunkIndexes = findMissingChunks(uploadSessionId, totalChunk);
+                        // Exact logical coverage is in Redis. Stage size checks and
+                        // MinIO compose validate physical sources in the merge worker.
+                        List<Integer> missingChunkIndexes = uploadSessionRedisService.missingChunkIndexes(uploadSessionId, totalChunk);
                         redisHasAllChunks = redisHasAllChunks && missingChunkIndexes.isEmpty();
                         if (redisHasAllChunks) {
                                 normalizeReadyToMergeIfComplete(
@@ -983,7 +1132,8 @@ public class UploadServiceImpl implements UploadService {
                                         finalObjectKey,
                                         "dispatch async merge " + trigger);
 
-                        chunkMergeAsyncService.mergeAsync(new MergeJob(
+                        try {
+                                chunkMergeAsyncService.mergeAsync(new MergeJob(
                                         uploadSessionId,
                                         currUser.getId(),
                                         session,
@@ -993,7 +1143,14 @@ public class UploadServiceImpl implements UploadService {
                                         totalChunk,
                                         session.getReceivedChunks(),
                                         uploadedChunkCount,
-                                        session.getQuickFingerprint()));
+                                        session.getQuickFingerprint(),
+                                        session.getChecksumSha256(), requestStartedAt));
+                        } catch (RuntimeException dispatchError) {
+                                // MERGING was persisted before dispatch. A rejected
+                                // task must expose retry instead of polling forever.
+                                markAutoFinalizationFailed(uploadSessionId, currUser.getId(), true);
+                                throw dispatchError;
+                        }
 
                         log.info("[chunked-merge] request accepted trigger={}, uploadSessionId={}, finalObjectKey={}, totalChunks={}, elapsedMs={}",
                                         trigger,
@@ -1109,6 +1266,14 @@ public class UploadServiceImpl implements UploadService {
                                 || session.getStatus() == UploadSessionStatus.MERGE_FAILED) {
                         return;
                 }
+                if (session.getStatus() == UploadSessionStatus.READY_TO_MERGE
+                                && persistentSession.getStatus() == UploadSessionStatus.READY_TO_MERGE
+                                && session.getReceivedChunks() != null
+                                && session.getReceivedChunks().equals(totalChunks)
+                                && persistentSession.getReceivedChunks() != null
+                                && persistentSession.getReceivedChunks().equals(totalChunks)) {
+                        return;
+                }
                 UploadSessionStatus oldRedisStatus = session.getStatus();
                 UploadSessionStatus oldPersistentStatus = persistentSession.getStatus();
                 session.setReceivedChunks(totalChunks);
@@ -1178,35 +1343,51 @@ public class UploadServiceImpl implements UploadService {
 
         @Override
         public UploadSessionStatusResponse getUploadSessionStatus(String sessionIdString) {
+                long statusStartedAt = System.nanoTime();
                 UUID uploadSessionId = parseUploadSessionId(sessionIdString);
                 User user = getCurrentUser();
+                long databaseStartedAt = System.nanoTime();
                 com.example.smartrec.entity.UploadSession persistentSession =
                                 uploadSessionRepository.findByIdAndUserId(uploadSessionId, user.getId())
                                                 .orElseThrow(() -> new BusinessException(
                                                                 HttpStatus.NOT_FOUND,
                                                                 "UPLOAD_SESSION_NOT_FOUND",
                                                                 "Không tìm thấy upload session trong PostgreSQL"));
+                long databaseLookupMs = elapsedMs(databaseStartedAt);
                 UploadSession session = null;
+                long redisStartedAt = System.nanoTime();
                 try {
                         session = uploadSessionRedisService.get(uploadSessionId);
                 } catch (Exception ignored) {
                 }
+                long redisSessionMs = elapsedMs(redisStartedAt);
                 Integer receivedChunks = session != null
                                 ? session.getReceivedChunks()
                                 : persistentSession.getReceivedChunks();
                 Integer totalChunks = session != null
                                 ? session.getTotalChunks()
                                 : persistentSession.getTotalChunks();
+                long missingStartedAt = System.nanoTime();
                 long redisUploadedCount = getUploadedChunkCount(uploadSessionId);
+                // Status is polled repeatedly while chunks upload/merge. Redis is
+                // authoritative here because chunk markers are written only after
+                // successful MinIO PUT. Full MinIO HEAD verification stays in the
+                // one-shot merge preflight, never in each status poll.
                 List<Integer> missingChunks = totalChunks == null
                                 ? List.of()
-                                : findMissingChunks(uploadSessionId, totalChunks);
+                                : uploadSessionRedisService.missingChunkIndexes(uploadSessionId, totalChunks);
+                if (totalChunks != null) receivedChunks = totalChunks - missingChunks.size();
+                long redisChunksMs = elapsedMs(missingStartedAt);
                 boolean redisHasAllChunks = totalChunks != null
                                 && redisUploadedCount == totalChunks
                                 && missingChunks.isEmpty();
-                boolean persistentHasAllChunks = totalChunks != null
-                                && persistentSession.getReceivedChunks() != null
-                                && persistentSession.getReceivedChunks().equals(totalChunks);
+                if (redisHasAllChunks
+                                && session != null
+                                && session.getStatus() != UploadSessionStatus.MERGING
+                                && session.getStatus() != UploadSessionStatus.COMPLETED
+                                && session.getStatus() != UploadSessionStatus.MERGE_FAILED) {
+                        scheduleAutoFinalization(uploadSessionId, user, statusStartedAt);
+                }
                 if (session != null
                                 && redisHasAllChunks
                                 && session.getStatus() != UploadSessionStatus.MERGING
@@ -1268,6 +1449,15 @@ public class UploadServiceImpl implements UploadService {
                                         persistentSession.getTotalChunks(),
                                         redisUploadedCount);
                 }
+                log.info("[chunked-status] summary uploadSessionId={}, status={}, totalChunks={}, redisUploadedCount={}, databaseLookupMs={}, redisSessionMs={}, redisChunksMs={}, totalMs={}, missingChunks={}",
+                                uploadSessionId,
+                                persistentSession.getStatus(),
+                                totalChunks,
+                                redisUploadedCount,
+                                databaseLookupMs,
+                                redisSessionMs,
+                                redisChunksMs,
+                                elapsedMs(statusStartedAt), missingChunks);
                 return new UploadSessionStatusResponse(
                                 sessionIdString,
                                 persistentSession.getStatus().name(),
@@ -1291,7 +1481,7 @@ public class UploadServiceImpl implements UploadService {
                                 elapsedMs(startedAtNanos));
         }
 
-        private long elapsedMs(long startedAtNanos) {
+        private static long elapsedMs(long startedAtNanos) {
                 return (System.nanoTime() - startedAtNanos) / 1_000_000;
         }
         

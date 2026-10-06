@@ -10,7 +10,7 @@ export async function checkUploadDuplicate(file, options = {}) {
     fileName: file.name,
     fileSize: file.size,
     ...(options.quickFingerprint
-      ? { quickFingerprint: options.quickFingerprint }
+      ? { quickFingerprint: options.quickFingerprint, fingerprintVersion: 2 }
       : {}),
     ...(options.checksumSha256 ? { checksumSha256: options.checksumSha256 } : {}),
   });
@@ -46,7 +46,10 @@ export async function resolveUploadDuplicate(file, options = {}) {
   const quickFingerprint = await calculateQuickFingerprint(file);
   const fingerprintEnd = performance.now();
   const duplicateApiStart = performance.now();
-  const quickResponse = await checkUploadDuplicate(file, { quickFingerprint });
+  const quickResponse = await checkUploadDuplicate(file, {
+    quickFingerprint,
+    fingerprintVersion: 2,
+  });
   const duplicateApiEnd = performance.now();
   if (import.meta.env.DEV) {
     console.log("[resolveUploadDuplicate:quick]", {
@@ -69,11 +72,13 @@ export async function resolveUploadDuplicate(file, options = {}) {
 
   if (
     quickResponse?.exists ||
-    (!quickResponse?.possibleDuplicate && !quickResponse?.requireFullChecksum)
+    (!options.forceFullChecksum ||
+      (!quickResponse?.possibleDuplicate && !quickResponse?.requireFullChecksum))
   ) {
     const result = {
       ...quickResponse,
       quickFingerprint,
+      fingerprintVersion: 2,
       checksumSha256: null,
     };
     if (import.meta.env.DEV) {
@@ -101,6 +106,7 @@ export async function resolveUploadDuplicate(file, options = {}) {
   const exactApiStart = performance.now();
   const exactResponse = await checkUploadDuplicate(file, {
     quickFingerprint,
+    fingerprintVersion: 2,
     checksumSha256,
   });
   const exactApiEnd = performance.now();
@@ -108,6 +114,7 @@ export async function resolveUploadDuplicate(file, options = {}) {
   const result = {
     ...exactResponse,
     quickFingerprint,
+    fingerprintVersion: 2,
     checksumSha256,
   };
   if (import.meta.env.DEV) {

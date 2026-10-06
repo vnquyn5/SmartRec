@@ -47,6 +47,19 @@ public interface MediaFileRepository extends JpaRepository <MediaFile,UUID >{
     @Query("""
             select mf from MediaFile mf
             where mf.uploaded_by = :userId
+              and mf.quickFingerprint = :quickFingerprint
+              and mf.fingerprintVersion = :fingerprintVersion
+              and mf.status not in ('TRASHED', 'PURGED', 'INTEGRITY_FAILED')
+            order by mf.created_at asc
+            """)
+    List<MediaFile> findActiveByUserAndQuickFingerprintVersion(
+            @Param("userId") UUID userId,
+            @Param("quickFingerprint") String quickFingerprint,
+            @Param("fingerprintVersion") Integer fingerprintVersion);
+
+    @Query("""
+            select mf from MediaFile mf
+            where mf.uploaded_by = :userId
               and mf.checksumSha256 = :checksumSha256
               and mf.status not in ('TRASHED', 'PURGED')
             order by mf.created_at asc
@@ -54,6 +67,19 @@ public interface MediaFileRepository extends JpaRepository <MediaFile,UUID >{
     List<MediaFile> findActiveByUserAndChecksumSha256(
             @Param("userId") UUID userId,
             @Param("checksumSha256") String checksumSha256);
+
+    @Query("""
+            select mf from MediaFile mf
+            where mf.uploaded_by = :userId
+              and mf.checksumSha256 = :checksumSha256
+              and mf.id <> :excludedId
+              and mf.status not in ('TRASHED', 'PURGED', 'INTEGRITY_FAILED')
+            order by mf.created_at asc
+            """)
+    List<MediaFile> findActiveByUserAndChecksumSha256ExcludingId(
+            @Param("userId") UUID userId,
+            @Param("checksumSha256") String checksumSha256,
+            @Param("excludedId") UUID excludedId);
 
     @Query("""
             select mf from MediaFile mf

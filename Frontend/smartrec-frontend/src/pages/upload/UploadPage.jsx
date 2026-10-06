@@ -8,6 +8,8 @@ import {
   singleUploadStore,
   useSingleUploadStore,
 } from "../../hooks/useSingleUploadStore";
+import { saveFileHandle } from "../../services/fileHandleStorage";
+import { pickFilesWithPersistentHandles, restoreChunkedFile, restoreFileFromHandle } from "../../services/uploadRecovery";
 import { getMediaDuration } from "../../utils/fileSlice";
 import {
   buildUploadDuplicateNotice,
@@ -76,6 +78,7 @@ const buildQueueIdentitySet = (singleItems, chunkedItems) =>
 const UploadPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const pendingRecoveryItemIdRef = useRef(null);
   const singleUploadState = useSingleUploadStore();
   const largeUploadState = useLargeUploadStore();
 
@@ -100,7 +103,7 @@ const UploadPage = () => {
 
   // Xử lý thêm file(s) vào queue
   const addFilesToQueue = useCallback(
-    async (files) => {
+    async (files, handlesByFile = new Map()) => {
       const fileArray = Array.from(files);
 
       const validFiles = [];
@@ -347,15 +350,21 @@ const UploadPage = () => {
             })),
           });
         }
-        largeUploadStore.addFiles(
-          chunkedFiles,
-          Object.fromEntries(
-            chunkedFiles.map((file) => [
-              getFileIdentity(file),
-              metadataByIdentity.get(getFileIdentity(file)) || null,
-            ]),
-          ),
+        const duplicateMetadataById = Object.fromEntries(
+          chunkedFiles.map((file) => [
+            getFileIdentity(file),
+            metadataByIdentity.get(getFileIdentity(file)) || null,
+          ]),
         );
+        const chunkedSelections = chunkedFiles.map((file) => ({
+          file,
+          handle: handlesByFile.get(file),
+        }));
+        if (chunkedSelections.some(({ handle }) => handle)) {
+          await largeUploadStore.addFilesWithHandles(chunkedSelections, duplicateMetadataById);
+        } else {
+          largeUploadStore.addFiles(chunkedFiles, duplicateMetadataById);
+        }
         const hasActiveChunkedUpload = largeUploadState.items.some((item) =>
           ["uploading", "merging"].includes(item.phase),
         );
@@ -376,9 +385,81 @@ const UploadPage = () => {
   // Xử lý chọn file qua input
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
+      const pendingId = pendingRecoveryItemIdRef.current;
+      const selectedFile = e.target.files[0];
+      if (pendingId) {
+        pendingRecoveryItemIdRef.current = null;
+        const chunkItem = largeUploadStore.getSnapshot().items.find(
+          (candidate) => candidate.id === pendingId,
+        );
+        const singleItem = singleUploadStore.getSnapshot().items.find(
+          (candidate) => candidate.id === pendingId,
+        );
+        const item = chunkItem || singleItem;
+        if (
+          item && selectedFile.name === item.fileName &&
+          selectedFile.size === item.fileSize &&
+          (!item.lastModified || selectedFile.lastModified === item.lastModified)
+        ) {
+          if (chunkItem) {
+            largeUploadStore.reattachFileToExistingItem(item.id, selectedFile);
+            largeUploadStore.setRecoveryCheckPending(item.id, false);
+            largeUploadStore.refreshStatus(item.id).finally(() => largeUploadStore.start(item.id));
+          } else {
+            singleUploadStore.attachRecoveredFile(item.id, selectedFile);
+            singleUploadStore.retry(item.id, meetingName);
+          }
+          e.target.value = "";
+          return;
+        }
+        setUploadNotice("File được chọn không khớp với upload đang chờ khôi phục.");
+        e.target.value = "";
+        return;
+      }
+      if (import.meta.env.DEV) {
+        Array.from(e.target.files).forEach((file) => {
+          console.info("[upload-picker]", {
+            source: "input",
+            fileName: file.name,
+            hasHandle: false,
+          });
+        });
+      }
       addFilesToQueue(e.target.files);
       e.target.value = "";
     }
+  };
+
+  const handleChooseFiles = async () => {
+    const picked = await pickFilesWithPersistentHandles();
+    if (picked === null) {
+      if (import.meta.env.DEV) {
+        console.info("[upload-picker]", { source: "input", hasHandle: false });
+      }
+      fileInputRef.current?.click();
+      return;
+    }
+    if (picked.length === 0) return;
+    if (import.meta.env.DEV) {
+      picked.forEach(({ file, handle }) => console.info("[upload-picker]", {
+        source: "file-system-access",
+        fileName: file.name,
+        hasHandle: Boolean(handle),
+      }));
+    }
+    const handlesByFile = new Map(picked.map(({ file, handle }) => [file, handle]));
+    await addFilesToQueue(picked.map(({ file }) => file), handlesByFile);
+    const singleItems = singleUploadStore.getSnapshot().items;
+    await Promise.all(picked.map(async ({ file, handle }) => {
+      if (file.size > SINGLE_UPLOAD_LIMIT) return;
+      const identity = getFileIdentity(file);
+      const singleItem = singleItems.find((item) => item.id === identity);
+      const recoveryKey = singleItem?.id;
+      if (!recoveryKey) {
+        return;
+      }
+      await saveFileHandle(recoveryKey, handle).catch(() => {});
+    }));
   };
 
   // Xử lý kéo thả
@@ -393,9 +474,30 @@ const UploadPage = () => {
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      addFilesToQueue(e.dataTransfer.files);
-    }
+    const transferItems = Array.from(e.dataTransfer.items || []);
+    Promise.all(transferItems.filter((item) => item.kind === "file").map(async (transferItem) => {
+      if (typeof transferItem.getAsFileSystemHandle === "function") {
+        try {
+          const handle = await transferItem.getAsFileSystemHandle();
+          if (handle?.kind === "file") return { file: await handle.getFile(), handle };
+        } catch { /* Fall through to the standard dropped File. */ }
+      }
+      return { file: transferItem.getAsFile(), handle: undefined };
+    })).then((selections) => {
+      const validSelections = selections.filter(({ file }) => file);
+      const files = validSelections.map(({ file }) => file);
+      const handlesByFile = new Map(validSelections
+        .filter(({ handle }) => handle)
+        .map(({ file, handle }) => [file, handle]));
+      if (import.meta.env.DEV) {
+        validSelections.forEach(({ file, handle }) => console.info("[upload-picker]", {
+          source: "drag-drop",
+          fileName: file.name,
+          hasHandle: Boolean(handle),
+        }));
+      }
+      if (files.length) addFilesToQueue(files, handlesByFile);
+    });
   };
 
   const removeItemFromUI = useCallback((item) => {
@@ -431,14 +533,65 @@ const UploadPage = () => {
   );
 
   const handleRetryFile = useCallback(
-    (item) => {
-      if (item.strategy === "chunk") {
+    async (item) => {
+      let retryItem = item;
+      if (retryItem.strategy === "chunk") {
         largeUploadStore.selectItem(item.id);
-        largeUploadStore.start(item.id);
+        const mergeOrCompletePhases = ["ready_to_merge", "merging", "success", "merge_failed"];
+        if (mergeOrCompletePhases.includes(retryItem.phase)) {
+          if (retryItem.uploadSessionId) {
+            await largeUploadStore.refreshStatus(item.id).catch(() => {});
+            retryItem = largeUploadStore.getSnapshot().items.find(
+              (candidate) => candidate.id === item.id,
+            ) || retryItem;
+          }
+          if (retryItem.phase === "ready_to_merge") largeUploadStore.start(item.id);
+          return;
+        }
+
+        if (retryItem.hasFile === false) {
+          const result = await restoreChunkedFile(retryItem, true);
+          if (result.file) {
+            largeUploadStore.reattachFileToExistingItem(item.id, result.file);
+            largeUploadStore.setRecoveryCheckPending(item.id, false);
+            retryItem = largeUploadStore.getSnapshot().items.find(
+              (candidate) => candidate.id === item.id,
+            ) || retryItem;
+          } else if (result.reason === "PERMISSION_REQUIRED") {
+            largeUploadStore.setRecoveryPermissionRequired(item.id, true);
+            return;
+          }
+        }
+
+        if (retryItem.uploadSessionId) {
+          await largeUploadStore.refreshStatus(item.id).catch(() => {});
+          retryItem = largeUploadStore.getSnapshot().items.find(
+            (candidate) => candidate.id === item.id,
+          ) || retryItem;
+        }
+        if (["ready_to_merge", "merging", "success", "merge_failed"].includes(retryItem.phase)) {
+          if (retryItem.phase === "ready_to_merge") largeUploadStore.start(item.id);
+          return;
+        }
+        if (retryItem.hasFile === false) {
+          pendingRecoveryItemIdRef.current = retryItem.id;
+          fileInputRef.current?.click();
+          return;
+        }
+        largeUploadStore.start(retryItem.id);
         return;
       }
 
-      singleUploadStore.retry(item.id, meetingName);
+      if (retryItem.hasFile === false) {
+        const file = await restoreFileFromHandle(retryItem, true);
+        if (file) singleUploadStore.attachRecoveredFile(item.id, file);
+        else {
+          pendingRecoveryItemIdRef.current = retryItem.id;
+          fileInputRef.current?.click();
+          return;
+        }
+      }
+      singleUploadStore.retry(retryItem.id, meetingName);
     },
     [meetingName, navigate],
   );
@@ -871,7 +1024,7 @@ const UploadPage = () => {
                 transition: "all 0.2s ease",
                 cursor: "pointer",
               }}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleChooseFiles}
             >
               <div
                 style={{
@@ -940,7 +1093,7 @@ const UploadPage = () => {
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  fileInputRef.current?.click();
+                  handleChooseFiles();
                 }}
               >
                 <svg
