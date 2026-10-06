@@ -1,7 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { uploadSingleFile } from "../features/files/useSingleUpload";
 import { removeFileHandle } from "../services/fileHandleStorage";
-import { restoreAvailableFiles, restoreFileFromHandle } from "../services/uploadRecovery";
+import {
+  restoreAvailableFiles,
+  restoreFileFromHandle,
+} from "../services/uploadRecovery";
 import { calculateQuickFingerprint } from "../utils/fileHash";
 
 const STORAGE_KEY = "smartrec.singleUpload.sessions.v1";
@@ -26,27 +29,33 @@ const createFilePlaceholder = (item) => ({
 let state = {
   items: readPersisted().map((item) => ({
     ...item,
-    quickFingerprint: item.quickFingerprint || item.duplicateMetadata?.quickFingerprint || null,
-    fingerprintVersion: (item.quickFingerprint || item.duplicateMetadata?.quickFingerprint)
-      ? item.fingerprintVersion ?? item.duplicateMetadata?.fingerprintVersion ?? 2
-      : null,
+    quickFingerprint:
+      item.quickFingerprint || item.duplicateMetadata?.quickFingerprint || null,
+    fingerprintVersion:
+      item.quickFingerprint || item.duplicateMetadata?.quickFingerprint
+        ? (item.fingerprintVersion ??
+          item.duplicateMetadata?.fingerprintVersion ??
+          2)
+        : null,
     file: createFilePlaceholder(item),
     hasFile: false,
-    phase: ["uploading", "finalizing"].includes(item.phase) ? "error" : item.phase,
+    phase: ["uploading", "finalizing"].includes(item.phase)
+      ? "error"
+      : item.phase,
     progress: item.progress || 0,
     uploadedBytes: item.uploadedBytes || 0,
     speedBps: 0,
-    error:
-      ["uploading", "finalizing"].includes(item.phase)
-        ? "Upload bị gián đoạn. Cần chọn lại file để thử lại."
-        : item.error || null,
+    error: ["uploading", "finalizing"].includes(item.phase)
+      ? "Upload bị gián đoạn. Nhấn thử lại."
+      : item.error || null,
     abortController: null,
   })),
 };
 
 const attachRecoveredFile = (id, file) => {
   const item = state.items.find((candidate) => candidate.id === id);
-  if (!item || file.name !== item.fileName || file.size !== item.fileSize) return;
+  if (!item || file.name !== item.fileName || file.size !== item.fileSize)
+    return;
   updateItem(id, { file, hasFile: true });
 };
 
@@ -110,21 +119,22 @@ const buildItem = (file, duplicateMetadata = null) => ({
   duplicateMetadata,
   quickFingerprint: duplicateMetadata?.quickFingerprint || null,
   fingerprintVersion: duplicateMetadata?.quickFingerprint
-    ? duplicateMetadata.fingerprintVersion ?? 2
+    ? (duplicateMetadata.fingerprintVersion ?? 2)
     : null,
   abortController: null,
 });
 
 const startUpload = async (itemId, meetingName = "") => {
   const item = state.items.find((currentItem) => currentItem.id === itemId);
-  if (!item || item.phase === "uploading" || item.phase === "finalizing") return;
+  if (!item || item.phase === "uploading" || item.phase === "finalizing")
+    return;
   if (!item.hasFile) {
     updateItem(item.id, {
       phase: "error",
       progress: 0,
       uploadedBytes: 0,
       speedBps: 0,
-      error: "Cần chọn lại file để thử lại.",
+      error: "Nhấn thử lại.",
     });
     return;
   }
@@ -144,11 +154,15 @@ const startUpload = async (itemId, meetingName = "") => {
   });
 
   try {
-    const quickFingerprint = item.quickFingerprint || await calculateQuickFingerprint(item.file);
-    const fingerprintVersion = item.quickFingerprint ? item.fingerprintVersion ?? 2 : 2;
+    const quickFingerprint =
+      item.quickFingerprint || (await calculateQuickFingerprint(item.file));
+    const fingerprintVersion = item.quickFingerprint
+      ? (item.fingerprintVersion ?? 2)
+      : 2;
     // Persist before presigning/PUT so failures and reloads retain the same metadata.
     updateItem(item.id, { quickFingerprint, fingerprintVersion });
-    if (controller.signal.aborted) throw { kind: "canceled", message: "canceled" };
+    if (controller.signal.aborted)
+      throw { kind: "canceled", message: "canceled" };
     const uploadResponse = await uploadSingleFile(
       item.file,
       meetingName,
@@ -192,7 +206,8 @@ const startUpload = async (itemId, meetingName = "") => {
       abortController: null,
     });
   } catch (error) {
-    const isCanceled = error?.kind === "canceled" || error?.message === "canceled";
+    const isCanceled =
+      error?.kind === "canceled" || error?.message === "canceled";
     const latestItem =
       state.items.find((currentItem) => currentItem.id === item.id) || item;
     updateItem(item.id, {
@@ -216,7 +231,12 @@ export const singleUploadStore = {
   },
   addFiles(files, meetingName = "", duplicateMetadataById = {}) {
     const items = files.map((file) =>
-      buildItem(file, duplicateMetadataById[`${file.name}-${file.size}-${file.lastModified}`] || null),
+      buildItem(
+        file,
+        duplicateMetadataById[
+          `${file.name}-${file.size}-${file.lastModified}`
+        ] || null,
+      ),
     );
     setState((currentState) => ({
       ...currentState,
@@ -264,7 +284,7 @@ export const singleUploadStore = {
       if (!item?.hasFile) {
         updateItem(id, {
           phase: "error",
-          error: "Cần chọn lại file để thử lại.",
+          error: "Nhấn thử lại.",
         });
         return false;
       }
