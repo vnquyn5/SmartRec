@@ -16,7 +16,7 @@ import lombok.RequiredArgsConstructor;
 public class JobQueueServiceImpl implements JobQueueService {
     private static final String JOB_QUEUE = "smartrec:job:queue";
     private static  final String RETRY_QUEUE = "smartrec:retry:queue";
-    private static final String DLQ_QUEUE = "smartrec:job:dql";
+    private static final String DLQ_QUEUE = "smartrec:job:dlq";
     private final StringRedisTemplate redisTemplate;
 
     // dua job moi vao main queue

@@ -8,6 +8,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import com.example.smartrec.enums.JobStatus;
+import com.example.smartrec.enums.PipelineStage;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -42,6 +43,10 @@ public class Job {
     @Enumerated(EnumType.STRING)
     @Column (name = "status", nullable = false)
     private JobStatus status;
+
+    @Enumerated (EnumType.STRING)
+    @Column (name = "current_stage")
+    private PipelineStage currentStage;
 
     @Builder.Default
     @Column (name = "retry_count", nullable = false)

@@ -3,11 +3,16 @@ package com.example.smartrec.service.impl;
 import org.springframework.stereotype.Service;
 
 import com.example.smartrec.entity.Job;
+import com.example.smartrec.entity.JobStage;
+import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
+import com.example.smartrec.enums.PipelineStage;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.CreateJobRequest;
 import com.example.smartrec.model.dto.JobResponse;
+import com.example.smartrec.model.dto.WorkerCallbackRequest;
 import com.example.smartrec.repository.JobRepository;
+import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.service.JobQueueService;
 import com.example.smartrec.service.JobService;
 
@@ -26,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor 
 public class JobServiceImpl implements JobService {
     private final JobRepository jobRepository;
+    private final JobStageRepository jobStageRepository;
     private final JobQueueService jobQueueService;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
@@ -44,12 +50,28 @@ public class JobServiceImpl implements JobService {
 
         Job job = Job.builder()
                      .mediaFileId(request.getMediaFileId())
-                     .status(JobStatus.QUEUED)
+                     .status(JobStatus.PENDING)
+                     .currentStage(PipelineStage.FFMPEG)
                      .retryCount(0)
                      .build();
 
         job = jobRepository.save(job);
 
+        for(PipelineStage stage:PipelineStage.values()){
+            JobStage jobStage = JobStage.builder()
+                                        .jobId(job.getId())
+                                        .stage(stage)
+                                        .status(JobStageStatus.PENDING)
+                                        .retryCount(0)
+                                        .createdAt(Instant.now())
+                                        .build();
+
+            jobStageRepository.save(jobStage);
+        }
+    
+        // cap nhat job sang queue
+        job.setStatus(JobStatus.QUEUED);
+        jobRepository.save(job);
         // dua job vao redis
         jobQueueService.enqueueJob(job.getId());// lay job id vua tao sau do dua job vao main queue cua redis
         return toResponse(job);
@@ -82,22 +104,14 @@ public class JobServiceImpl implements JobService {
              System.out.println("Job đã COMPLETED: "+ job.getId());
             return ;
         }
-
-        // chuyen sang run
-        job.setStatus(JobStatus.RUNNING);
-        jobRepository.save(job);
-        // xu li media
-        try {
-            processMedia(job);
-        } catch (Exception e) {
-            handleProcessingFailure(job, e);
-            return;
-        }
-        job.setStatus(JobStatus.COMPLETED);
-        job.setErrorCode(null);
-        job.setErrorMessage(null);
-        job.setFailedAt(null);
-        jobRepository.save(job);
+        // Job đã có stage hiện tại
+    if (job.getCurrentStage() == null) {
+        System.out.println("Job chưa có currentStage: " + job.getId());
+        return;
+    }
+    job.setStatus(JobStatus.PROCESSING);
+    jobRepository.save(job);
+       
     }
 
     @Override 
@@ -109,22 +123,52 @@ public class JobServiceImpl implements JobService {
         if(job.getStatus() != JobStatus.DLQ){
             throw new BusinessException(HttpStatus.BAD_REQUEST,"INVALID_JOB_STATUS", "Chỉ Job ở trạng thái DLQ mới được retry thủ công");
         }
-        job.setRetryCount(0);
-        // dua job tro lai thu lai
-        job.setStatus(JobStatus.RETRYING);
-        job.setLastRetryAt(Instant.now());
-        jobRepository.save(job);
+         JobStage failedStage = jobStageRepository
+            .findByJobIdOrderByStageAsc(jobId)
+            .stream()
+            .filter(stage ->
+                    stage.getStatus() == JobStageStatus.FAILED)
+            .findFirst()
+            .orElseThrow(() -> new BusinessException(
+                    HttpStatus.BAD_REQUEST,
+                    "FAILED_STAGE_NOT_FOUND",
+                    "Không tìm thấy stage bị lỗi"
+            ));
 
-        // dua lai trang thai retry queue
-        jobQueueService.enqueueRetry(job.getId());
-         System.out.println("Manual retry Job: "+ job.getId());
+            // Retry đúng stage bị lỗi
+    failedStage.setRetryCount(0);
+    failedStage.setStatus(JobStageStatus.RETRYING);
+
+    // Job quay lại đúng stage bị lỗi
+    job.setCurrentStage(failedStage.getStage());
+    job.setStatus(JobStatus.RETRYING);
+    job.setLastRetryAt(Instant.now());
+
+    jobStageRepository.save(failedStage);
+    jobRepository.save(job);
+
+    jobQueueService.enqueueRetry(job.getId());
+
+    System.out.println(
+            "Manual retry Job: "
+            + job.getId()
+            + " - Stage: "
+            + failedStage.getStage()
+    );
     }
 
 
-    private void processMedia(Job job){
-        System.out.println("xu ly cong viec"+job.getId());
-        throw new RuntimeException("AI service unavailable");
-    }
+    // private void processMedia(UUID jobId){
+    //     Job job = findJob(jobId);
+    //     if(job.getStatus() == JobStatus.DLQ){
+    //         return;
+    //     }
+    //     if(job.getStatus() == JobStatus.COMPLETED){
+    //         return;
+    //     }
+    //     job.setStatus(JobStatus.PROCESSING);
+    //     jobRepository.save(job);
+    // }
 
     private void handleProcessingFailure(Job job,Exception e){
         job.setStatus(JobStatus.FAILED);
@@ -196,5 +240,118 @@ public class JobServiceImpl implements JobService {
                 .updatedAt(job.getUpdatedAt())
                 .build();
     }
+
+
+    @Override 
+    @Transactional 
+    public void handleWorkerCallback(UUID jobId,WorkerCallbackRequest request){
+         Job job = findJob(jobId);
+    if (request == null || request.getStage() == null || request.getStatus()==null) {
+        throw new BusinessException(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_CALLBACK",
+                "Stage không được để trống"
+        );
+    }
+    if (job.getCurrentStage() != request.getStage()) {
+
+        throw new BusinessException(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_STAGE",
+                "Callback không đúng stage hiện tại của Job"
+        );
+    }
+    JobStage jobStage =jobStageRepository.findByJobIdAndStage(jobId,request.getStage()).orElseThrow(() ->
+                            new BusinessException(
+                                    HttpStatus.NOT_FOUND,
+                                    "JOB_STAGE_NOT_FOUND",
+                                    "Không tìm thấy Job Stage"
+                            )
+                    );
+
+    if(request.getStatus() == JobStageStatus.PROCESSING){
+        job.setStatus(JobStatus.PROCESSING);
+
+        jobStage.setStatus(
+                JobStageStatus.PROCESSING
+        );
+        if (jobStage.getStartedAt() == null) {
+        jobStage.setStartedAt(Instant.now());
+    }
+    }
+    else if (request.getStatus() == JobStageStatus.SUCCESS) {
+
+    jobStage.setStatus(JobStageStatus.SUCCESS);
+    jobStage.setCompletedAt(Instant.now());
+
+    moveToNextStage(job, jobStage);
+}
+    else if (request.getStatus() == JobStageStatus.FAILED) {
+
+        handleStageFailure(
+                job,
+                jobStage,
+                request
+        );
+    }
+
+    jobStageRepository.save(jobStage);
+
+    jobRepository.save(job);
+
+    }
+    private void moveToNextStage(Job job, JobStage currentStage){
+        // lay het cac gia tri enum PipelineStage va dua vao 1 bang 
+        PipelineStage[] stages= PipelineStage.values();
+        // lay vt hien tai cua stage trong enum . ordinal() trả về index bắt đầu từ 0
+        int index = currentStage.getStage().ordinal();
+        if (index == stages.length - 1){
+            job.setStatus(JobStatus.COMPLETED); 
+            job.setCurrentStage(null);
+            return ;
+        }
+        // lay stage tieo theo
+         PipelineStage nextStage = stages[index + 1];
+         job.setStatus(JobStatus.QUEUED);
+         job.setCurrentStage(nextStage);
+         jobQueueService.enqueueJob(job.getId());
+    }
+
+    private void handleStageFailure(
+        Job job,
+        JobStage jobStage,
+        WorkerCallbackRequest request) {
+
+    jobStage.setStatus(JobStageStatus.FAILED);
+    jobStage.setErrorCode("STAGE_PROCESSING_ERROR");
+    jobStage.setErrorMessage(request.getErrorMessage());
+
+    job.setStatus(JobStatus.FAILED);
+    job.setErrorCode("STAGE_PROCESSING_ERROR");
+    job.setErrorMessage(request.getErrorMessage());
+    job.setFailedAt(Instant.now());
+
+    jobStageRepository.save(jobStage);
+    jobRepository.save(job);
+
+    if (jobStage.getRetryCount() < maxRetry) {
+        jobStage.setRetryCount(jobStage.getRetryCount() + 1);
+        jobStage.setStatus(JobStageStatus.RETRYING);
+
+        job.setStatus(JobStatus.RETRYING);
+
+        jobStageRepository.save(jobStage);
+        jobRepository.save(job);
+
+        jobQueueService.enqueueRetry(job.getId());
+
+    } else {
+        job.setStatus(JobStatus.DLQ);
+        jobRepository.save(job);
+
+        jobQueueService.enqueueDLQ(job.getId());
+    }
+}
+    
 
 }
