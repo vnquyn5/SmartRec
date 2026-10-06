@@ -5,8 +5,11 @@ import com.example.smartrec.service.impl.AuthServiceImpl;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.smartrec.model.dto.AuthResponse;
+import com.example.smartrec.model.dto.GoogleLoginRequest;
 import com.example.smartrec.model.dto.LoginRequest;
 import com.example.smartrec.model.dto.LoginResponse;
+import com.example.smartrec.model.dto.RefreshTokenRequest;
 import com.example.smartrec.model.dto.RegisterRequest;
 
 import jakarta.validation.Valid;
@@ -33,6 +36,24 @@ public class AuthController {
    @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request){
         LoginResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/google")
+    public ResponseEntity<AuthResponse> googleLogin(
+            @RequestBody GoogleLoginRequest request) {
+
+        AuthResponse response = authService.googleLogin(request);
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/refresh-token")
+    public ResponseEntity<AuthResponse> refreshToken(
+            @RequestBody RefreshTokenRequest request) {
+
+        AuthResponse response = authService.refreshToken(request);
+
         return ResponseEntity.ok(response);
     }
 }

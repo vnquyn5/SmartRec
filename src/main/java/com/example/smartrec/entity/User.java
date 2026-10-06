@@ -22,32 +22,42 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-@Entity 
-@Table ( name = "users")
-@Builder 
-@AllArgsConstructor 
-@NoArgsConstructor 
-@Getter 
-@Setter 
+@Entity
+@Table(name = "users")
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+@Getter
+@Setter
 public class User {
 
-    @Id 
+    @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    private  UUID id;
+    private UUID id;
 
     @Column(name = "user_code", unique = true, nullable = false, length = 30)
     private String userCode;
 
-    @Column (name ="email" , unique = true)
+    @Column(name = "email", unique = true)
     private String email;
 
-    @Column(name="phone",unique = true)
+    @Column(name = "phone", unique = true)
     private String phone;
 
-    @Column (name = "password_hash" , nullable = false)
+    @Column(name = "password_hash")
     private String password_hash;
 
-    @Column (name ="full_name" , nullable = false)
+    @Column(name = "auth_provider", nullable = false, length = 20)
+    @Builder.Default
+    private String auth_provider = "LOCAL";
+
+    @Column (name = "provider_id", unique = true)
+    private String provider_id;
+
+    @Column (name = "avatar_url", length = 500)
+    private String avatar_url;
+
+    @Column(name = "full_name", nullable = false)
     private String full_name;
 
     @Column(name = "department")
@@ -56,18 +66,18 @@ public class User {
     @Column(name = "position")
     private String position;
 
-    @Column (name = "is_active")
+    @Column(name = "is_active")
     private Boolean is_active = true;
 
-    @CreationTimestamp 
-    @Column (name = "created_at", updatable = false)
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
     private Instant created_at;
 
-    @UpdateTimestamp 
-    @Column (name = "updated_at")
+    @UpdateTimestamp
+    @Column(name = "updated_at")
     private Instant updated_at;
 
-    @Column (name = "delete_at")
+    @Column(name = "delete_at")
     private Instant delete_at;
 
     @PrePersist
