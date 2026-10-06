@@ -26,7 +26,7 @@ services:
       - smartrec-net
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: ghcr.io/coollabsio/minio:latest
     container_name: smartrec-minio
     ports:
       - "9000:9000"
@@ -43,7 +43,7 @@ services:
 
   # Script tự động khởi tạo Bucket cho MinIO
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: ghcr.io/coollabsio/minio:latest
     container_name: smartrec-minio-init
     depends_on:
       - minio

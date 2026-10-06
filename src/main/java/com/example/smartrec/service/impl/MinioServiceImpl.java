@@ -15,10 +15,12 @@ import org.springframework.web.multipart.MultipartFile;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.service.MinioService;
 
+import io.minio.BucketExistsArgs;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
@@ -26,6 +28,7 @@ import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
+import jakarta.annotation.PostConstruct;
 
 @Service
 public class MinioServiceImpl implements MinioService {
@@ -39,6 +42,21 @@ public class MinioServiceImpl implements MinioService {
 
     public MinioServiceImpl(MinioClient minioClient) {
         this.minioClient = minioClient;
+    }
+
+    @PostConstruct
+    public void initBucket() {
+        try {
+            boolean isExist = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
+            if (!isExist) {
+                minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
+                System.out.println("Đã tự động tạo bucket trên MinIO: " + bucket);
+            } else {
+                System.out.println("Bucket " + bucket + " đã tồn tại sẵn trên MinIO.");
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Lỗi khi kiểm tra/tạo bucket trên MinIO", e);
+        }
     }
 
     @Override
