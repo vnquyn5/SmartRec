@@ -1,5 +1,7 @@
 const TOKEN_KEY = "smartrec_access_token";
+const REFRESH_TOKEN_KEY = "smartrec_refresh_token";
 let accessToken = sessionStorage.getItem(TOKEN_KEY);
+let refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY);
 const listeners = new Set();
 
 function readClaims(token) {
@@ -33,6 +35,10 @@ export const tokenStore = {
     }
     listeners.forEach((fn) => fn(token));
   },
+  subscribe(fn) {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+  },
   getExpiration() {
     return readClaims(accessToken)?.exp ?? null;
   },
@@ -45,6 +51,17 @@ export const tokenStore = {
     return () => {
       listeners.delete(fn);
     };
+  },
+};
+
+export const refreshTokenStore = {
+  get() {
+    return refreshToken;
+  },
+  set(token) {
+    refreshToken = token;
+    if (token) sessionStorage.setItem(REFRESH_TOKEN_KEY, token);
+    else sessionStorage.removeItem(REFRESH_TOKEN_KEY);
   },
 };
 

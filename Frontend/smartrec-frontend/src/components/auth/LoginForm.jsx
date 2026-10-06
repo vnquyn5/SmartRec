@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../common/Button";
 import Input from "../common/Input";
@@ -13,12 +13,7 @@ const initialValues = {
 };
 
 const GoogleIcon = () => (
-  <svg
-    className="google-icon"
-    viewBox="0 0 24 24"
-    aria-hidden="true"
-    focusable="false"
-  >
+  <svg className="google-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path
       fill="#4285F4"
       d="M23.49 12.27c0-.79-.07-1.54-.2-2.27H12v4.29h6.47c-.28 1.5-1.13 2.77-2.4 3.62v3.01h3.89c2.27-2.09 3.53-5.17 3.53-8.65z"
@@ -40,12 +35,109 @@ const GoogleIcon = () => (
 
 const LoginForm = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, googleLogin } = useAuth();
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState("");
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const googleBusy = useRef(false);
+  const googleReady = useRef(false);
+  const googleButtonRef = useRef(null);
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+  const handleGoogleCredential = useCallback(
+    async (credentialResponse) => {
+      const credential = credentialResponse?.credential;
+      if (!credential || googleBusy.current) {
+        if (!credential)
+          setFormError(
+            "Không nhận được thông tin đăng nhập từ Google. Vui lòng thử lại.",
+          );
+        return;
+      }
+
+      googleBusy.current = true;
+      setGoogleLoading(true);
+      setFormError("");
+      try {
+        await googleLogin(credential);
+        navigate("/");
+      } catch (error) {
+        setFormError(
+          error.message || "Đăng nhập Google thất bại. Vui lòng thử lại.",
+        );
+      } finally {
+        googleBusy.current = false;
+        setGoogleLoading(false);
+      }
+    },
+    [googleLogin, navigate],
+  );
+
+  useEffect(() => {
+    if (!googleClientId) return undefined;
+
+    let cancelled = false;
+    let timeoutId;
+
+    const initialize = () => {
+      if (cancelled || googleReady.current) return;
+
+      if (window.google?.accounts?.id) {
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleGoogleCredential,
+          cancel_on_tap_outside: true,
+        });
+
+        googleReady.current = true;
+
+        if (googleButtonRef.current) {
+          googleButtonRef.current.innerHTML = "";
+
+          window.google.accounts.id.renderButton(googleButtonRef.current, {
+            type: "standard",
+            theme: "outline",
+            size: "large",
+            text: "continue_with",
+            shape: "rectangular",
+            width: Math.min(
+              530,
+              Math.floor(
+                googleButtonRef.current.getBoundingClientRect().width,
+              ) || 530,
+            ),
+          });
+        }
+
+        return;
+      }
+
+      timeoutId = window.setTimeout(initialize, 100);
+    };
+
+    initialize();
+
+    const failIfUnavailable = window.setTimeout(() => {
+      if (!cancelled && !window.google?.accounts?.id) {
+        setFormError(
+          "Không thể tải dịch vụ đăng nhập Google. Vui lòng thử lại sau.",
+        );
+      }
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+
+      // KHÔNG set:
+      // googleReady.current = false;
+
+      window.clearTimeout(timeoutId);
+      window.clearTimeout(failIfUnavailable);
+    };
+  }, [googleClientId, handleGoogleCredential]);
 
   const validate = () => {
     const nextErrors = {
@@ -92,10 +184,20 @@ const LoginForm = () => {
   return (
     <form className="auth-form login-form" onSubmit={handleSubmit} noValidate>
       <ErrorMessage message={formError} />
-      <Button variant="secondary" className="google-button">
-        <GoogleIcon />
-        <span>Continue with Google</span>
-      </Button>
+      <div className="google-button-wrap" aria-busy={googleLoading || loading}>
+        <div className="google-button-visual" aria-hidden="true">
+          <GoogleIcon />
+          <span>Continue with Google</span>
+        </div>
+        <div
+          ref={googleButtonRef}
+          className="google-gis-button"
+          aria-label="Continue with Google"
+        />
+        {googleLoading && (
+          <span className="google-login-loading">Đang xử lý...</span>
+        )}
+      </div>
 
       <div className="auth-divider">
         <span>OR</span>

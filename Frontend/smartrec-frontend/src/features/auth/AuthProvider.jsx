@@ -7,7 +7,7 @@ import React, {
   useCallback,
 } from "react";
 import { api } from "../../lib/http/client.js";
-import { tokenStore, authEvents } from "../../lib/auth/tokenStore.js";
+import { tokenStore, refreshTokenStore, authEvents } from "../../lib/auth/tokenStore.js";
 
 import "../../lib/http/interceptors.js";
 
@@ -38,6 +38,7 @@ export function AuthProvider({ children }) {
 
   const clearSession = useCallback(() => {
     tokenStore.set(null);
+    refreshTokenStore.set(null);
     localStorage.removeItem(USER_KEY);
     setUser(null);
     setStatus("unauthenticated");
@@ -84,18 +85,18 @@ export function AuthProvider({ children }) {
     };
   }, [clearSession]);
 
+  const [tokenRevision, setTokenRevision] = useState(0);
+  useEffect(() => tokenStore.subscribe(() => setTokenRevision((revision) => revision + 1)), []);
+
   useEffect(() => {
-    if (!tokenStore.get()) return undefined;
-
+    if (status !== "authenticated" || !tokenStore.get()) return undefined;
     const delay = getExpirationDelay();
-    if (!delay) {
-      clearSession();
-      return undefined;
-    }
-
-    const timeoutId = window.setTimeout(clearSession, delay);
+    if (!delay) return undefined; // Request interceptor refreshes expired access tokens on demand.
+    const timeoutId = window.setTimeout(() => {
+      if (!refreshTokenStore.get()) authEvents.emit("session-expired");
+    }, delay);
     return () => window.clearTimeout(timeoutId);
-  }, [status, clearSession]);
+  }, [status, user, tokenRevision]);
 
   // 2. Lắng nghe sự kiện hết phiên phát ra từ tầng HTTP.
   useEffect(
@@ -119,6 +120,29 @@ export function AuthProvider({ children }) {
     return () => channel.removeEventListener("message", onMessage);
   }, [clearSession]);
 
+  const completeAuthentication = useCallback((response, fallbackUser) => {
+    if (!response?.accessToken) throw new Error("Máy chủ không trả về access token hợp lệ.");
+    const responseUser = response.user;
+    const nextUser = responseUser
+      ? {
+          id: responseUser.id,
+          name: responseUser.fullName ?? responseUser.full_name ?? responseUser.name ?? "",
+          email: responseUser.email ?? "",
+          avatarUrl: responseUser.avatarUrl ?? responseUser.avatar_url ?? null,
+          roles: responseUser.roles ?? (responseUser.role ? [responseUser.role] : []),
+        }
+      : fallbackUser;
+    if (!nextUser) throw new Error("Máy chủ không trả về thông tin người dùng.");
+
+    tokenStore.set(response.accessToken);
+    refreshTokenStore.set(response.refreshToken ?? null);
+    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    setUser(nextUser);
+    setStatus("authenticated");
+    channel?.postMessage({ type: "login" });
+    return nextUser;
+  }, []);
+
   const login = useCallback(async (email, password) => {
     const response = await api.post(
       "/api/auth/login",
@@ -128,18 +152,19 @@ export function AuthProvider({ children }) {
       },
       { skipAuth: true },
     );
-    const nextUser = {
+    const fallbackUser = {
       id: response.userId,
       name: response.fullName,
       email: response.email,
       roles: [],
     };
-    tokenStore.set(response.accessToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-    setUser(nextUser);
-    setStatus("authenticated");
-    channel?.postMessage({ type: "login" });
-  }, []);
+    return completeAuthentication(response, fallbackUser);
+  }, [completeAuthentication]);
+
+  const googleLogin = useCallback(async (idToken) => {
+    const response = await api.post("/api/auth/google", { idToken }, { skipAuth: true });
+    completeAuthentication(response);
+  }, [completeAuthentication]);
 
   const register = useCallback(async (profile) => {
     await api.post(
@@ -167,11 +192,12 @@ export function AuthProvider({ children }) {
       user,
       registeredUser,
       login,
+      googleLogin,
       register,
       logout,
       hasRole: (role) => !!user?.roles?.includes(role),
     }),
-    [status, user, registeredUser, login, register, logout],
+    [status, user, registeredUser, login, googleLogin, register, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

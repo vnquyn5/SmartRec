@@ -207,14 +207,57 @@ a {
   margin-bottom: auto;
 }
 
-.google-button {
+.google-button-wrap {
+  position: relative;
+  height: 41px;
+  border: 1px solid #283653;
+  border-radius: 14px;
+  background: #171e33;
+  box-shadow: 0 0 0 1px rgba(72, 94, 137, 0.12);
+  overflow: hidden;
+}
+
+.google-gis-button {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.001;
+  cursor: pointer;
+}
+
+.google-button-visual {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 12px;
+  color: #f8f9ff;
+  font-size: 16px;
+  font-weight: 750;
+  pointer-events: none;
 }
 
 .google-icon {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
+}
+
+.google-login-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #171e33;
+  border: 1px solid #283653;
+  border-radius: 14px;
+  color: #fff;
+  font-weight: 800;
+  pointer-events: none;
 }
 
 .auth-divider {

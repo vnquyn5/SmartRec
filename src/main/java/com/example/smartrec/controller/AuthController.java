@@ -1,7 +1,7 @@
 package com.example.smartrec.controller;
 
 import com.example.smartrec.service.AuthService;
-import com.example.smartrec.service.impl.AuthServiceImpl;
+
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,7 +41,7 @@ public class AuthController {
 
     @PostMapping("/google")
     public ResponseEntity<AuthResponse> googleLogin(
-            @RequestBody GoogleLoginRequest request) {
+            @Valid  @RequestBody GoogleLoginRequest request) {
 
         AuthResponse response = authService.googleLogin(request);
 
