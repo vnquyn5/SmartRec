@@ -33,15 +33,15 @@ public class SpeakerSegment {
     private UUID id;
 
     @Column(name = "meeting_id", nullable = false)
-    private UUID meeting_id;
+    private UUID meetingId;
 
     @Column(name = "speaker_label", nullable = false, length = 100)
-    private String speaker_label;
+    private String speakerLabel;
 
     @Column(name = "start_time", nullable = false)
-    private Double start_time;
+    private Double startTime;
 
     @Column(name = "end_time", nullable = false)
-    private Double end_time;
+    private Double endTime;
 
 }
