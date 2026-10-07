@@ -129,8 +129,7 @@ const RegisterForm = () => {
       await register(values);
       navigate("/login", {
         state: {
-          authNotice:
-            "Đăng ký tài khoản thành công. Vui lòng đăng nhập để tiếp tục.",
+          authNotice: "Đăng ký tài khoản thành công. Đăng nhập để tiếp tục.",
         },
       });
     } catch (error) {
