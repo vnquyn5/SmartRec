@@ -6,7 +6,9 @@ import "./WorkspacePage.css";
 const mockData = [
   {
     id: 1,
-    title: "Q4 Planning Session Final",
+    title: "Q4_Planning_Session_Final.mp4",
+    fileName: "Q4_Planning_Session_Final.mp4",
+    fileType: "video",
     createdAt: "2023-10-24T10:30:00",
     duration: 1710, // 28:30
     thumbnailUrl:
@@ -14,15 +16,19 @@ const mockData = [
   },
   {
     id: 2,
-    title: "Engineering Weekly Sync",
+    title: "BING_Official_Audio.mp3",
+    fileName: "BING_Official_Audio.mp3",
+    fileType: "audio",
     createdAt: "2023-10-22T09:00:00",
     duration: 2712, // 45:12
     thumbnailUrl:
-      "https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=600&q=80",
+      "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
   },
   {
     id: 3,
-    title: "New Product Demo v2.0",
+    title: "New_Product_Demo_v2.0.mp4",
+    fileName: "New_Product_Demo_v2.0.mp4",
+    fileType: "video",
     createdAt: "2023-10-19T14:45:00",
     duration: 725, // 12:05
     thumbnailUrl:
@@ -30,7 +36,9 @@ const mockData = [
   },
   {
     id: 4,
-    title: "Marketing Strategy Brainstorm",
+    title: "Marketing_Strategy_Brainstorm.mp3",
+    fileName: "Marketing_Strategy_Brainstorm.mp3",
+    fileType: "audio",
     createdAt: "2023-10-18T11:15:00",
     duration: 1940, // 32:20
     thumbnailUrl:
@@ -38,7 +46,9 @@ const mockData = [
   },
   {
     id: 5,
-    title: "UX Design Review - Mobile",
+    title: "UX_Design_Review_Mobile.mp4",
+    fileName: "UX_Design_Review_Mobile.mp4",
+    fileType: "video",
     createdAt: "2023-10-15T16:30:00",
     duration: 3490, // 58:10
     thumbnailUrl:
@@ -103,8 +113,8 @@ const WorkspacePage = () => {
     alert("Meeting link copied to clipboard!");
   };
 
-  const handleViewInsights = (id) => {
-    navigate(`/meeting/${id}`);
+  const handleViewInsights = (meeting) => {
+    navigate(`/meeting/${meeting.id}`, { state: { meeting } });
   };
 
   const handleAddAnother = () => {
@@ -183,7 +193,7 @@ const WorkspacePage = () => {
               <div
                 key={meeting.id}
                 className="meeting-card"
-                onClick={() => handleViewInsights(meeting.id)}
+                onClick={() => handleViewInsights(meeting)}
               >
                 <div className="meeting-card-thumbnail">
                   {meeting.thumbnailUrl ? (
@@ -287,7 +297,7 @@ const WorkspacePage = () => {
                       className="btn-action btn-insights"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleViewInsights(meeting.id);
+                        handleViewInsights(meeting);
                       }}
                     >
                       Xem chi tiết

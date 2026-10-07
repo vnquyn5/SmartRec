@@ -305,7 +305,7 @@ export default function SpeakerManagementPanel({
           </p>
         </div>
 
-        <span className="text-xs font-semibold px-3 py-1 rounded-full bg-[#16203a] text-[#38bdf8] border border-[#25355e] self-start sm:self-auto">
+        <span className="text-xs font-semibold px-3 py-1 rounded-full bg-[#16203a] text-[#38bdf8] border border-[#25355e] whitespace-nowrap shrink-0 self-start sm:self-auto">
           {initialSpeakers.length} Speakers
         </span>
       </div>

@@ -1,71 +1,30 @@
-import React, { useState } from 'react';
-import AudioAiStatus from './AudioAiStatus';
-import SpeakerList from './SpeakerList';
-import SpeakerManagementPanel from './SpeakerManagementPanel';
-import RenameSpeakerModal from './RenameSpeakerModal';
+import React from 'react';
+import MeetingVideoPlayer from './MeetingVideoPlayer';
+import MeetingTabs from './MeetingTabs';
 
 export default function MeetingDetail({ 
-  audioAiStatus = 'completed', 
+  fileType = 'video', 
   speakers = [],
-  onRetryAudioAi,
   onSaveSpeakers 
 }) {
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState(speakers[0]?.id || '1');
-  const [activeModalSpeaker, setActiveModalSpeaker] = useState(null);
-
-  const handleOpenRename = (speaker) => {
-    setActiveModalSpeaker(speaker);
-  };
-
-  const handleCloseRename = () => {
-    setActiveModalSpeaker(null);
-  };
-
-  const handleApplyRename = (speakerId, newName, applyToAll) => {
-    if (onSaveSpeakers) {
-      const updated = speakers.map(s => 
-        s.id === speakerId ? { ...s, name: newName } : s
-      );
-      onSaveSpeakers(updated);
-    }
-  };
+  const [currentVideoTime, setCurrentVideoTime] = React.useState('12:45');
 
   return (
-    <div className="w-full space-y-6">
-      {/* 1. Audio AI Status Banner */}
-      <AudioAiStatus status={audioAiStatus} onRetry={onRetryAudioAi} />
-      
-      {/* 2. Main Two-Column Layout */}
-      {audioAiStatus !== 'failed' && (
-        <div className="flex flex-col lg:flex-row gap-6 items-start">
-          {/* Left Column: Speaker Sidebar (~280px) */}
-          <div className="w-full lg:w-72 shrink-0">
-            <SpeakerList
-              status={audioAiStatus}
-              speakers={speakers}
-              selectedSpeakerId={selectedSpeakerId}
-              onSelectSpeaker={setSelectedSpeakerId}
-              onOpenRename={handleOpenRename}
-            />
-          </div>
+    <div className="w-full h-full flex flex-col xl:flex-row gap-5 items-stretch pb-6">
+      {/* CỘT TRÁI: Video Player */}
+      <div className="w-full xl:w-[48%] flex flex-col gap-4">
+        <MeetingVideoPlayer currentTime={currentVideoTime} duration="28:30" />
+      </div>
 
-          {/* Right Column: Speaker Segments / History Panel */}
-          <div className="flex-1 w-full min-w-0">
-            <SpeakerManagementPanel
-              initialSpeakers={speakers}
-              onSave={onSaveSpeakers}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* 3. Rename Speaker Modal (matching Figma) */}
-      <RenameSpeakerModal
-        isOpen={Boolean(activeModalSpeaker)}
-        speaker={activeModalSpeaker}
-        onClose={handleCloseRename}
-        onApply={handleApplyRename}
-      />
+      {/* CỘT PHẢI: Hệ thống Tabs (AI Summary, Task, Speaker, Slide Keyframes) */}
+      <div className="w-full xl:w-[52%] flex flex-col min-h-[500px]">
+        <MeetingTabs 
+          fileType={fileType} 
+          speakers={speakers}
+          onSaveSpeakers={onSaveSpeakers}
+          onSeek={(time) => setCurrentVideoTime(time)}
+        />
+      </div>
     </div>
   );
 }
