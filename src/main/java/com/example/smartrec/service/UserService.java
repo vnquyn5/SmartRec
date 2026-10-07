@@ -2,6 +2,8 @@ package com.example.smartrec.service;
 
 import com.example.smartrec.model.dto.ChangePassWordRequest;
 import com.example.smartrec.model.dto.UpdateUserProfileRequest;
+import java.util.UUID;
+
 import com.example.smartrec.model.dto.UserProfileReponse;
 
 public interface UserService {
@@ -12,3 +14,5 @@ public interface UserService {
     void changePassword(ChangePassWordRequest request);
 
 }
+    
+

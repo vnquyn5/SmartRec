@@ -69,6 +69,10 @@ public class User {
     @Column(name = "is_active")
     private Boolean is_active = true;
 
+    @Builder.Default
+    @Column(name = "token_version", nullable = false)
+    private Long token_version = 0L;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant created_at;
@@ -79,7 +83,7 @@ public class User {
 
     @Column(name = "delete_at")
     private Instant delete_at;
-
+    
     @PrePersist
     public void generateUserCodeIfNeeded() {
         if (userCode == null || userCode.isBlank()) {
@@ -89,3 +93,4 @@ public class User {
         }
     }
 }
+

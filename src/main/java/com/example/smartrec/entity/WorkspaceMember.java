@@ -15,16 +15,16 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-@Entity
+@Entity 
 @Table (name = "workspace_members")
-@Setter
-@Getter
+@Setter 
+@Getter 
 @Builder
-@AllArgsConstructor
-@NoArgsConstructor
+@AllArgsConstructor 
+@NoArgsConstructor 
 public class WorkspaceMember {
 
-    @Id
+    @Id 
     @GeneratedValue (strategy = GenerationType.UUID)
     private UUID id;
 
@@ -39,5 +39,4 @@ public class WorkspaceMember {
 
     @Column (name = "joined_at")
     private Instant joinedAt;
-
 }

@@ -56,6 +56,7 @@ public class SecurityConfig {
                 .requestMatchers("/upload/resume").authenticated()
                 .requestMatchers("/upload/cancel").authenticated()
                 .requestMatchers("/jobs", "/jobs/**").authenticated()
+                .requestMatchers("/api/user/me","/api/user/change-password").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

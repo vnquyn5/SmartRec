@@ -9,7 +9,5 @@ import com.example.smartrec.entity.WorkspaceMember;
 
 
 public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember,UUID> {
-
-
     Optional<WorkspaceMember> findByUserId(UUID userId);
 }

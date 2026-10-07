@@ -14,15 +14,20 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.example.smartrec.entity.User;
+import com.example.smartrec.repository.UserRepository;
+
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService,UserRepository userRepository) {
         this.jwtService = jwtService;
+        this.userRepository=userRepository;
     }
 
     @Override
@@ -42,6 +47,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (SecurityContextHolder.getContext().getAuthentication() == null
                     && jwtService.isTokenValid(token)) {
                 Claims claims = jwtService.parseClaims(token);
+                String email = claims.getSubject();
+
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() ->
+                                new RuntimeException("User not found"));
+
+                long tokenVersion =
+                        jwtService.extractTokenVersion(claims);
+
+                if (tokenVersion != user.getToken_version()) {
+
+                    SecurityContextHolder.clearContext();
+
+                    filterChain.doFilter(request, response);
+                    return;
+                }
                 var authorities = jwtService.extractRoles(claims).stream()
                         .map(SimpleGrantedAuthority::new)
                         .toList();
