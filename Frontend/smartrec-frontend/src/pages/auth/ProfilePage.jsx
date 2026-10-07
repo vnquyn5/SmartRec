@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../../api/axiosClient";
 import {
   isPasswordValid,
@@ -548,14 +548,14 @@ const ProfilePage = () => {
       <aside className="profile-sidebar">
         <div className="profile-sidebar-top">
           {/* Brand */}
-          <div className="sidebar-brand">
+          <Link to="/" className="sidebar-brand">
             <div className="auth-logo-mark">
               <span />
             </div>
             <strong>
               Smart<span>Rec</span>
             </strong>
-          </div>
+          </Link>
 
           {/* Settings section label */}
           <div className="profile-sidebar-label">CÀI ĐẶT</div>
@@ -585,10 +585,6 @@ const ProfilePage = () => {
         <header className="topbar">
           <div style={{ flex: 1 }} />
           <div className="topbar-right">
-            <button className="profile-home-btn" onClick={() => navigate("/")}>
-              {icons.home}
-              <span>Về trang chủ</span>
-            </button>
             <div className="topbar-avatar">
               {displayUser.avatar ? (
                 <img

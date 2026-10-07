@@ -140,7 +140,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
             <SpeakerManagementPanel initialSpeakers={speakers} onSave={onSaveSpeakers} />
           </div>
         )}
-        {activeTab === 'slide' && <SlideOcrTab />}
+        {activeTab === 'slide' && <SlideOcrTab onSeek={onSeek} />}
       </div>
     </div>
   );

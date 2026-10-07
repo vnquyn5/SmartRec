@@ -1,5 +1,5 @@
 import React from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 
 const navItems = [
@@ -157,14 +157,14 @@ const Sidebar = () => {
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <div className="sidebar-brand">
+        <Link to="/" className="sidebar-brand">
           <div className="auth-logo-mark">
             <span />
           </div>
           <strong>
             Smart<span>Rec</span>
           </strong>
-        </div>
+        </Link>
 
         <nav className="sidebar-nav">
           {navItems.map((item) => (

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function SlideOcrTab() {
+export default function SlideOcrTab({ onSeek }) {
   const slides = [
     {
       id: 1,
@@ -125,7 +125,9 @@ export default function SlideOcrTab() {
         {slides.map((slide) => (
           <div
             key={slide.id}
-            className="w-full bg-[#0d1526] hover:bg-[#111a30] border border-[#1b2742] hover:border-[#2a3b63] rounded-2xl p-4 flex gap-4 transition shadow-sm"
+            onClick={() => onSeek && onSeek(slide.time)}
+            className="w-full bg-[#0d1526] hover:bg-[#111a30] border border-[#1b2742] hover:border-[#2a3b63] rounded-2xl p-4 flex gap-4 transition shadow-sm cursor-pointer group"
+            title={`Tua đến ${slide.time}`}
           >
             {/* Thumbnail Preview with Timestamp */}
             <div className="relative w-28 h-20 rounded-xl bg-[#080d19] border border-[#1a253d] shrink-0 flex items-center justify-center overflow-hidden">
