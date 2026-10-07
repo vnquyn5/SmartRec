@@ -6,7 +6,6 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.core.task.TaskExecutor;
@@ -603,17 +602,6 @@ public class FileServiceImpl implements FileService {
             throw new BusinessException(HttpStatus.PAYLOAD_TOO_LARGE, "ERR_FILE_TOO_LARGE", "File không vượt quá 2GB");
         }
         normalizeMimeType(mimeType);
-    }
-
-    private void rejectDuplicate(UUID userId, String safeFileName, Long fileSize) {
-        List<MediaFile> duplicates = mediaFileRepository.findActiveDuplicates(userId, safeFileName, fileSize);
-        if (!duplicates.isEmpty()) {
-            MediaFile existing = duplicates.get(0);
-            throw new BusinessException(
-                    HttpStatus.CONFLICT,
-                    "FILE_ALREADY_EXISTS",
-                    "File đã có trong hệ thống: " + existing.getOriginal_name());
-        }
     }
 
     private UploadDuplicateCheckResponse toDuplicateResponse(MediaFile existing) {

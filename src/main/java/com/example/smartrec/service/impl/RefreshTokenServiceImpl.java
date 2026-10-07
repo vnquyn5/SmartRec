@@ -1,9 +1,7 @@
 package com.example.smartrec.service.impl;
 
-import java.beans.Transient;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -18,10 +16,9 @@ import com.example.smartrec.service.RefreshTokenService;
 
 import io.jsonwebtoken.JwtException;
 
-import org.springframework.beans.factory.annotation.Value;
 
 import org.springframework.transaction.annotation.Transactional;
-import lombok.Builder;
+
 
 import lombok.RequiredArgsConstructor;
 

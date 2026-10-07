@@ -19,7 +19,6 @@ import lombok.RequiredArgsConstructor;
 @Service 
 @RequiredArgsConstructor 
 public class MeetingSpeakerServiceImpl implements MeetingSpeakerService {
-    private final MeetingServiceImpl meetingServiceImpl;
     private final MeetingRepository meetingRepository;
     private final SpeakerSegmentRepository speakerSegmentRepository;
 

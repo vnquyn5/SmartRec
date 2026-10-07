@@ -1,7 +1,6 @@
 package com.example.smartrec.entity;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.hibernate.annotations.CreationTimestamp;

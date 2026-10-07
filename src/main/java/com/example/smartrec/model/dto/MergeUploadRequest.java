@@ -1,8 +1,5 @@
 package com.example.smartrec.model.dto;
 
-import java.util.UUID;
-
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data 

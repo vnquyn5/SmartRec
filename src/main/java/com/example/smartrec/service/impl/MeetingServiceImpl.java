@@ -37,7 +37,6 @@ import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.MeetingService;
-import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MinioService;
 
 import lombok.RequiredArgsConstructor;

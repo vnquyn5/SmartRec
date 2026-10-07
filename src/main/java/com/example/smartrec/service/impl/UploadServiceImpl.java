@@ -1,9 +1,5 @@
 package com.example.smartrec.service.impl;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -23,10 +19,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.example.smartrec.controller.AuthController;
 import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.Meeting;
@@ -48,7 +42,6 @@ import com.example.smartrec.repository.UploadSessionRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.ChunkMergeAsyncService;
 import com.example.smartrec.service.ChunkMergeAsyncService.MergeJob;
-import com.example.smartrec.service.DurationValidationService;
 import com.example.smartrec.service.MinioService;
 import com.example.smartrec.service.UploadService;
 import com.example.smartrec.service.UploadSessionRedisService;
@@ -61,7 +54,6 @@ public class UploadServiceImpl implements UploadService {
         private static final Logger log = LoggerFactory.getLogger(UploadServiceImpl.class);
         private static final Map<UUID, Object> UPLOAD_SESSION_LOCKS = new ConcurrentHashMap<>();
         private static final Set<UUID> FINALIZATION_IN_FLIGHT = ConcurrentHashMap.newKeySet();
-        private final AuthController authController;
         private final UserRepository userRepository;
         private final UploadSessionRepository uploadSessionRepository;
         private final MediaFileRepository mediaFileRepository;
@@ -70,7 +62,6 @@ public class UploadServiceImpl implements UploadService {
         private final MinioService minioService;
         private final DataSource dataSource;
         private final ChunkMergeAsyncService chunkMergeAsyncService;
-        private final DurationValidationService durationValidationService;
 
         // chunk =5 MB
         private static final long CHUNK_SIZE = 5l * 1024 * 1024;
@@ -1404,13 +1395,16 @@ public class UploadServiceImpl implements UploadService {
                 if (!missingChunks.isEmpty()
                                 && persistentSession.getStatus() == UploadSessionStatus.READY_TO_MERGE) {
                         UploadSessionStatus oldPersistentStatus = persistentSession.getStatus();
+                        int reconciledReceivedChunks = totalChunks != null
+                                        ? totalChunks - missingChunks.size()
+                                        : 0;
                         persistentSession.setStatus(UploadSessionStatus.UPLOADING);
-                        persistentSession.setReceivedChunks(totalChunks - missingChunks.size());
+                        persistentSession.setReceivedChunks(reconciledReceivedChunks);
                         uploadSessionRepository.save(persistentSession);
                         if (session != null) {
                                 UploadSessionStatus oldRedisStatus = session.getStatus();
                                 session.setStatus(UploadSessionStatus.UPLOADING);
-                                session.setReceivedChunks(totalChunks - missingChunks.size());
+                                session.setReceivedChunks(reconciledReceivedChunks);
                                 uploadSessionRedisService.save(session);
                                 logStatusTransition(
                                                 "status-redis-missing-reconcile",
@@ -1421,7 +1415,7 @@ public class UploadServiceImpl implements UploadService {
                                                 session.getTotalChunks(),
                                                 redisUploadedCount);
                         }
-                        receivedChunks = totalChunks - missingChunks.size();
+                        receivedChunks = reconciledReceivedChunks;
                         logStatusTransition(
                                         "status-postgres-missing-reconcile",
                                         uploadSessionId,
@@ -1485,34 +1479,5 @@ public class UploadServiceImpl implements UploadService {
                 return (System.nanoTime() - startedAtNanos) / 1_000_000;
         }
         
-        private void validateMediaDuration(String objectKey){
-                Path temFile=null; // luu bien duong dan cua file tam
-                try {
-                        // dow file hoan chinh tu mini
-                        InputStream inputStream= minioService.downloadObject(objectKey);// goi miniSer dee lay file tu mini
-                        // tao file tam thoi
-                        temFile = Files.createTempFile("smartrec-",".media");
-                                  // file doc tu mini            // neu file dit dã ton tai
-                        Files.copy(inputStream, temFile,StandardCopyOption.REPLACE_EXISTING);
-                        durationValidationService.validateDuration(temFile.toString());// dunng ff de kiem tra duration va chuyen path thanh string de truyn cho sevice
-                }catch(BusinessException e){
-                        throw e;
-                }catch (Exception e) {
-                        // kh tao dc file tam,k copy dc file,k doc inputStream,..
-                        throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_MEDIA_METADATA_READ_FAILED", "Không thể kiểm tra metadata của media");
-                }finally{
-                        // xoa file tam
-                        if(temFile!=null){
-                                try {
-                                       Files.deleteIfExists(temFile); // xoa file tam
-                                } catch (Exception ignored) {
-                                        // neu xoa file tam that bai thi bo qua 
-                                        // khong lam reuest chinh bi xong
-                                }
-                                
-                        }
-                }
-
-        }
 
 }

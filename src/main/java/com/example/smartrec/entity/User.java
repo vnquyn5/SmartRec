@@ -66,6 +66,7 @@ public class User {
     @Column(name = "position")
     private String position;
 
+    @Builder.Default
     @Column(name = "is_active")
     private Boolean is_active = true;
 

@@ -2,7 +2,6 @@ package com.example.smartrec.service.impl;
 
 import java.util.UUID;
 
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 

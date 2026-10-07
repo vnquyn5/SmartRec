@@ -65,7 +65,7 @@ public class JwtServiceImpl implements JwtService {
 
         return extractClaim(
                 token,
-                Claims::getSubject
+                claims -> claims.getSubject()
         );
     }
 
@@ -93,7 +93,7 @@ public class JwtServiceImpl implements JwtService {
 
         Date expirationDate = extractClaim(
                 token,
-                Claims::getExpiration
+                claims -> claims.getExpiration()
         );
 
         return expirationDate.before(new Date());

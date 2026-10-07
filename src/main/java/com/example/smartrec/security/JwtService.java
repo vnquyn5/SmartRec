@@ -44,7 +44,6 @@ public class JwtService {
         return 0L;
     }
 
-    @SuppressWarnings("unchecked")
     public List<String> extractRoles(Claims claims) {
         Object roles = claims.get("roles");
         if (roles instanceof List<?>) {

@@ -63,8 +63,10 @@ class ChunkUploadTimingTest {
                 com.example.smartrec.entity.UploadSession.builder().id(id).userId(user.getId())
                         .receivedChunks(553).totalChunks(553).status(UploadSessionStatus.UPLOADING).build()));
         MinioService minio = mock(MinioService.class);
-        UploadServiceImpl service = new UploadServiceImpl(null, users, sessions, null, null,
-                new UploadSessionRedisServiceImpl(template), minio, null, mock(ChunkMergeAsyncService.class), null);
+        UploadSessionRedisService redisService = new UploadSessionRedisServiceImpl(template);
+        UploadServiceImpl service = new UploadServiceImpl(
+                null, users, sessions, null, null,
+                redisService, minio, null, mock(ChunkMergeAsyncService.class), null, null);
         MockMvcBuilders.standaloneSetup(new UploadController(service, mock(FileService.class))).build()
                 .perform(get("/upload/status").param("uploadSessionId", id.toString()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.receivedChunks").value(552))

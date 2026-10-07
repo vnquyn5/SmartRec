@@ -3,7 +3,6 @@ package com.example.smartrec.service;
 import java.util.UUID;
 
 import com.example.smartrec.model.UploadSession;
-import com.example.smartrec.model.dto.ChunkUploadRequest;
 
 public interface UploadSessionRedisService {
     void save(UploadSession session);
