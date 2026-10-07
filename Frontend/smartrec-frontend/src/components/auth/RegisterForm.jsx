@@ -94,12 +94,22 @@ const RegisterForm = () => {
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    const nextValue =
+    let nextValue =
       name === "fullName"
         ? formatFullName(value)
         : name === "phone"
           ? value.replace(/\D/g, "").slice(0, 10)
           : value;
+
+    if (name === "email") {
+      nextValue = nextValue.replace(/\s/g, "");
+    } else if (name === "password" || name === "confirmPassword") {
+      nextValue = nextValue.replace(/\s/g, "");
+    }
+
+    if (name === "fullName") {
+      nextValue = nextValue.trimStart();
+    }
 
     setValues((current) => ({ ...current, [name]: nextValue }));
     setErrors((current) => ({ ...current, [name]: "" }));
@@ -146,6 +156,7 @@ const RegisterForm = () => {
         onChange={handleChange}
         maxLength={50}
         autoComplete="name"
+        autoCapitalize="words"
       />
       <Input
         id="register-phone"
@@ -158,6 +169,8 @@ const RegisterForm = () => {
         onChange={handleChange}
         maxLength={10}
         autoComplete="tel"
+        inputMode="numeric"
+        pattern="[0-9]*"
       />
       <Input
         id="register-email"
@@ -168,8 +181,35 @@ const RegisterForm = () => {
         value={values.email}
         error={errors.email}
         onChange={handleChange}
+        onBeforeInput={(event) => {
+          if (/\s/.test(event.data || "")) {
+            event.preventDefault();
+          }
+        }}
+        onPaste={(event) => {
+          const pastedText = event.clipboardData.getData("text");
+          if (!/\s/.test(pastedText)) return;
+
+          event.preventDefault();
+          const input = event.currentTarget;
+          const start = input.selectionStart;
+          const end = input.selectionEnd;
+          const cleanText = pastedText.replace(/\s/g, "");
+          const nextValue =
+            input.value.slice(0, start) + cleanText + input.value.slice(end);
+          setValues((current) => ({ ...current, email: nextValue }));
+          setErrors((current) => ({ ...current, email: "" }));
+          requestAnimationFrame(() => {
+            input.setSelectionRange(
+              start + cleanText.length,
+              start + cleanText.length,
+            );
+          });
+        }}
         maxLength={50}
         autoComplete="email"
+        autoCapitalize="none"
+        spellCheck={false}
       />
       <Input
         id="register-password"
