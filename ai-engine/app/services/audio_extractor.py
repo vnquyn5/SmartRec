@@ -64,6 +64,8 @@ class AudioExtractorService:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=180
         )
         if result.returncode != 0:

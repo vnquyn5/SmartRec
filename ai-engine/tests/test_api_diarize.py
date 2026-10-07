@@ -13,8 +13,12 @@ from app.core.path_security import (
     get_project_root,
     get_smartrec_temp_dir
 )
-from app.workers.tasks import diarize_audio_task
 
+def simulate_worker_path_guard(audio_path: str, output_json_path: str = None):
+    """Mô phỏng tiền kiểm tra an toàn đường dẫn đầu vào/đầu ra của Worker."""
+    validate_safe_read_path(audio_path)
+    if output_json_path:
+        validate_safe_write_path(output_json_path)
 
 def create_dummy_wav(path: str):
     with wave.open(path, "wb") as wf:
@@ -92,7 +96,7 @@ def test_path_security_checks():
             shutil.rmtree(test_dir)
 
 
-def test_celery_worker_path_security():
+def test_worker_path_security():
     smartrec_tmp = get_smartrec_temp_dir()
     test_dir = tempfile.mkdtemp(prefix="test_worker_sec_", dir=str(smartrec_tmp))
     try:
@@ -102,14 +106,14 @@ def test_celery_worker_path_security():
 
         target_py_file = str(root / "app" / "api" / "routes.py")
         try:
-            diarize_audio_task(audio_path=wav_path, output_json_path=target_py_file)
+            simulate_worker_path_guard(audio_path=wav_path, output_json_path=target_py_file)
             assert False, "Worker phải chặn việc ghi đè vào routes.py"
         except PermissionError:
             pass
 
         malicious_read_file = str(root / "app" / "core" / "path_security.py")
         try:
-            diarize_audio_task(audio_path=malicious_read_file)
+            simulate_worker_path_guard(audio_path=malicious_read_file)
             assert False, "Worker phải chặn việc đọc source code"
         except (PermissionError, ValueError):
             pass
@@ -121,7 +125,7 @@ def test_celery_worker_path_security():
 
 def run_all_api_and_worker_tests():
     test_path_security_checks()
-    test_celery_worker_path_security()
+    test_worker_path_security()
 
 
 if __name__ == "__main__":

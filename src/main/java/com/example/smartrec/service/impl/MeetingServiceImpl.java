@@ -95,34 +95,44 @@ public class MeetingServiceImpl implements MeetingService {
         mediaFileRepository.delete(mediaFile);
     }
 
-        @Override
-        @Transactional
-        public MeetingResponseDTO renameMeeting(UUID meetingId, RenameFileRequest request) {
+    @Override
+    @Transactional
+    public MeetingResponseDTO renameMeeting(UUID meetingId, RenameFileRequest request) {
         User currentUser = getCurrentUser();
         Meeting meeting = meetingRepository.findById(meetingId)
-            .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
-            .orElseThrow(() -> new ResourceNotFoundException(
-                "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
+                .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
 
         String fileName = request == null || request.getFileName() == null
-            ? ""
-            : request.getFileName().trim();
+                ? ""
+                : request.getFileName().trim();
         if (fileName.isBlank() || fileName.length() > 500
-            || !fileName.matches("[A-Za-z0-9._-]+")
-            || !(fileName.toLowerCase().endsWith(".mp3")
-                || fileName.toLowerCase().endsWith(".mp4")
-                || fileName.toLowerCase().endsWith(".m4a")
-                || fileName.toLowerCase().endsWith(".mkv"))) {
+                || !fileName.matches("[A-Za-z0-9._-]+")
+                || !(fileName.toLowerCase().endsWith(".mp3")
+                        || fileName.toLowerCase().endsWith(".mp4")
+                        || fileName.toLowerCase().endsWith(".m4a")
+                        || fileName.toLowerCase().endsWith(".mkv"))) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILENAME", "Tên file không hợp lệ");
         }
 
         MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id())
-            .orElseThrow(() -> new ResourceNotFoundException(
-                "MEDIA_FILE_NOT_FOUND", "Không tìm thấy file của cuộc họp"));
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "MEDIA_FILE_NOT_FOUND", "Không tìm thấy file của cuộc họp"));
         mediaFile.setOriginal_name(fileName);
         mediaFileRepository.save(mediaFile);
         return toResponse(meeting);
-        }
+    }
+
+    @Override
+    public MeetingResponseDTO getMeeting(UUID id) {
+        User currentUser = getCurrentUser();
+        Meeting meeting = meetingRepository.findById(id)
+                .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
+        return toResponse(meeting);
+    }
 
     private MeetingResponseDTO toResponse(Meeting meeting) {
         MediaFile mediaFile = mediaFileRepository.findById(meeting.getMedia_file_id()).orElse(null);

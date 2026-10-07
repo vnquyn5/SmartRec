@@ -16,75 +16,115 @@ import java.util.function.Function;
 @Service
 public class JwtServiceImpl implements JwtService {
 
-    private final SecretKey secretKey;
-    private final long expiration;
+        private final SecretKey secretKey;
+        private final long expiration;
+        private final long refreshExpiration;
 
-    public JwtServiceImpl(
-            @Value("${jwt.secret}") String secret,
-            @Value("${jwt.expiration}") long expiration) {
-        this.secretKey = Keys.hmacShaKeyFor(
-                secret.getBytes(StandardCharsets.UTF_8));
+        public JwtServiceImpl(
+                        @Value("${jwt.secret}") String secret,
+                        @Value("${jwt.expiration}") long expiration,
+                        @Value("${jwt.refresh-expiration}") long refreshExpiration) {
+                this.secretKey = Keys.hmacShaKeyFor(
+                                secret.getBytes(StandardCharsets.UTF_8));
 
-        this.expiration = expiration;
-    }
+                this.expiration = expiration;
+                this.refreshExpiration = refreshExpiration;
+        }
 
-    @Override
-    public String generateToken(User user) {
+        @Override
+        public String generateToken(User user) {
 
-        Date now = new Date();
+                Date now = new Date();
 
-        Date expirationDate = new Date(
-                now.getTime() + expiration);
+                Date expirationDate = new Date(
+                                now.getTime() + expiration);
 
-        String subject = user.getEmail() != null ? user.getEmail() : user.getPhone();
+                String subject = user.getEmail() != null ? user.getEmail() : user.getPhone();
 
-        return Jwts.builder()
-                .setSubject(subject)
-                .claim("userId", user.getId().toString())
-                .claim("fullName", user.getFull_name())
-                .setIssuedAt(now)
-                .setExpiration(expirationDate)
-                .signWith(secretKey)
-                .compact();
-    }
+                return Jwts.builder()
+                                .setSubject(subject)
+                                .claim("userId", user.getId().toString())
+                                .claim("fullName", user.getFull_name())
+                                .claim("type", "access")
+                                .setIssuedAt(now)
+                                .setExpiration(expirationDate)
+                                .signWith(secretKey)
+                                .compact();
+        }
 
-    @Override
-    public String extractEmail(String token) {
+        @Override
+        public String extractEmail(String token) {
 
-        return extractClaim(
-                token,
-                Claims::getSubject);
-    }
+                return extractClaim(
+                                token,
+                                Claims::getSubject);
+        }
 
-    @Override
-    public boolean isTokenValid(String token, User user) {
+        @Override
+        public boolean isTokenValid(String token, User user) {
 
-        String email = extractEmail(token);
+                String email = extractEmail(token);
 
-        return email.equals(user.getEmail())
-                && !isTokenExpired(token);
-    }
+                return email.equals(user.getEmail())
+                                && !isTokenExpired(token);
+        }
 
-    private boolean isTokenExpired(String token) {
+        private boolean isTokenExpired(String token) {
 
-        Date expirationDate = extractClaim(
-                token,
-                Claims::getExpiration);
+                Date expirationDate = extractClaim(
+                                token,
+                                Claims::getExpiration);
 
-        return expirationDate.before(new Date());
-    }
+                return expirationDate.before(new Date());
+        }
 
-    private <T> T extractClaim(
-            String token,
-            Function<Claims, T> claimsResolver) {
+        private <T> T extractClaim(
+                        String token,
+                        Function<Claims, T> claimsResolver) {
 
-        Claims claims = Jwts.parserBuilder()
-                .setSigningKey(secretKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
+                Claims claims = Jwts.parserBuilder()
+                                .setSigningKey(secretKey)
+                                .build()
+                                .parseClaimsJws(token)
+                                .getBody();
 
-        return claimsResolver.apply(claims);
-    }
+                return claimsResolver.apply(claims);
+        }
+
+        @Override
+        public boolean isRefreshTokenValid(String token, User user) {
+
+                String email = extractEmail(token);
+
+                String tokenType = extractClaim(
+                                token,
+                                claims -> claims.get("type", String.class));
+
+                return email.equals(user.getEmail())
+                                && "refresh".equals(tokenType)
+                                && !isTokenExpired(token);
+        }
+
+        @Override
+        public String generateRefreshToken(User user) {
+
+                Date now = new Date();
+
+                Date expirationDate = new Date(
+                                now.getTime() + refreshExpiration);
+
+                String subject = user.getEmail() != null
+                                ? user.getEmail()
+                                : user.getPhone();
+
+                return Jwts.builder()
+                                .setSubject(subject)
+                                .claim("userId", user.getId().toString())
+                                .claim("type", "refresh")
+                                .setIssuedAt(now)
+                                .setExpiration(expirationDate)
+                                .signWith(secretKey)
+                                .compact();
+        }
 
 }

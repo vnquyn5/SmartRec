@@ -26,28 +26,35 @@ public class SecurityConfig {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
     }
 
-    @Bean 
-    public PasswordEncoder PasswordEncoder(){
-        return  new BCryptPasswordEncoder();
+    @Bean
+    public PasswordEncoder PasswordEncoder() {
+        return new BCryptPasswordEncoder();
 
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.disable())
-            .cors(org.springframework.security.config.Customizer.withDefaults())
-            .formLogin(form -> form.disable())
-            .httpBasic(basic -> basic.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/register","/api/auth/login").permitAll()
-                .requestMatchers("/meetings/upload").authenticated()
-                .requestMatchers("/meetings", "/meetings/**").authenticated()
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
-        
+                .csrf(csrf -> csrf.disable())
+                .cors(org.springframework.security.config.Customizer.withDefaults())
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
+                        .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/jobs/*/callback").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/jobs/*").permitAll()
+                        .requestMatchers("/jobs", "/jobs/**").authenticated()
+                        .requestMatchers("/meetings/upload").authenticated()
+                        .requestMatchers("/meetings", "/meetings/**").authenticated()
+                        .requestMatchers("/upload/init").authenticated()
+                        .requestMatchers("/upload/chunk").authenticated()
+                        .requestMatchers("/upload/merge").authenticated()
+                        .requestMatchers("/jobs", "/jobs/**").authenticated()
+                        .anyRequest().authenticated())
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
 

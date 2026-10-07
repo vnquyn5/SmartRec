@@ -123,7 +123,7 @@ class DiarizationRuntimeManager:
             try:
                 pipeline = Pipeline.from_pretrained(
                     self.model_name,
-                    use_auth_token=self.hf_token
+                    token=self.hf_token
                 )
             except Exception as e:
                 err_msg = str(e).lower()

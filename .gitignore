@@ -48,7 +48,23 @@ env/
 node_modules/
 dist/
 build/
-.npm.sixthrules/
 
-.sixthrules/
-.sixthrules
+# Python Virtual Environment & Cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# Audio & Media Test Files
+*.wav
+*.mp3
+*.m4a
+*.mp4
+*.flac
+
+# Local Workspace & OS
+/private/tmp/smartrec_workspace/
+.DS_Store
+*.db

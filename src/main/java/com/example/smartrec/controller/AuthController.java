@@ -1,38 +1,43 @@
 package com.example.smartrec.controller;
 
-import com.example.smartrec.service.AuthService;
-import com.example.smartrec.service.impl.AuthServiceImpl;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import com.example.smartrec.model.dto.LoginRequest;
-import com.example.smartrec.model.dto.LoginResponse;
-import com.example.smartrec.model.dto.RegisterRequest;
-
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
+import com.example.smartrec.model.dto.AuthResponse;
+import com.example.smartrec.model.dto.LoginRequest;
+import com.example.smartrec.model.dto.LoginResponse;
+import com.example.smartrec.model.dto.RefreshTokenRequest;
+import com.example.smartrec.model.dto.RegisterRequest;
+import com.example.smartrec.service.AuthService;
+
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 @RestController 
-@RequestMapping ("/api/auth")
+@RequestMapping("/api/auth")
 @RequiredArgsConstructor 
 public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(@Valid @RequestBody RegisterRequest request){
+    public ResponseEntity<String> register(@Valid @RequestBody RegisterRequest request) {
         authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED).body("đăng kí thành công");
     }
 
-   @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request){
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         LoginResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/refresh-token")
+    public ResponseEntity<AuthResponse> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
+        AuthResponse response = authService.refreshToken(request);
         return ResponseEntity.ok(response);
     }
 }

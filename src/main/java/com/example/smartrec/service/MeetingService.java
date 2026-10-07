@@ -12,5 +12,7 @@ public interface MeetingService {
 
     void deleteMeeting(UUID meetingId);
 
+    MeetingResponseDTO getMeeting(UUID id);
+
     MeetingResponseDTO renameMeeting(UUID meetingId, RenameFileRequest request);
 }

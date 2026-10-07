@@ -9,14 +9,19 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import com.example.smartrec.entity.RefreshToken;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
+import com.example.smartrec.model.dto.AuthResponse;
 import com.example.smartrec.model.dto.LoginRequest;
 import com.example.smartrec.model.dto.LoginResponse;
+import com.example.smartrec.model.dto.RefreshTokenRequest;
 import com.example.smartrec.model.dto.RegisterRequest;
+import com.example.smartrec.model.dto.UserAuthResponse;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.AuthService;
-import com.example.smartrec.service.JwtService; 
+import com.example.smartrec.service.JwtService;
+import com.example.smartrec.service.RefreshTokenService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -25,7 +30,8 @@ import lombok.RequiredArgsConstructor;
 public class AuthServiceImpl implements AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-     private final JwtService jwtService;
+    private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
 
     @Override
     public void register(RegisterRequest request) {
@@ -82,16 +88,60 @@ public class AuthServiceImpl implements AuthService {
                 user.getPassword_hash())) {
             throw new BadCredentialsException("INVALID_CREDENTIALS");
         }
-         String accessToken = jwtService.generateToken(user);
+        String accessToken = jwtService.generateToken(user);
+        RefreshToken refreshToken = refreshTokenService.create(user);
 
         // 5. Trả kết quả đăng nhập
         return LoginResponse.builder()
                 .message("Đăng nhập thành công")
                 .accessToken(accessToken)
+                .refreshToken(refreshToken.getToken())
                 .userId(user.getId())
                 .email(user.getEmail())
                 .fullName(user.getFull_name())
                 .build();
 
+    }
+
+
+    @Override
+    public AuthResponse refreshToken(RefreshTokenRequest request) {
+        String oldToken = request.getRefreshToken();
+        RefreshToken oldRefreshToken = refreshTokenService.verify(oldToken);
+
+        User user = userRepository
+                .findById(oldRefreshToken.getUser())
+                .orElseThrow(() ->
+                        new BusinessException(
+                                HttpStatus.UNAUTHORIZED,
+                                "INVALID_REFRESH_TOKEN",
+                                "Refresh Token không hợp lệ"));
+
+        if (!Boolean.TRUE.equals(user.getIs_active())) {
+            throw new BusinessException(
+                    HttpStatus.FORBIDDEN,
+                    "ACCOUNT_LOCKED",
+                    "Tài khoản đã bị khóa");
+        }
+
+        String accessToken = jwtService.generateToken(user);
+        RefreshToken newRefreshToken = refreshTokenService.rotate(oldToken);
+
+        return AuthResponse.builder()
+                .message("Refresh token thành công")
+                .status("SUCCESS")
+                .accessToken(accessToken)
+                .refreshToken(newRefreshToken.getToken())
+                .tokenType("Bearer")
+                .expiresIn(86400)
+                .user(
+                        UserAuthResponse.builder()
+                                .id(user.getId())
+                                .email(user.getEmail())
+                                .fullName(user.getFull_name())
+                                .avatarUrl(user.getAvatar_url())
+                                .build()
+                )
+                .build();
     }
 }

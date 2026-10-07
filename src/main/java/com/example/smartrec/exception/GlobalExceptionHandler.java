@@ -92,6 +92,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponseDTO> handleException(
             Exception ex) {
+                ex.printStackTrace();
 
         ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
 
@@ -113,7 +114,7 @@ public class GlobalExceptionHandler {
         ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
 
         errorResponseDTO.setCode("ERR_FILE_TOO_LARGE");
-        errorResponseDTO.setMessage("File không vượt quá 2GB");
+        errorResponseDTO.setMessage("File vượt quá dung lượng cho phép");
         errorResponseDTO.setDetail(List.of());
         errorResponseDTO.setTimestamp(LocalDateTime.now());
 
