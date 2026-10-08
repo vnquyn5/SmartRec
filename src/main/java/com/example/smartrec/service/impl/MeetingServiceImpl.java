@@ -31,6 +31,7 @@ import com.example.smartrec.exception.MinioOperationException;
 import com.example.smartrec.exception.ResourceNotFoundException;
 import com.example.smartrec.model.dto.MeetingFilterRequest;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
+import com.example.smartrec.model.dto.MeetingPlaybackResponse;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.repository.MediaFileRepository;
@@ -52,6 +53,9 @@ public class MeetingServiceImpl implements MeetingService {
     private final MediaFileRepository mediaFileRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
+
+    @Value("${minio.playback-url-expiry-seconds:900}")
+    private int playbackUrlExpirySeconds;
 
     @Value("${trash.retention-days:30}")
     private long trashRetentionDays;
@@ -130,6 +134,28 @@ public class MeetingServiceImpl implements MeetingService {
                     inputStream);
         } catch (Exception ex) {
             throw new MinioOperationException("Không thể tải file từ MinIO", ex);
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MeetingPlaybackResponse getPlaybackUrl(UUID meetingId) {
+        User currentUser = getCurrentUser();
+        Meeting meeting = getMeetingForUser(meetingId, currentUser);
+        MediaFile mediaFile = getMediaFile(meeting);
+        if (!MediaFileStatus.UPLOADED.equals(mediaFile.getStatus())) {
+            throw new ResourceNotFoundException(
+                    "MEDIA_FILE_UNAVAILABLE", "File cuộc họp hiện không khả dụng để phát");
+        }
+        if (playbackUrlExpirySeconds < 1 || playbackUrlExpirySeconds > 604800) {
+            throw new IllegalStateException("Playback URL expiry must be between 1 and 604800 seconds");
+        }
+
+        try {
+            String url = minioService.presignGetObject(mediaFile.getObject_key(), playbackUrlExpirySeconds);
+            return new MeetingPlaybackResponse(url, playbackUrlExpirySeconds);
+        } catch (Exception ex) {
+            throw new MinioOperationException("Không thể tạo đường dẫn phát file từ MinIO", ex);
         }
     }
 

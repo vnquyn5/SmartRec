@@ -10,6 +10,8 @@ public interface MinioService {
 
     String presignPutObject(String objectKey, int expirySeconds) throws Exception;
 
+    String presignGetObject(String objectKey, int expirySeconds) throws Exception;
+
     long getObjectSize(String objectKey) throws Exception;
 
     void delete(String objectKey) throws Exception;

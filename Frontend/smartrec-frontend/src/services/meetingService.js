@@ -61,6 +61,10 @@ export async function deleteMeeting(id) {
   return httpClient.delete(`/meetings/${id}`);
 }
 
+export async function getMeetingPlaybackUrl(id, signal) {
+  return httpClient.get(`/meetings/${id}/playback-url`, { signal });
+}
+
 export async function downloadMeeting(id) {
   return httpClient.get(`/meetings/${id}/download`, {
     responseType: "blob",

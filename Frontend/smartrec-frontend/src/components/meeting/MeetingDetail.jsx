@@ -1,7 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import MeetingVideoPlayer from './MeetingVideoPlayer';
 import MeetingTabs from './MeetingTabs';
-import { API_BASE } from '../../lib/http/client';
 
 export default function MeetingDetail({ 
   meeting,
@@ -22,7 +21,6 @@ export default function MeetingDetail({
   speakerError,
   speakerLoading
 }) {
-  const mediaUrl = meeting?.id ? `${API_BASE}/meetings/${meeting.id}/download` : '';
   const mediaRef = useRef(null);
   const seekToSegment = useCallback((startTime) => {
     const media = mediaRef.current;
@@ -53,7 +51,14 @@ export default function MeetingDetail({
     <div className="w-full min-w-0 h-full flex flex-col xl:flex-row gap-5 items-stretch pb-6">
       {/* CỘT TRÁI: Video Player */}
       <div className="w-full min-w-0 xl:w-[48%] flex flex-col gap-4">
-        <MeetingVideoPlayer mediaUrl={mediaUrl} fileType={fileType} mediaRef={mediaRef} durationSeconds={meeting?.durationSeconds} />
+        <MeetingVideoPlayer
+          meetingId={meeting?.id}
+          fileName={meeting?.fileName || meeting?.title}
+          mimeType={meeting?.mimeType}
+          fileType={fileType}
+          mediaRef={mediaRef}
+          durationSeconds={meeting?.durationSeconds}
+        />
       </div>
 
       {/* CỘT PHẢI: Hệ thống Tabs (AI Summary, Task, Speaker, Slide Keyframes) */}

@@ -49,9 +49,11 @@ jwt:
 # 5. MinIO Object Storage Configuration
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  public-endpoint: ${MINIO_PUBLIC_ENDPOINT:${MINIO_ENDPOINT:http://localhost:9000}}
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket-name: ${MINIO_BUCKET:smartrec-media}
+  playback-url-expiry-seconds: ${MINIO_PLAYBACK_URL_EXPIRY_SECONDS:900}
 
 app:
   cors:

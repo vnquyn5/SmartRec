@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.model.dto.MeetingFilterRequest;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
+import com.example.smartrec.model.dto.MeetingPlaybackResponse;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
@@ -68,6 +69,19 @@ public class MeetingController {
     @GetMapping("/{id}")
     public ResponseEntity<MeetingResponseDTO> getMeeting(@PathVariable UUID id) {
         return ResponseEntity.ok(meetingService.getMeeting(id));
+    }
+
+    @GetMapping("/{id}/playback-url")
+    @Operation(summary = "Create a short-lived playback URL for a meeting media file")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Playback URL created"),
+            @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Meeting access denied", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Meeting or playable media not found", content = @Content),
+            @ApiResponse(responseCode = "503", description = "MinIO operation failed", content = @Content)
+    })
+    public ResponseEntity<MeetingPlaybackResponse> getMeetingPlaybackUrl(@PathVariable UUID id) {
+        return ResponseEntity.ok(meetingService.getPlaybackUrl(id));
     }
 
     @PostMapping("/{id}/process")
