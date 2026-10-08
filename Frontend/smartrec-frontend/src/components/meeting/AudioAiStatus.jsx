@@ -28,7 +28,7 @@ function AlertCircleIcon({ className = "w-4 h-4", ...props }) {
   );
 }
 
-export default function AudioAiStatus({ status, onRetry, onStartProcessing, startingProcess = false, errorMessage, retrying = false }) {
+export default function AudioAiStatus({ status, onRetry, onPause, onResume, onCancel, lifecycleAction = false, onStartProcessing, startingProcess = false, errorMessage, retrying = false }) {
   if (status === 'unprocessed') {
     return (
       <div className="w-full bg-[#0c101d] border border-slate-600/40 rounded-lg p-2.5 shadow-sm flex items-center justify-between font-sans">
@@ -54,8 +54,17 @@ export default function AudioAiStatus({ status, onRetry, onStartProcessing, star
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">Job đang chờ worker xử lý.</p>
         </div>
+        <div className="flex gap-2">{onPause && <button type="button" disabled={lifecycleAction} onClick={onPause} className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[11px] font-semibold disabled:opacity-50">Tạm dừng</button>}{onCancel && <button type="button" disabled={lifecycleAction} onClick={onCancel} className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[11px] font-semibold disabled:opacity-50">Hủy</button>}</div>
       </div>
     );
+  }
+
+  if (['paused', 'pause-requested', 'cancel-requested'].includes(status)) {
+    const title = status === 'paused' ? 'Đã tạm dừng' : status === 'pause-requested' ? 'Đang tạm dừng…' : 'Đang hủy…';
+    return <div className="w-full bg-[#0c101d] border border-amber-500/30 rounded-lg p-2.5 shadow-sm flex items-center justify-between font-sans">
+      <div><div className="text-white text-[13px] font-bold">Audio AI · {title}</div><p className="text-[11px] text-slate-400 mt-0.5">{status === 'paused' ? 'Job đang tạm dừng tại ranh giới an toàn giữa các stage.' : 'Yêu cầu sẽ được áp dụng tại ranh giới an toàn gần nhất.'}</p></div>
+      <div className="flex gap-2">{status === 'paused' && onResume && <button type="button" disabled={lifecycleAction} onClick={onResume} className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-[11px] font-semibold disabled:opacity-50">Tiếp tục</button>}{status !== 'cancel-requested' && onCancel && <button type="button" disabled={lifecycleAction} onClick={onCancel} className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[11px] font-semibold disabled:opacity-50">Hủy</button>}</div>
+    </div>;
   }
 
   if (status === 'processing') {
@@ -77,6 +86,7 @@ export default function AudioAiStatus({ status, onRetry, onStartProcessing, star
             </p>
           </div>
         </div>
+        <div className="flex gap-2">{onPause && <button type="button" disabled={lifecycleAction} onClick={onPause} className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[11px] font-semibold disabled:opacity-50">Tạm dừng</button>}{onCancel && <button type="button" disabled={lifecycleAction} onClick={onCancel} className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[11px] font-semibold disabled:opacity-50">Hủy</button>}</div>
       </div>
     );
   }

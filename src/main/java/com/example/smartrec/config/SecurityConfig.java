@@ -46,6 +46,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
                 .requestMatchers("/jobs/*/callback").permitAll()
+                .requestMatchers(HttpMethod.POST, "/jobs/*/heartbeat").permitAll()
                 .requestMatchers(HttpMethod.GET, "/jobs/dlq").authenticated()
                 .requestMatchers(HttpMethod.GET, "/jobs/*").permitAll()
                 .requestMatchers("/meetings/upload").authenticated()

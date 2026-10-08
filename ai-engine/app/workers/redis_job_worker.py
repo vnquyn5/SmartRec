@@ -4,6 +4,8 @@ import shutil
 import logging
 from pathlib import Path
 import requests
+import threading
+import time
 
 # 1. Đảm bảo thư mục gốc ai-engine luôn nằm trong sys.path
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -15,6 +17,7 @@ from app.services.minio_client import get_minio_client
 from app.services.audio_extractor import AudioExtractorService, InvalidMediaError
 from app.services.audio_pipeline import AudioPipelineOrchestrator
 from app.schemas.audio_schemas import AudioPipelineRequest
+from app.schemas.diarization_schemas import DiarizationExportPayload
 from app.services.speaker_labeling_service import speaker_labeling_service
 from app.tracking import ResourceTracker
 from app.services.callback_client import CallbackClient
@@ -40,6 +43,64 @@ minio_client = get_minio_client()
 callback_client = CallbackClient()
 audio_extractor = AudioExtractorService()
 pipeline_orchestrator = AudioPipelineOrchestrator()
+
+
+class _PauseAtBoundary(Exception):
+    pass
+
+
+class _CancelAtBoundary(Exception):
+    pass
+
+
+class WorkerHeartbeat:
+    """Keeps the backend lease fresh during long, atomic processing stages."""
+    def __init__(self, job_id: str):
+        self.job_id = job_id
+        self.interval = max(5, int(os.getenv("SMARTREC_HEARTBEAT_INTERVAL_SECONDS", "12")))
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._latest = None
+        self._thread = threading.Thread(target=self._run, name=f"heartbeat-{job_id}", daemon=True)
+
+    def _send(self):
+        response = requests.post(
+            f"{BACKEND_BASE_URL}/jobs/{self.job_id}/heartbeat",
+            headers={"X-Internal-Token": INTERNAL_TOKEN}, timeout=10.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        with self._lock:
+            self._latest = data
+        return data
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            try:
+                self._send()
+            except Exception as exc:
+                logger.warning("[%s] Heartbeat delivery failed: %s", self.job_id, exc)
+
+    def start(self):
+        self._thread.start()
+
+    def checkpoint(self):
+        data = self._send()
+        status = str(data.get("status") or "").upper()
+        if status in {"PAUSE_REQUESTED", "PAUSED"}:
+            raise _PauseAtBoundary()
+        if status in {"CANCEL_REQUESTED", "CANCELLED"}:
+            raise _CancelAtBoundary()
+        if status in {"FAILED", "DLQ", "COMPLETED"}:
+            raise NonRetryableProcessingError("JOB_TERMINAL", f"Backend job is already {status}")
+        if status not in {"PROCESSING", "RUNNING", "QUEUED", "RETRYING"}:
+            raise RetryableProcessingError(f"Unexpected backend job status: {status or 'unknown'}")
+        return data
+
+    def stop(self):
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2)
 
 
 def fetch_job_details(job_id: str) -> dict:
@@ -92,6 +153,9 @@ def parse_timestamp_to_seconds(val) -> float:
 def process_job(job_id: str):
     workspace_dir = os.path.join(str(get_workspace_root()), job_id)
     current_stage = "FFMPEG"
+    heartbeat = None
+    preserve_workspace = False
+    successful_stages = set()
 
     try:
         os.makedirs(workspace_dir, exist_ok=True)
@@ -102,9 +166,23 @@ def process_job(job_id: str):
             logger.info("[%s] Bỏ qua stale/terminal job với status=%s", job_id, job_status)
             return {"status": "SKIPPED", "reason": "TERMINAL_JOB", "jobStatus": job_status}
 
+        if job_status == "PAUSED":
+            logger.info("[%s] Bỏ qua task trùng vì Job đang PAUSED", job_id)
+            preserve_workspace = True
+            return {"status": "SKIPPED", "reason": "PAUSED"}
+
+        current_stage = str(job_info.get("stage") or current_stage)
+
+        heartbeat = WorkerHeartbeat(job_id)
+        heartbeat.start()
+
         object_key = job_info.get("objectKey")
         meeting_id = job_info.get("meetingId")
         logger.info(f"[{job_id}] ========== [BẮT ĐẦU XỬ LÝ JOB: {job_id}] ==========")
+
+        heartbeat_state = heartbeat.checkpoint()
+        current_stage = str(heartbeat_state.get("currentStage") or current_stage)
+        successful_stages = set(heartbeat_state.get("successfulStages") or [])
 
         if not meeting_id:
             raise NonRetryableProcessingError("VALIDATION_ERROR", f"Job {job_id} thiếu meetingId từ Backend.")
@@ -132,6 +210,20 @@ def process_job(job_id: str):
         # [GUARD 1]: Kiểm định an toàn đường dẫn file đầu vào
         validate_safe_read_path(raw_input_path)
 
+        required_resume_artifacts = {
+            "FFMPEG": os.path.join(workspace_dir, "01_normalized_16k.wav"),
+            "WEBRTC": os.path.join(workspace_dir, "02_cleaned.wav"),
+            "PYANNOTE": os.path.join(workspace_dir, "03_diarization.json"),
+        }
+        missing_artifact = next((stage for stage in successful_stages
+                                 if stage in required_resume_artifacts
+                                 and not os.path.isfile(required_resume_artifacts[stage])), None)
+        if missing_artifact:
+            raise NonRetryableProcessingError(
+                "WORKSPACE_LOST",
+                f"Không thể tiếp tục từ stage {missing_artifact}: workspace trung gian không còn đầy đủ.",
+            )
+
         with ResourceTracker(
             job_id=job_id,
             model_name=settings.pyannote_model_id,
@@ -143,73 +235,78 @@ def process_job(job_id: str):
             # STAGE 1: FFMPEG (Trích xuất & chuẩn hóa sang 16kHz Mono WAV)
             # -------------------------------------------------------------
             current_stage = "FFMPEG"
-            require_stage_callback(job_id, current_stage, "PROCESSING")
-            logger.info(f"[{job_id}] >>> Thực thi Stage 1: FFMPEG...")
             normalized_wav = os.path.join(workspace_dir, "01_normalized_16k.wav")
-            
-            # [GUARD 2]: Kiểm định an toàn đường dẫn file audio chuẩn hóa trước khi ghi
-            validate_safe_write_path(normalized_wav)
-            
-            try:
-                audio_extractor.extract_and_normalize(
-                    input_path=raw_input_path,
-                    output_path=normalized_wav,
-                    target_sample_rate=16000,
-                    target_channels=1
-                )
-            except InvalidMediaError as e:
-                raise NonRetryableProcessingError(e.error_code, str(e)) from e
-            require_stage_callback(job_id, current_stage, "SUCCESS")
+            if "FFMPEG" not in successful_stages or not os.path.exists(normalized_wav):
+                heartbeat.checkpoint()
+                require_stage_callback(job_id, current_stage, "PROCESSING")
+                logger.info(f"[{job_id}] >>> Thực thi Stage 1: FFMPEG...")
+                validate_safe_write_path(normalized_wav)
+                try:
+                    audio_extractor.extract_and_normalize(
+                        input_path=raw_input_path, output_path=normalized_wav,
+                        target_sample_rate=16000, target_channels=1
+                    )
+                except InvalidMediaError as e:
+                    raise NonRetryableProcessingError(e.error_code, str(e)) from e
+                require_stage_callback(job_id, current_stage, "SUCCESS")
+                heartbeat.checkpoint()
 
             # -------------------------------------------------------------
             # STAGE 2: WEBRTC (Khử ồn ANS + Lọc vang AEC + Quality Gate)
             # -------------------------------------------------------------
             current_stage = "WEBRTC"
-            require_stage_callback(job_id, current_stage, "PROCESSING")
-            logger.info(f"[{job_id}] >>> Thực thi Stage 2: WEBRTC...")
-            pipe_req = AudioPipelineRequest(
-                job_id=job_id,
-                input_path=normalized_wav,
-                reference_path=None,  # Kích hoạt graceful fallback an toàn sang ANS
-                output_dir=workspace_dir,
-                suppression_level=3
-            )
-            pipe_res = pipeline_orchestrator.process_pipeline(pipe_req)
-            if pipe_res.overall_status != "SUCCESS":
-                raise NonRetryableProcessingError("VALIDATION_ERROR", f"WebRTC Pipeline lỗi: {pipe_res.error_message}")
-            clean_wav = pipe_res.final_output_file
-            require_stage_callback(job_id, current_stage, "SUCCESS")
+            stable_clean_wav = os.path.join(workspace_dir, "02_cleaned.wav")
+            if "WEBRTC" in successful_stages and os.path.exists(stable_clean_wav):
+                clean_wav = stable_clean_wav
+            else:
+                heartbeat.checkpoint()
+                require_stage_callback(job_id, current_stage, "PROCESSING")
+                logger.info(f"[{job_id}] >>> Thực thi Stage 2: WEBRTC...")
+                pipe_req = AudioPipelineRequest(
+                    job_id=job_id, input_path=normalized_wav, reference_path=None,
+                    output_dir=workspace_dir, suppression_level=3
+                )
+                pipe_res = pipeline_orchestrator.process_pipeline(pipe_req)
+                if pipe_res.overall_status != "SUCCESS":
+                    raise NonRetryableProcessingError("VALIDATION_ERROR", f"WebRTC Pipeline lỗi: {pipe_res.error_message}")
+                clean_wav = pipe_res.final_output_file
+                if clean_wav and os.path.abspath(clean_wav) != os.path.abspath(stable_clean_wav):
+                    shutil.copy2(clean_wav, stable_clean_wav)
+                require_stage_callback(job_id, current_stage, "SUCCESS")
+                heartbeat.checkpoint()
+            clean_wav = stable_clean_wav
 
             # -------------------------------------------------------------
             # STAGE 3: PYANNOTE (Speaker Diarization & VAD)
             # -------------------------------------------------------------
             current_stage = "PYANNOTE"
-            require_stage_callback(job_id, current_stage, "PROCESSING")
-            logger.info(f"[{job_id}] >>> Thực thi Stage 3: PYANNOTE...")
             diar_json_path = os.path.join(workspace_dir, "03_diarization.json")
-            
-            # [GUARD 3]: Kiểm định an toàn đường dẫn output json diarization trước khi ghi
-            validate_safe_write_path(diar_json_path)
-
-            diar_payload, _ = speaker_labeling_service.process_and_export(
-                audio_path=clean_wav,
-                output_json_path=diar_json_path,
-                job_id=job_id
-            )
-            if diar_payload.status != "SUCCESS":
-                if diar_payload.status == "NO_SPEECH_DETECTED":
-                    raise NoSpeechDetectedError(diar_payload.error_message or "Không phát hiện tiếng nói trong audio")
-                error_code = getattr(diar_payload, "error_code", None) or "DIARIZATION_INFERENCE_ERROR"
-                error_message = diar_payload.error_message or diar_payload.status
-                if error_code in {"INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY", "AUDIO_CORRUPTED", "VALIDATION_ERROR"}:
-                    raise NonRetryableProcessingError(error_code, error_message)
-                raise RetryableProcessingError(error_message)
-            require_stage_callback(job_id, current_stage, "SUCCESS")
+            if "PYANNOTE" in successful_stages and os.path.exists(diar_json_path):
+                diar_payload = DiarizationExportPayload.model_validate_json(Path(diar_json_path).read_text())
+            else:
+                heartbeat.checkpoint()
+                require_stage_callback(job_id, current_stage, "PROCESSING")
+                logger.info(f"[{job_id}] >>> Thực thi Stage 3: PYANNOTE...")
+                validate_safe_write_path(diar_json_path)
+                diar_payload, _ = speaker_labeling_service.process_and_export(
+                    audio_path=clean_wav, output_json_path=diar_json_path, job_id=job_id
+                )
+                if diar_payload.status != "SUCCESS":
+                    if diar_payload.status == "NO_SPEECH_DETECTED":
+                        raise NoSpeechDetectedError(diar_payload.error_message or "Không phát hiện tiếng nói trong audio")
+                    error_code = getattr(diar_payload, "error_code", None) or "DIARIZATION_INFERENCE_ERROR"
+                    error_message = diar_payload.error_message or diar_payload.status
+                    if error_code in {"INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY", "AUDIO_CORRUPTED", "VALIDATION_ERROR"}:
+                        raise NonRetryableProcessingError(error_code, error_message)
+                    raise RetryableProcessingError(error_message)
+                require_stage_callback(job_id, current_stage, "SUCCESS")
+                heartbeat.checkpoint()
 
             # -------------------------------------------------------------
             # STAGE 4: OUTPUT (Chuẩn hóa segments và gửi về Backend)
             # -------------------------------------------------------------
             current_stage = "OUTPUT"
+            heartbeat.checkpoint()
             require_stage_callback(job_id, current_stage, "PROCESSING")
             logger.info(f"[{job_id}] >>> Hoàn tất Stage 4: OUTPUT...")
 
@@ -256,9 +353,25 @@ def process_job(job_id: str):
                         "endTime": end_time
                     })
 
+            # OUTPUT work is short but still has a safe point before committing
+            # its terminal success callback.
+            heartbeat.checkpoint()
             require_stage_callback(job_id, current_stage, "SUCCESS", segments=formatted_segments)
             logger.info(f"[{job_id}] ========== [HOÀN TẤT THÀNH CÔNG JOB: {job_id}] ==========")
 
+    except _PauseAtBoundary:
+        control = heartbeat._send() if heartbeat else {}
+        current_stage = control.get("currentStage") or current_stage
+        preserve_workspace = True
+        require_stage_callback(job_id, current_stage, "PAUSED")
+        logger.info("[%s] Job paused safely at stage boundary %s", job_id, current_stage)
+        return {"status": "PAUSED", "stage": current_stage}
+    except _CancelAtBoundary:
+        control = heartbeat._send() if heartbeat else {}
+        current_stage = control.get("currentStage") or current_stage
+        require_stage_callback(job_id, current_stage, "CANCELLED")
+        logger.info("[%s] Job cancelled safely at stage boundary %s", job_id, current_stage)
+        return {"status": "CANCELLED", "stage": current_stage}
     except NonRetryableProcessingError as e:
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
         try:
@@ -280,10 +393,13 @@ def process_job(job_id: str):
             logger.exception("Failed to report worker failure to Backend")
         raise RetryableProcessingError(str(e)) from e
     finally:
+        if heartbeat:
+            heartbeat.stop()
         # Dọn dẹp thư mục làm việc tạm thời
         try:
-            shutil.rmtree(workspace_dir)
-            logger.info(f"[{job_id}] Đã dọn dẹp workspace: {workspace_dir}")
+            if not preserve_workspace:
+                shutil.rmtree(workspace_dir)
+                logger.info(f"[{job_id}] Đã dọn dẹp workspace: {workspace_dir}")
         except Exception as cleanup_err:
             logger.warning(f"[{job_id}] Không thể dọn dẹp workspace hoàn toàn: {cleanup_err}")
 

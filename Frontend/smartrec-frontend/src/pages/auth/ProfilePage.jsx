@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/axiosClient";
+import { useAuth } from "../../features/auth/AuthProvider.jsx";
+import { refreshTokenStore, tokenStore } from "../../lib/auth/tokenStore.js";
 import {
   isPasswordValid,
   validateConfirmPassword,
@@ -277,6 +279,7 @@ const permissionHeaders = [
 
 const ProfilePage = () => {
   const navigate = useNavigate();
+  const { updateUser: updateAuthUser } = useAuth();
   const [activeTab, setActiveTab] = useState("profile");
   const [isEditing, setIsEditing] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
@@ -321,6 +324,7 @@ const ProfilePage = () => {
           userCode: profile.userCode ?? "",
           name: profile.full_name ?? "",
           email: profile.email ?? "",
+          authProvider: profile.authProvider ?? "LOCAL",
           phone: profile.phone ?? "",
           department: profile.department ?? "",
           position: profile.position ?? "",
@@ -330,6 +334,7 @@ const ProfilePage = () => {
 
         if (!isMounted) return;
         setUser(nextUser);
+        updateAuthUser(nextUser);
         setEditForm({
           userCode: nextUser.userCode,
           name: nextUser.name,
@@ -353,7 +358,7 @@ const ProfilePage = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [updateAuthUser]);
 
   const handleEditClick = () => {
     setEditForm({
@@ -385,7 +390,7 @@ const ProfilePage = () => {
   const validateForm = () => {
     const newErrors = {};
     const fullNameError = validateFullName(editForm.name);
-    const emailError = validateEmail(editForm.email);
+    const emailError = isGoogleAccount ? null : validateEmail(editForm.email);
     const phoneError = validatePhone(editForm.phone);
 
     if (fullNameError) newErrors.name = fullNameError;
@@ -402,11 +407,18 @@ const ProfilePage = () => {
     try {
       const payload = {
         fullName: editForm.name.trim(),
-        email: editForm.email.trim(),
         phone: editForm.phone.trim(),
       };
+      if (!isGoogleAccount) {
+        payload.email = editForm.email.trim();
+        if (payload.email.toLowerCase() !== String(user?.email || "").trim().toLowerCase()) {
+          payload.refreshToken = refreshTokenStore.get();
+        }
+      }
 
       const updatedProfile = await api.put("/api/user/me", payload);
+      if (updatedProfile.accessToken) tokenStore.set(updatedProfile.accessToken);
+      if (updatedProfile.refreshToken) refreshTokenStore.set(updatedProfile.refreshToken);
       const nextUser = {
         ...user,
         userCode: updatedProfile.userCode ?? user?.userCode ?? "",
@@ -415,6 +427,7 @@ const ProfilePage = () => {
           updatedProfile.fullName ??
           editForm.name.trim(),
         email: updatedProfile.email ?? editForm.email.trim(),
+        authProvider: updatedProfile.authProvider ?? user?.authProvider ?? "LOCAL",
         phone: updatedProfile.phone ?? editForm.phone.trim(),
         department: updatedProfile.department ?? user?.department ?? "",
         position: updatedProfile.position ?? user?.position ?? "",
@@ -422,6 +435,7 @@ const ProfilePage = () => {
       };
 
       setUser(nextUser);
+      updateAuthUser(nextUser);
       setEditForm({
         userCode: nextUser.userCode,
         name: nextUser.name,
@@ -440,6 +454,8 @@ const ProfilePage = () => {
 
       if (error?.code === "EMAIL_ALREADY_EXISTS") {
         nextErrors.email = "Email này đã được sử dụng bởi tài khoản khác.";
+      } else if (error?.code === "GOOGLE_EMAIL_IMMUTABLE") {
+        nextErrors.email = error.message || "Tài khoản đăng nhập bằng Google không thể thay đổi email.";
       } else if (error?.code === "PHONE_ALREADY_EXISTS") {
         nextErrors.phone =
           "Số điện thoại này đã được sử dụng bởi tài khoản khác.";
@@ -457,6 +473,8 @@ const ProfilePage = () => {
       setErrors(nextErrors);
     }
   };
+
+  const isGoogleAccount = String(displayUser.authProvider || "").toUpperCase() === "GOOGLE";
 
   const handleChangePassword = async (event) => {
     event.preventDefault();
@@ -740,11 +758,16 @@ const ProfilePage = () => {
                         <input
                           type="email"
                           value={editForm.email}
+                          readOnly={isGoogleAccount}
+                          aria-describedby={isGoogleAccount ? "google-email-help" : undefined}
                           onChange={(e) =>
                             setEditForm({ ...editForm, email: e.target.value })
                           }
                           className={`profile-input ${errors.email ? "input-error" : ""}`}
                         />
+                        {isGoogleAccount && <small id="google-email-help" style={{ color: "var(--sr-muted)", fontSize: 12 }}>
+                          Email được quản lý bởi tài khoản Google và không thể thay đổi.
+                        </small>}
                         {errors.email && (
                           <span className="error-text">{errors.email}</span>
                         )}
@@ -792,8 +815,9 @@ const ProfilePage = () => {
                       <div className="notice-text">
                         <strong>Lưu ý bảo mật</strong>
                         <p>
-                          Chỉ các trường Họ và tên, Email và Số điện thoại được
-                          phép cập nhật từ hồ sơ cá nhân.
+                          {isGoogleAccount
+                            ? "Tài khoản Google có thể cập nhật Họ và tên, Số điện thoại; email được quản lý bởi Google."
+                            : "Chỉ các trường Họ và tên, Email và Số điện thoại được phép cập nhật từ hồ sơ cá nhân."}
                         </p>
                       </div>
                     </div>

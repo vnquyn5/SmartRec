@@ -8,6 +8,7 @@ import {
   FilterIcon,
   FolderPlusIcon,
   MoveIcon,
+  PauseIcon,
   PencilIcon,
   PlayIcon,
   RefreshIcon,
@@ -23,6 +24,11 @@ import {
   downloadMeeting,
   downloadMeetings,
   getMeetings,
+  getJob,
+  pauseJob,
+  resumeJob,
+  cancelJob,
+  retryJob,
   renameMeeting as renameMeetingApi,
   startMeetingProcessing,
 } from "../../services/meetingService.js";
@@ -43,7 +49,12 @@ const ACTIVE_MEETING_STATUSES = new Set([
   "RUNNING",
   "PROCESSING",
   "RETRYING",
+  "PAUSE_REQUESTED",
+  "CANCEL_REQUESTED",
 ]);
+const TERMINAL_JOB_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED", "FAILED", "DLQ", "CANCELLED"]);
+const JOB_POLL_INTERVAL_MS = 2500;
+const MAX_PARALLEL_JOB_POLLS = 5;
 const isMeetingActive = (meeting) =>
   ACTIVE_MEETING_STATUSES.has(String(meeting?.status || "").trim().toUpperCase());
 
@@ -120,9 +131,12 @@ export default function FileManagerPage() {
   const [processMeeting, setProcessMeeting] = useState(null);
   const [isStartingProcess, setIsStartingProcess] = useState(false);
   const [processError, setProcessError] = useState("");
+  const [lifecycleJobId, setLifecycleJobId] = useState(null);
+  const lifecycleActionInFlightRef = useRef(false);
   const selectAllRef = useRef(null);
   const inFlightRequestsRef = useRef(new Map());
   const activeQueryKeyRef = useRef("");
+  const terminalJobIdsRef = useRef(new Set());
   const navigate = useNavigate();
 
   const normalizedKeyword = keyword.trim();
@@ -184,34 +198,73 @@ export default function FileManagerPage() {
     return () => window.clearTimeout(timer);
   }, [loadMeetings, keyword]);
 
-  const hasActiveMeetings = data.content.some(isMeetingActive);
+  const activeJobs = data.content
+    .filter((meeting) => isMeetingActive(meeting) && meeting.activeJobId
+      && !terminalJobIdsRef.current.has(meeting.activeJobId))
+    .map((meeting) => ({ meetingId: meeting.id, jobId: meeting.activeJobId }));
+  const activeJobsKey = JSON.stringify(activeJobs);
 
   useEffect(() => {
-    if (loading || !isDocumentVisible || !hasActiveMeetings) return undefined;
+    const jobsToPoll = JSON.parse(activeJobsKey);
+    if (loading || !isDocumentVisible || jobsToPoll.length === 0) return undefined;
 
     let cancelled = false;
     let timer;
     const poll = async () => {
-      await loadMeetings({ background: true });
-      if (!cancelled) timer = window.setTimeout(poll, 2500);
+      let terminalObserved = false;
+      for (let index = 0; index < jobsToPoll.length; index += MAX_PARALLEL_JOB_POLLS) {
+        const batch = jobsToPoll.slice(index, index + MAX_PARALLEL_JOB_POLLS);
+        await Promise.all(batch.map(async ({ meetingId, jobId }) => {
+          if (cancelled || terminalJobIdsRef.current.has(jobId)) return;
+          try {
+            const job = await getJob(jobId);
+            if (cancelled) return;
+            const jobStatus = String(job?.status || "").trim().toUpperCase();
+            if (TERMINAL_JOB_STATUSES.has(jobStatus)) {
+              terminalJobIdsRef.current.add(jobId);
+              terminalObserved = true;
+              setData((currentData) => ({
+                ...currentData,
+                content: currentData.content.map((meeting) =>
+                  meeting.id === meetingId && meeting.activeJobId === jobId
+                    ? { ...meeting, status: jobStatus === "SUCCESS" || jobStatus === "SUCCEEDED" ? "COMPLETED" : jobStatus }
+                    : meeting,
+                ),
+              }));
+            } else if (ACTIVE_MEETING_STATUSES.has(jobStatus) || jobStatus === "PAUSED") {
+              terminalJobIdsRef.current.delete(jobId);
+              setData((currentData) => ({
+                ...currentData,
+                content: currentData.content.map((meeting) =>
+                  meeting.id === meetingId && meeting.activeJobId === jobId
+                    ? { ...meeting, status: jobStatus }
+                    : meeting,
+                ),
+              }));
+            }
+          } catch {
+            // Keep this job active and retry it on the next scheduled pass.
+          }
+        }));
+      }
+      if (terminalObserved && !cancelled) void loadMeetings({ background: true });
+      if (!cancelled) timer = window.setTimeout(poll, JOB_POLL_INTERVAL_MS);
     };
 
-    timer = window.setTimeout(poll, 2500);
+    timer = window.setTimeout(poll, JOB_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [hasActiveMeetings, isDocumentVisible, loadMeetings, loading]);
+  }, [activeJobsKey, isDocumentVisible, loadMeetings, loading]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
       const visible = document.visibilityState !== "hidden";
       setIsDocumentVisible(visible);
-      if (visible) void loadMeetings({ background: true });
     };
     const refreshOnFocus = () => {
       setIsDocumentVisible(true);
-      void loadMeetings({ background: true });
     };
 
     document.addEventListener("visibilitychange", refreshWhenVisible);
@@ -338,19 +391,45 @@ export default function FileManagerPage() {
     setProcessError("");
     try {
       const job = await startMeetingProcessing(processMeeting.id);
+      const jobStatus = String(job?.status || "QUEUED").trim().toUpperCase();
+      if (job?.id) terminalJobIdsRef.current.delete(job.id);
       setData((currentData) => ({
         ...currentData,
         content: currentData.content.map((meeting) => meeting.id === processMeeting.id
-          ? { ...meeting, status: "PROCESSING", activeJobId: job?.id ?? meeting.activeJobId }
+          ? { ...meeting, status: ACTIVE_MEETING_STATUSES.has(jobStatus) ? jobStatus : "PROCESSING", activeJobId: job?.id ?? meeting.activeJobId }
           : meeting),
       }));
       setProcessMeeting(null);
-      void loadMeetings({ background: true });
     } catch (requestError) {
       setProcessError(requestError?.message || "Không thể bắt đầu xử lý cuộc họp.");
     } finally {
       setIsStartingProcess(false);
     }
+  };
+
+  const runLifecycleAction = async (meeting, action, nextStatus) => {
+    const jobId = meeting.activeJobId;
+    if (!jobId || lifecycleActionInFlightRef.current) return;
+    lifecycleActionInFlightRef.current = true;
+    setLifecycleJobId(jobId);
+    setActionMessage("");
+    try {
+      await action(jobId);
+      setData((current) => ({ ...current, content: current.content.map((item) => item.id === meeting.id
+        ? { ...item, status: nextStatus }
+        : item) }));
+      if (nextStatus === "RETRYING" || nextStatus === "QUEUED") terminalJobIdsRef.current.delete(jobId);
+    } catch (actionError) {
+      setActionMessage(actionError?.response?.data?.message || "Không thể cập nhật trạng thái xử lý.");
+    } finally {
+      lifecycleActionInFlightRef.current = false;
+      setLifecycleJobId(null);
+    }
+  };
+
+  const handleResume = (meeting) => {
+    if (String(meeting.status || "").toUpperCase() !== "PAUSED") return;
+    runLifecycleAction(meeting, resumeJob, "QUEUED");
   };
 
   const handleDownloadSelected = async (meetings = selectedMeetings) => {
@@ -787,6 +866,7 @@ export default function FileManagerPage() {
                               <button
                                 type="button"
                                 title="Xem"
+                                aria-label="Xem cuộc họp"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   openMeetingDetail(meeting);
@@ -798,6 +878,7 @@ export default function FileManagerPage() {
                               <button
                                 type="button"
                                 title="Tải xuống"
+                                aria-label="Tải xuống cuộc họp"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   handleDownload(meeting);
@@ -806,9 +887,24 @@ export default function FileManagerPage() {
                               >
                                 <DownloadIcon />
                               </button>
-                              <button
+                              {ACTIVE_MEETING_STATUSES.has(String(meeting.status).toUpperCase()) && !["PAUSE_REQUESTED", "CANCEL_REQUESTED"].includes(String(meeting.status).toUpperCase()) && <>
+                              <button type="button" title="Tạm dừng xử lý" aria-label="Tạm dừng xử lý" disabled={lifecycleJobId === meeting.activeJobId} onClick={(event) => { event.stopPropagation(); void runLifecycleAction(meeting, pauseJob, "PAUSE_REQUESTED"); }} className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><PauseIcon className="h-4 w-4" /></button>
+                              <button type="button" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={lifecycleJobId === meeting.activeJobId} onClick={(event) => { event.stopPropagation(); void runLifecycleAction(meeting, cancelJob, "CANCEL_REQUESTED"); }} className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><span aria-hidden="true" className="block h-4 w-4 text-center text-base leading-4">×</span></button>
+                              </>}
+                              {meeting.status === "PAUSE_REQUESTED" && <>
+                                <button type="button" title="Đang tạm dừng" aria-label="Tiếp tục xử lý (đang tạm dừng)" disabled className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><PlayIcon className="h-4 w-4" /></button>
+                                <button type="button" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={lifecycleJobId === meeting.activeJobId} onClick={(event) => { event.stopPropagation(); void runLifecycleAction(meeting, cancelJob, "CANCEL_REQUESTED"); }} className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><span aria-hidden="true" className="block h-4 w-4 text-center text-base leading-4">×</span></button>
+                              </>}
+                              {meeting.status === "CANCEL_REQUESTED" && <button type="button" title="Đang hủy" aria-label="Đang hủy xử lý" disabled className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><span aria-hidden="true" className="block h-4 w-4 text-center text-base leading-4">×</span></button>}
+                              {meeting.status === "PAUSED" && <>
+                                <button type="button" title="Tiếp tục xử lý" aria-label="Tiếp tục xử lý" disabled={!meeting.activeJobId || lifecycleJobId === meeting.activeJobId} onClick={(event) => { event.stopPropagation(); void handleResume(meeting); }} className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><PlayIcon className="h-4 w-4" /></button>
+                                <button type="button" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={lifecycleJobId === meeting.activeJobId} onClick={(event) => { event.stopPropagation(); void runLifecycleAction(meeting, cancelJob, "CANCEL_REQUESTED"); }} className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"><span aria-hidden="true" className="block h-4 w-4 text-center text-base leading-4">×</span></button>
+                              </>}
+                              {["FAILED", "DLQ", "CANCELLED"].includes(String(meeting.status).toUpperCase()) && <button type="button" title="Thử xử lý lại" aria-label="Thử xử lý lại" disabled={lifecycleJobId === meeting.activeJobId} onClick={(event) => { event.stopPropagation(); void runLifecycleAction(meeting, retryJob, "RETRYING"); }} className="rounded p-1.5 text-slate-600 transition hover:bg-blue-500/10 hover:text-blue-300 disabled:cursor-not-allowed disabled:opacity-30"><RefreshIcon /></button>}
+                              {String(meeting.status).toUpperCase() === "COMPLETED" && <button
                                 type="button"
                                 title="Chia sẻ"
+                                aria-label="Chia sẻ cuộc họp"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   openShare(meeting);
@@ -816,10 +912,11 @@ export default function FileManagerPage() {
                                 className="rounded p-1.5 text-slate-600 transition hover:bg-white/5 hover:text-slate-200"
                               >
                                 <ShareIcon />
-                              </button>
-                              <button
+                              </button>}
+                              {["COMPLETED", "FAILED", "DLQ", "CANCELLED", "UNPROCESSED"].includes(String(meeting.status).toUpperCase()) && <button
                                 type="button"
                                 title="Xóa file"
+                                aria-label="Xóa file"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setSelectedMeeting(meeting);
@@ -827,10 +924,11 @@ export default function FileManagerPage() {
                                 className="rounded p-1.5 text-slate-600 transition hover:bg-red-500/10 hover:text-red-300"
                               >
                                 <TrashIcon />
-                              </button>
+                              </button>}
                               <button
                                 type="button"
                                 title="Đổi tên tệp"
+                                aria-label="Đổi tên tệp"
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   openRename(meeting);
@@ -839,10 +937,11 @@ export default function FileManagerPage() {
                               >
                                 <PencilIcon />
                               </button>
-                              <button
+                              {meeting.status === "UNPROCESSED" && <button
                                 type="button"
                                 title={meeting.status === "UNPROCESSED" ? "Xử lý AI" : "Chỉ khả dụng khi chưa xử lý"}
-                                disabled={meeting.status !== "UNPROCESSED" || isStartingProcess}
+                                aria-label="Xử lý AI"
+                                disabled={isStartingProcess}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setProcessError("");
@@ -851,7 +950,7 @@ export default function FileManagerPage() {
                                 className="rounded p-1.5 text-slate-600 transition hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-30"
                               >
                                 <PlayIcon />
-                              </button>
+                              </button>}
                             </div>
                           </td>
                         </tr>

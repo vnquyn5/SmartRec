@@ -65,6 +65,7 @@ export function AuthProvider({ children }) {
             userCode: profile.userCode ?? storedUser.userCode,
             name: profile.full_name ?? storedUser.name,
             email: profile.email ?? storedUser.email,
+            authProvider: profile.authProvider ?? storedUser.authProvider ?? "LOCAL",
             phone: profile.phone ?? storedUser.phone,
             department: profile.department ?? storedUser.department,
             position: profile.position ?? storedUser.position,
@@ -186,6 +187,14 @@ export function AuthProvider({ children }) {
     channel?.postMessage({ type: "logout" });
   }, [clearSession]);
 
+  const updateUser = useCallback((updates) => {
+    setUser((current) => {
+      const next = { ...(current || {}), ...updates };
+      localStorage.setItem(USER_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const value = useMemo(
     () => ({
       status,
@@ -195,9 +204,10 @@ export function AuthProvider({ children }) {
       googleLogin,
       register,
       logout,
+      updateUser,
       hasRole: (role) => !!user?.roles?.includes(role),
     }),
-    [status, user, registeredUser, login, googleLogin, register, logout],
+    [status, user, registeredUser, login, googleLogin, register, logout, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

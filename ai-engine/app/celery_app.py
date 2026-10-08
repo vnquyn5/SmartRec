@@ -11,6 +11,9 @@ celery_app = Celery(
 celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
+    task_acks_on_failure_or_timeout=True,
     worker_prefetch_multiplier=1,
-    task_reject_on_worker_lost=True,
+    # A lost child (for example SIGKILL after OOM) must not requeue the same
+    # memory-heavy task indefinitely. The backend watchdog terminalizes it.
+    task_reject_on_worker_lost=False,
 )

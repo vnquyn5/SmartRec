@@ -6,7 +6,7 @@ import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 import TranscriptPanel from './TranscriptPanel';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('speaker');
 
   // Khai báo các tab theo yêu cầu 
@@ -118,7 +118,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex-1">
-                <AudioAiStatus status={aiStatus} errorMessage={aiError} retrying={retrying} onRetry={onRetry} onStartProcessing={onStartProcessing} startingProcess={startingProcess} />
+                <AudioAiStatus status={aiStatus} errorMessage={aiError} retrying={retrying} onRetry={onRetry} onPause={onPause} onResume={onResume} onCancel={onCancel} lifecycleAction={lifecycleAction} onStartProcessing={onStartProcessing} startingProcess={startingProcess} />
                 {jobLoading && <p className="mt-2 text-[11px] text-slate-400">Đang tải trạng thái xử lý…</p>}
               </div>
             </div>

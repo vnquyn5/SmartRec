@@ -82,3 +82,23 @@ export async function renameMeeting(id, fileName) {
 export async function startMeetingProcessing(id) {
   return httpClient.post(`/meetings/${id}/process`);
 }
+
+export async function getJob(id) {
+  return httpClient.get(`/jobs/${id}`);
+}
+
+export async function pauseJob(id) {
+  return httpClient.post(`/jobs/${id}/pause`);
+}
+
+export async function resumeJob(id) {
+  return httpClient.post(`/jobs/${id}/resume`);
+}
+
+export async function cancelJob(id) {
+  return httpClient.post(`/jobs/${id}/cancel`);
+}
+
+export async function retryJob(id) {
+  return httpClient.post(`/jobs/${id}/retry`);
+}

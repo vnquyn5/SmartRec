@@ -1,9 +1,13 @@
-/** @typedef {'UNPROCESSED'|'PENDING'|'PROCESSING'|'COMPLETED'|'FAILED'} MeetingStatus */
+/** @typedef {'UNPROCESSED'|'PENDING'|'PROCESSING'|'PAUSE_REQUESTED'|'PAUSED'|'CANCEL_REQUESTED'|'CANCELLED'|'COMPLETED'|'FAILED'} MeetingStatus */
 
 export const MEETING_STATUS = Object.freeze({
   UNPROCESSED: "UNPROCESSED",
   PENDING: "PENDING",
   PROCESSING: "PROCESSING",
+  PAUSE_REQUESTED: "PAUSE_REQUESTED",
+  PAUSED: "PAUSED",
+  CANCEL_REQUESTED: "CANCEL_REQUESTED",
+  CANCELLED: "CANCELLED",
   COMPLETED: "COMPLETED",
   FAILED: "FAILED",
 });
@@ -27,6 +31,26 @@ export const MEETING_STATUS_CONFIG = Object.freeze({
     badgeClass:
       "bg-blue-500/15 text-blue-300 ring-1 ring-inset ring-blue-500/25",
     dotClass: "bg-blue-400",
+  },
+  PAUSE_REQUESTED: {
+    label: "Đang tạm dừng…",
+    badgeClass: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-500/25",
+    dotClass: "bg-amber-400",
+  },
+  PAUSED: {
+    label: "Đã tạm dừng",
+    badgeClass: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-500/25",
+    dotClass: "bg-amber-400",
+  },
+  CANCEL_REQUESTED: {
+    label: "Đang hủy…",
+    badgeClass: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-500/25",
+    dotClass: "bg-amber-400",
+  },
+  CANCELLED: {
+    label: "Đã hủy",
+    badgeClass: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-500/20",
+    dotClass: "bg-slate-400",
   },
   COMPLETED: {
     label: "Hoàn tất",

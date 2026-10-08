@@ -19,7 +19,7 @@ spring:
     defer-datasource-initialization: true
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
@@ -71,6 +71,8 @@ media:
 
 job:
   max-retry: 5
+  heartbeat-timeout-seconds: ${JOB_HEARTBEAT_TIMEOUT_SECONDS:90}
+  watchdog-scan-interval-ms: ${JOB_WATCHDOG_SCAN_INTERVAL_MS:30000}
 
 smartrec:
   ai-engine:

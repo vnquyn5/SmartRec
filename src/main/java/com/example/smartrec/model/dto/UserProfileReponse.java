@@ -17,6 +17,8 @@ public class UserProfileReponse {
 
     private String email;
 
+    private String authProvider;
+
     private String phone;
 
     private String full_name;
@@ -28,5 +30,9 @@ public class UserProfileReponse {
     private String role;
 
     private Instant createdAt;
+
+    private String accessToken;
+
+    private String refreshToken;
 
 }

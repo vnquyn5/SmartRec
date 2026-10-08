@@ -2,10 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 import { api } from "../../lib/http/client";
-import { startMeetingProcessing } from "../../services/meetingService";
+import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
 
 const POLL_INTERVAL_MS = 2500;
-const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING", "PROCESSING", "RETRYING"]);
+const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING", "PROCESSING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
 const FAILURE_STATUSES = new Set(["FAILED", "DLQ", "CANCELLED"]);
 const COMPLETE_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED"]);
 const UNPROCESSED_STATUS = "UNPROCESSED";
@@ -71,16 +71,21 @@ export default function MeetingDetailPage() {
   const [speakerError, setSpeakerError] = useState("");
   const [retrying, setRetrying] = useState(false);
   const [startingProcess, setStartingProcess] = useState(false);
+  const [lifecycleAction, setLifecycleAction] = useState(false);
   const [refreshGeneration, setRefreshGeneration] = useState(0);
   const activeMeetingIdRef = useRef(null);
   const requestedJobIdsRef = useRef(new Set());
+  const meetingSnapshotRef = useRef(null);
 
-  const refresh = useCallback(async (isCancelled) => {
-    const currentMeeting = await api.get(`/meetings/${id}`);
+  const refresh = useCallback(async (isCancelled, { fetchMeeting = true } = {}) => {
+    const currentMeeting = fetchMeeting || !meetingSnapshotRef.current
+      ? await api.get(`/meetings/${id}`)
+      : meetingSnapshotRef.current;
     if (isCancelled()) return { shouldPoll: false };
     if (!currentMeeting || currentMeeting.id !== id) {
       throw new Error("API không trả về đúng thông tin cuộc họp.");
     }
+    meetingSnapshotRef.current = currentMeeting;
     setMeeting(currentMeeting);
     setMeetingId(id);
     setMeetingLoading(false);
@@ -132,7 +137,7 @@ export default function MeetingDetailPage() {
     const jobStatus = String(currentJob?.status || "").toUpperCase();
     const status = jobStatus || meetingStatus;
 
-    if (FAILURE_STATUSES.has(status) || FAILURE_STATUSES.has(meetingStatus)) {
+    if (FAILURE_STATUSES.has(status) || (!jobStatus && FAILURE_STATUSES.has(meetingStatus))) {
       setSpeakers([]);
       setSpeakersMeetingId(id);
       setSpeakerError("");
@@ -140,7 +145,7 @@ export default function MeetingDetailPage() {
       return { shouldPoll: false };
     }
 
-    if (COMPLETE_STATUSES.has(status) || COMPLETE_STATUSES.has(meetingStatus)) {
+    if (COMPLETE_STATUSES.has(status) || (!jobStatus && COMPLETE_STATUSES.has(meetingStatus))) {
       setPageState("completed-loading-speakers");
       setSpeakerLoading(true);
       try {
@@ -165,9 +170,14 @@ export default function MeetingDetailPage() {
     setSpeakers([]);
     setSpeakersMeetingId(null);
     setSpeakerError("");
+    if (status === "PAUSED" || meetingStatus === "PAUSED") {
+      setPageState("paused");
+      return { shouldPoll: false };
+    }
     if (ACTIVE_STATUSES.has(status) || ACTIVE_STATUSES.has(meetingStatus)) {
-      setPageState(status === "PENDING" || status === "QUEUED" ? "queued" : "processing");
-      return { shouldPoll: true };
+      const resolved = status || meetingStatus;
+      setPageState(resolved === "PAUSE_REQUESTED" ? "pause-requested" : resolved === "CANCEL_REQUESTED" ? "cancel-requested" : resolved === "PENDING" || resolved === "QUEUED" ? "queued" : "processing");
+      return { shouldPoll: Boolean(currentMeeting.activeJobId) };
     }
     throw new Error(`Trạng thái cuộc họp không được hỗ trợ: ${status || "không xác định"}`);
   }, [id]);
@@ -178,6 +188,7 @@ export default function MeetingDetailPage() {
     const isNewMeeting = activeMeetingIdRef.current !== id;
     activeMeetingIdRef.current = id;
     if (isNewMeeting) {
+      meetingSnapshotRef.current = null;
       setMeeting(null);
       setMeetingId(null);
       setMeetingLoading(true);
@@ -193,9 +204,11 @@ export default function MeetingDetailPage() {
       requestedJobIdsRef.current.clear();
     }
 
+    let fetchMeeting = true;
     const poll = async () => {
       try {
-        const result = await refresh(() => cancelled);
+        const result = await refresh(() => cancelled, { fetchMeeting });
+        fetchMeeting = false;
         if (!cancelled && result.shouldPoll) timer = window.setTimeout(poll, POLL_INTERVAL_MS);
       } catch (error) {
         if (cancelled) return;
@@ -248,6 +261,21 @@ export default function MeetingDetailPage() {
     }
   };
 
+  const handleLifecycleAction = async (action, nextStatus) => {
+    if (!job?.id || lifecycleAction) return;
+    setLifecycleAction(true);
+    try {
+      await action(job.id);
+      setJob((current) => current ? { ...current, status: nextStatus } : current);
+      setPageState(nextStatus === "PAUSED" ? "paused" : nextStatus === "PAUSE_REQUESTED" ? "pause-requested" : nextStatus === "CANCEL_REQUESTED" ? "cancel-requested" : "queued");
+      setRefreshGeneration((generation) => generation + 1);
+    } catch (error) {
+      setLoadError(apiMessage(error, "Không thể cập nhật trạng thái xử lý."));
+    } finally {
+      setLifecycleAction(false);
+    }
+  };
+
   const handleSaveSpeakers = async (updatedSpeakers) => {
     if (speakersMeetingId !== id) throw new Error("Dữ liệu người nói không thuộc cuộc họp hiện tại.");
     for (const speaker of updatedSpeakers) {
@@ -270,7 +298,10 @@ export default function MeetingDetailPage() {
   const aiStatus = displayState === "completed"
     ? speakerError ? "completed" : currentSpeakers.length === 0 ? "empty" : "completed"
     : displayState === "completed-loading-speakers" ? "completed"
-    : displayState === "failed" ? "failed"
+      : displayState === "failed" ? "failed"
+      : displayState === "paused" ? "paused"
+      : displayState === "pause-requested" ? "pause-requested"
+      : displayState === "cancel-requested" ? "cancel-requested"
       : displayState === "error" ? "error"
         : displayState === "unprocessed" ? "unprocessed"
           : displayState === "queued" ? "queued" : "processing";
@@ -304,6 +335,10 @@ export default function MeetingDetailPage() {
         speakerError={speakerError}
         speakerLoading={speakerLoading}
         onRetry={displayState === "failed" ? handleRetry : undefined}
+        onPause={job && ["PROCESSING", "RUNNING", "RETRYING", "QUEUED"].includes(String(job.status).toUpperCase()) ? () => handleLifecycleAction(pauseJob, "PAUSE_REQUESTED") : undefined}
+        onResume={displayState === "paused" ? () => handleLifecycleAction(resumeJob, "QUEUED") : undefined}
+        onCancel={job && !["COMPLETED", "FAILED", "DLQ", "CANCELLED", "CANCEL_REQUESTED"].includes(String(job.status).toUpperCase()) ? () => handleLifecycleAction(cancelJob, "CANCEL_REQUESTED") : undefined}
+        lifecycleAction={lifecycleAction}
         onStartProcessing={displayState === "unprocessed" ? handleStartProcessing : undefined}
         startingProcess={startingProcess}
         retrying={retrying}

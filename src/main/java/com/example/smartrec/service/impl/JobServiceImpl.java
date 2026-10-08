@@ -19,6 +19,7 @@ import com.example.smartrec.model.dto.CreateJobRequest;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.SpeakerSegmentResponse;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
+import com.example.smartrec.model.dto.WorkerJobControlResponse;
 import com.example.smartrec.repository.JobRepository;
 import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MediaFileRepository;
@@ -32,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -50,6 +52,8 @@ public class JobServiceImpl implements JobService {
     private final MeetingService meetingService;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
+    @Value("${job.heartbeat-timeout-seconds:90}")
+    private long heartbeatTimeoutSeconds;
 
     @Override
     @Transactional
@@ -145,6 +149,7 @@ public class JobServiceImpl implements JobService {
                 .lastRetryAt(job.getLastRetryAt())
                 .createdAt(job.getCreatedAt())
                 .updatedAt(job.getUpdatedAt())
+                .lastHeartbeatAt(job.getLastHeartbeatAt())
                 .build();
     }
 
@@ -207,22 +212,34 @@ public class JobServiceImpl implements JobService {
     @Override
     @Transactional
     public void manualRetry(UUID jobId) {
-        Job job = findJob(jobId);
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
 
-        // chi co DLQ moi duoc retry thu cong
-        if (job.getStatus() != JobStatus.DLQ) {
+        if (Set.of(JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.RUNNING, JobStatus.RETRYING,
+                JobStatus.PAUSE_REQUESTED, JobStatus.PAUSED, JobStatus.CANCEL_REQUESTED).contains(job.getStatus())) {
+            return;
+        }
+        if (!Set.of(JobStatus.DLQ, JobStatus.FAILED, JobStatus.CANCELLED).contains(job.getStatus())) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_JOB_STATUS",
-                    "Chỉ Job ở trạng thái DLQ mới được retry thủ công");
+                    "Chỉ Job FAILED, DLQ hoặc CANCELLED mới được retry thủ công");
         }
         List<JobStage> stages = jobStageRepository.findByJobIdOrderByStageAsc(jobId);
         JobStage failedStage = stages
                 .stream()
                 .filter(stage -> stage.getStatus() == JobStageStatus.FAILED)
                 .findFirst()
-                .orElseThrow(() -> new BusinessException(
-                        HttpStatus.BAD_REQUEST,
-                        "FAILED_STAGE_NOT_FOUND",
-                        "Không tìm thấy stage bị lỗi"));
+                .orElse(stages.stream().filter(stage -> stage.getStage() == PipelineStage.FFMPEG)
+                .findFirst().orElseThrow());
+
+        Meeting meeting = meetingRepository.findById(job.getMeetingId()).orElse(null);
+        if (meeting != null && meeting.getActive_job_id() != null && !jobId.equals(meeting.getActive_job_id())) {
+            Job activeJob = jobRepository.findById(meeting.getActive_job_id()).orElse(null);
+            if (activeJob != null && Set.of(JobStatus.PENDING, JobStatus.QUEUED, JobStatus.PROCESSING,
+                    JobStatus.RUNNING, JobStatus.RETRYING, JobStatus.PAUSE_REQUESTED, JobStatus.PAUSED,
+                    JobStatus.CANCEL_REQUESTED).contains(activeJob.getStatus())) {
+                throw new BusinessException(HttpStatus.CONFLICT, "ACTIVE_JOB_EXISTS",
+                        "Cuộc họp đang có một Job khác chưa kết thúc");
+            }
+        }
 
         // Celery restarts the complete processor when a task is retried.
         stages.forEach(stage -> {
@@ -241,7 +258,7 @@ public class JobServiceImpl implements JobService {
         job.setErrorCode(null);
         job.setErrorMessage(null);
         job.setFailedAt(null);
-        Meeting meeting = meetingRepository.findById(job.getMeetingId()).orElse(null);
+        job.setLastHeartbeatAt(null);
         if (meeting != null) {
             meeting.setActive_job_id(job.getId());
             meeting.setStatus(MeetingStatus.PROCESSING);
@@ -266,6 +283,122 @@ public class JobServiceImpl implements JobService {
         Job job = findJob(jobId);
         meetingService.getMeeting(job.getMeetingId());
         manualRetry(jobId);
+    }
+
+    @Override
+    @Transactional
+    public void pauseForCurrentUser(UUID jobId) {
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
+        meetingService.getMeeting(job.getMeetingId());
+        if (job.getStatus() == JobStatus.PAUSE_REQUESTED || job.getStatus() == JobStatus.PAUSED) return;
+        if (!Set.of(JobStatus.PENDING, JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.RUNNING, JobStatus.RETRYING)
+                .contains(job.getStatus())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Job không thể tạm dừng ở trạng thái hiện tại");
+        }
+        job.setStatus(JobStatus.PAUSE_REQUESTED);
+        jobRepository.save(job);
+        updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
+    }
+
+    @Override
+    @Transactional
+    public void cancelForCurrentUser(UUID jobId) {
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
+        meetingService.getMeeting(job.getMeetingId());
+        if (job.getStatus() == JobStatus.CANCEL_REQUESTED || job.getStatus() == JobStatus.CANCELLED) return;
+        boolean wasPaused = job.getStatus() == JobStatus.PAUSED;
+        if (!Set.of(JobStatus.PENDING, JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.RUNNING, JobStatus.RETRYING,
+                JobStatus.PAUSE_REQUESTED, JobStatus.PAUSED).contains(job.getStatus())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Job không thể hủy ở trạng thái hiện tại");
+        }
+        job.setStatus(JobStatus.CANCEL_REQUESTED);
+        jobRepository.save(job);
+        updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
+        if (wasPaused) enqueueAfterCommit(() -> jobQueueService.enqueueJob(jobId));
+    }
+
+    @Override
+    @Transactional
+    public void resumeForCurrentUser(UUID jobId) {
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
+        meetingService.getMeeting(job.getMeetingId());
+        if (Set.of(JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.RUNNING, JobStatus.RETRYING).contains(job.getStatus())) return;
+        if (job.getStatus() != JobStatus.PAUSED) {
+            throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Chỉ Job PAUSED mới được tiếp tục");
+        }
+        jobStageRepository.findByJobIdAndStage(jobId, job.getCurrentStage()).ifPresent(stage -> {
+            stage.setStatus(JobStageStatus.PENDING);
+            stage.setCompletedAt(null);
+            stage.setErrorCode(null);
+            stage.setErrorMessage(null);
+            jobStageRepository.save(stage);
+        });
+        job.setStatus(JobStatus.QUEUED);
+        job.setLastHeartbeatAt(null);
+        jobRepository.save(job);
+        updateMeetingLifecycle(job, MeetingStatus.PENDING);
+        enqueueAfterCommit(() -> jobQueueService.enqueueJob(jobId));
+    }
+
+    @Override
+    @Transactional
+    public WorkerJobControlResponse workerHeartbeat(UUID jobId) {
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
+        Instant now = Instant.now();
+        job.setLastHeartbeatAt(now);
+        if (Set.of(JobStatus.QUEUED, JobStatus.PENDING, JobStatus.RETRYING).contains(job.getStatus())) {
+            job.setStatus(JobStatus.PROCESSING);
+            updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
+        }
+        jobRepository.save(job);
+        String objectKey = mediaFileRepository.findById(job.getMediaFileId()).map(MediaFile::getObject_key).orElse(null);
+        List<PipelineStage> successfulStages = jobStageRepository.findByJobIdOrderByStageAsc(jobId).stream()
+                .filter(stage -> stage.getStatus() == JobStageStatus.SUCCESS).map(JobStage::getStage).toList();
+        return WorkerJobControlResponse.builder().jobId(jobId).meetingId(job.getMeetingId()).objectKey(objectKey)
+                .status(job.getStatus()).currentStage(job.getCurrentStage()).successfulStages(successfulStages).build();
+    }
+
+    @Override
+    @Transactional
+    public void markStaleJobsFailed() {
+        Instant now = Instant.now();
+        Instant cutoff = now.minusSeconds(heartbeatTimeoutSeconds);
+        List<JobStatus> monitored = List.of(
+                JobStatus.PROCESSING,
+                JobStatus.RUNNING,
+                JobStatus.RETRYING,
+                JobStatus.PAUSE_REQUESTED);
+        for (Job candidate : jobRepository.findByStatusIn(monitored)) {
+            Instant lastSeen = candidate.getLastHeartbeatAt() != null ? candidate.getLastHeartbeatAt()
+                    : candidate.getUpdatedAt() != null ? candidate.getUpdatedAt() : candidate.getCreatedAt();
+            if (lastSeen == null || !lastSeen.isBefore(cutoff)) continue;
+            Job job = jobRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+            if (job == null || !monitored.contains(job.getStatus())) continue;
+            job.setStatus(JobStatus.FAILED);
+            job.setErrorCode("WORKER_LOST");
+            job.setErrorMessage("AI worker heartbeat timed out; worker may have stopped unexpectedly.");
+            job.setFailedAt(now);
+            jobRepository.save(job);
+            if (job.getCurrentStage() != null) {
+                jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).ifPresent(stage -> {
+                    stage.setStatus(JobStageStatus.FAILED);
+                    stage.setErrorCode("WORKER_LOST");
+                    stage.setErrorMessage(job.getErrorMessage());
+                    stage.setCompletedAt(now);
+                    jobStageRepository.save(stage);
+                    markDownstreamStagesSkipped(job, stage);
+                });
+            }
+            markMeetingFailed(job);
+        }
+    }
+
+    private void updateMeetingLifecycle(Job job, MeetingStatus status) {
+        meetingRepository.findById(job.getMeetingId()).ifPresent(meeting -> {
+            meeting.setActive_job_id(job.getId());
+            meeting.setStatus(status);
+            meetingRepository.save(meeting);
+        });
     }
 
     // private void processMedia(UUID jobId){
@@ -321,7 +454,8 @@ public class JobServiceImpl implements JobService {
                     "INVALID_CALLBACK",
                     "Stage không được để trống");
         }
-        if (job.getStatus() == JobStatus.COMPLETED || job.getStatus() == JobStatus.DLQ) {
+        if (Set.of(JobStatus.COMPLETED, JobStatus.DLQ, JobStatus.CANCELLED).contains(job.getStatus())) {
+            if (job.getStatus() == JobStatus.CANCELLED && request != null && request.getStatus() == JobStageStatus.CANCELLED) return;
             throw new BusinessException(HttpStatus.CONFLICT, "TERMINAL_JOB_CALLBACK",
                     "Không nhận callback cho Job đã kết thúc");
         }
@@ -339,9 +473,15 @@ public class JobServiceImpl implements JobService {
                         "JOB_STAGE_NOT_FOUND",
                         "Không tìm thấy Job Stage"));
 
+        if (job.getStatus() == JobStatus.PAUSED && request.getStatus() == JobStageStatus.PAUSED
+                && jobStage.getStatus() == JobStageStatus.PAUSED) return;
+
         // Repeated terminal failure callbacks are acknowledged without changing retry state.
         if (job.getStatus() == JobStatus.FAILED && jobStage.getStatus() == JobStageStatus.FAILED) {
             return;
+        }
+        if (job.getStatus() == JobStatus.FAILED) {
+            throw new BusinessException(HttpStatus.CONFLICT, "TERMINAL_JOB_CALLBACK", "Không nhận callback cho Job đã thất bại");
         }
         if (job.getStatus() == JobStatus.RETRYING && jobStage.getStatus() == JobStageStatus.RETRYING
                 && request.getStatus() == JobStageStatus.FAILED) {
@@ -361,7 +501,9 @@ public class JobServiceImpl implements JobService {
         }
 
         if (request.getStatus() == JobStageStatus.PROCESSING) {
-            job.setStatus(JobStatus.PROCESSING);
+            if (job.getStatus() != JobStatus.PAUSE_REQUESTED && job.getStatus() != JobStatus.CANCEL_REQUESTED) {
+                job.setStatus(JobStatus.PROCESSING);
+            }
 
             jobStage.setStatus(
                     JobStageStatus.PROCESSING);
@@ -369,6 +511,8 @@ public class JobServiceImpl implements JobService {
                 jobStage.setStartedAt(Instant.now());
             }
             markMeetingProcessing(job);
+            if (job.getStatus() == JobStatus.PAUSE_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
+            if (job.getStatus() == JobStatus.CANCEL_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
         } else if (request.getStatus() == JobStageStatus.SUCCESS) {
 
             jobStage.setStatus(JobStageStatus.SUCCESS);
@@ -401,6 +545,22 @@ public class JobServiceImpl implements JobService {
                     job,
                     jobStage,
                     request);
+        } else if (request.getStatus() == JobStageStatus.PAUSED) {
+            if (job.getStatus() != JobStatus.PAUSE_REQUESTED && job.getStatus() != JobStatus.PAUSED) {
+                throw new BusinessException(HttpStatus.CONFLICT, "PAUSE_NOT_REQUESTED", "Job chưa có yêu cầu tạm dừng");
+            }
+            jobStage.setStatus(JobStageStatus.PAUSED);
+            job.setStatus(JobStatus.PAUSED);
+            updateMeetingLifecycle(job, MeetingStatus.PAUSED);
+        } else if (request.getStatus() == JobStageStatus.CANCELLED) {
+            if (job.getStatus() != JobStatus.CANCEL_REQUESTED && job.getStatus() != JobStatus.CANCELLED) {
+                throw new BusinessException(HttpStatus.CONFLICT, "CANCEL_NOT_REQUESTED", "Job chưa có yêu cầu hủy");
+            }
+            jobStage.setStatus(JobStageStatus.CANCELLED);
+            jobStage.setCompletedAt(Instant.now());
+            job.setStatus(JobStatus.CANCELLED);
+            markDownstreamStagesSkipped(job, jobStage);
+            updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
         }
 
         jobStageRepository.save(jobStage);
@@ -449,6 +609,10 @@ public class JobServiceImpl implements JobService {
             case DLQ, FAILED -> MeetingStatus.FAILED;
             case PENDING, QUEUED -> MeetingStatus.PENDING;
             case PROCESSING, RETRYING, RUNNING -> MeetingStatus.PROCESSING;
+            case PAUSE_REQUESTED -> MeetingStatus.PAUSE_REQUESTED;
+            case PAUSED -> MeetingStatus.PAUSED;
+            case CANCEL_REQUESTED -> MeetingStatus.CANCEL_REQUESTED;
+            case CANCELLED -> MeetingStatus.CANCELLED;
         });
         meetingRepository.save(meeting);
     }
@@ -471,7 +635,9 @@ public class JobServiceImpl implements JobService {
         }
         // lay stage tieo theo
         PipelineStage nextStage = stages[index + 1];
-        job.setStatus(JobStatus.QUEUED);
+        if (job.getStatus() != JobStatus.PAUSE_REQUESTED && job.getStatus() != JobStatus.CANCEL_REQUESTED) {
+            job.setStatus(JobStatus.QUEUED);
+        }
         job.setCurrentStage(nextStage);
     }
 
@@ -539,7 +705,7 @@ public class JobServiceImpl implements JobService {
     private boolean isNonRetryableProcessingError(String errorCode) {
         return switch (errorCode) {
             case "NO_SPEECH_DETECTED", "INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY",
-                    "AUDIO_CORRUPTED", "VALIDATION_ERROR" -> true;
+                    "AUDIO_CORRUPTED", "VALIDATION_ERROR", "WORKSPACE_LOST" -> true;
             default -> false;
         };
     }

@@ -67,6 +67,9 @@ public class Job {
     @Column(name = "last_retry_at")
     private Instant lastRetryAt;
 
+    @Column(name = "last_heartbeat_at")
+    private Instant lastHeartbeatAt;
+
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;

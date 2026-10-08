@@ -261,3 +261,17 @@ export function PlayIcon({ className = "h-3.5 w-3.5", ...props }) {
     </svg>
   );
 }
+
+export function PauseIcon({ className = "h-4 w-4", ...props }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M7 5h3.5v14H7zm6.5 0H17v14h-3.5z" />
+    </svg>
+  );
+}

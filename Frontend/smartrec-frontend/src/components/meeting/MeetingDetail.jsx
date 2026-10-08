@@ -12,6 +12,10 @@ export default function MeetingDetail({
   jobLoading,
   aiError,
   onRetry,
+  onPause,
+  onResume,
+  onCancel,
+  lifecycleAction,
   onStartProcessing,
   startingProcess,
   retrying,
@@ -65,6 +69,10 @@ export default function MeetingDetail({
           speakerLoading={speakerLoading}
           aiError={aiError}
           onRetry={onRetry}
+          onPause={onPause}
+          onResume={onResume}
+          onCancel={onCancel}
+          lifecycleAction={lifecycleAction}
           onStartProcessing={onStartProcessing}
           startingProcess={startingProcess}
           retrying={retrying}

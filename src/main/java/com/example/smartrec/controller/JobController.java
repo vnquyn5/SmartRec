@@ -19,6 +19,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import com.example.smartrec.model.dto.CreateJobRequest;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
+import com.example.smartrec.model.dto.WorkerJobControlResponse;
 import com.example.smartrec.service.JobService;
 
 import lombok.RequiredArgsConstructor;
@@ -69,6 +70,35 @@ public class JobController {
             @PathVariable UUID jobId) {
         jobService.manualRetryForCurrentUser(jobId);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{jobId}/pause")
+    public ResponseEntity<Void> pause(@PathVariable UUID jobId) {
+        jobService.pauseForCurrentUser(jobId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{jobId}/resume")
+    public ResponseEntity<Void> resume(@PathVariable UUID jobId) {
+        jobService.resumeForCurrentUser(jobId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{jobId}/cancel")
+    public ResponseEntity<Void> cancel(@PathVariable UUID jobId) {
+        jobService.cancelForCurrentUser(jobId);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{jobId}/heartbeat")
+    public ResponseEntity<WorkerJobControlResponse> heartbeat(
+            @PathVariable UUID jobId,
+            @RequestHeader(value = "X-Internal-Token", required = false) String internalToken) {
+        if (internalToken == null || configuredInternalToken == null || configuredInternalToken.isBlank()
+                || !configuredInternalToken.equals(internalToken.trim())) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return ResponseEntity.ok(jobService.workerHeartbeat(jobId));
     }
 
     @PostMapping("/{jobId}/callback")

@@ -6,6 +6,7 @@ import java.util.UUID;
 import com.example.smartrec.model.dto.CreateJobRequest;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
+import com.example.smartrec.model.dto.WorkerJobControlResponse;
 
 public interface JobService {
     JobResponse createJob(CreateJobRequest request); // tao  process job moi
@@ -17,5 +18,10 @@ public interface JobService {
     void manualRetry(UUID jobId); // retry job thu cong
     void manualRetryForCurrentUser(UUID jobId);
     void handleWorkerCallback(UUID jobId,WorkerCallbackRequest request); // iếp nhận kết quả từ Worker → cập nhật trạng thái Job/JobStage
+    void pauseForCurrentUser(UUID jobId);
+    void resumeForCurrentUser(UUID jobId);
+    void cancelForCurrentUser(UUID jobId);
+    WorkerJobControlResponse workerHeartbeat(UUID jobId);
+    void markStaleJobsFailed();
     
 } 

@@ -75,10 +75,11 @@ public class MeetingServiceImpl implements MeetingService {
             }
         }
         Pageable pageable = PageRequest.of(page, size, parseSort(request.getSort()));
-        Page<Meeting> meetings = meetingRepository.searchMeetings(currentUser.getId(), status, keyword, pageable);
+        Page<MeetingResponseDTO> meetings = meetingRepository.searchMeetings(
+                currentUser.getId(), status, keyword, pageable);
 
         return new PageResponse<>(
-                meetings.getContent().stream().map(this::toResponse).toList(),
+                meetings.getContent(),
                 meetings.getNumber(),
                 meetings.getSize(),
                 meetings.getTotalElements(),

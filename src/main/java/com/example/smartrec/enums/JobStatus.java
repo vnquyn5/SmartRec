@@ -6,6 +6,10 @@ public enum JobStatus {
     RUNNING,
     PROCESSING,
     RETRYING,
+    PAUSE_REQUESTED,
+    PAUSED,
+    CANCEL_REQUESTED,
+    CANCELLED,
     COMPLETED,
     FAILED,
     DLQ

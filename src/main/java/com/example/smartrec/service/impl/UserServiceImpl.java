@@ -1,6 +1,7 @@
 package com.example.smartrec.service.impl;
 
 import java.time.Instant;
+import java.util.Locale;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -15,8 +16,12 @@ import com.example.smartrec.model.dto.UpdateUserProfileRequest;
 import com.example.smartrec.model.dto.UserProfileReponse;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.UserService;
+import com.example.smartrec.service.JwtService;
+import com.example.smartrec.service.RefreshTokenService;
+import com.example.smartrec.entity.RefreshToken;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +29,8 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
 
     @Override
     public UserProfileReponse getMyProfile() {
@@ -32,6 +39,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional
     public UserProfileReponse updateMyProfile(UpdateUserProfileRequest request) {
 
         User user = getCurrentUser();
@@ -40,9 +48,18 @@ public class UserServiceImpl implements UserService {
                 ? user.getFull_name()
                 : request.getFullName().trim();
 
-        String newEmail = request.getEmail() == null
+        boolean googleAccount = isGoogleAccount(user);
+        String requestedEmail = request.getEmail() == null ? null : request.getEmail().trim();
+        if (googleAccount && requestedEmail != null && !requestedEmail.isBlank()
+                && !requestedEmail.equalsIgnoreCase(user.getEmail())) {
+            throw new BusinessException(
+                    HttpStatus.BAD_REQUEST,
+                    "GOOGLE_EMAIL_IMMUTABLE",
+                    "Tài khoản đăng nhập bằng Google không thể thay đổi email.");
+        }
+        String newEmail = googleAccount || requestedEmail == null
                 ? user.getEmail()
-                : request.getEmail().trim();
+                : requestedEmail.toLowerCase(Locale.ROOT);
 
         String newPhone = request.getPhone() == null
                 ? user.getPhone()
@@ -83,8 +100,8 @@ public class UserServiceImpl implements UserService {
             );
         }
 
-        if (!newEmail.equalsIgnoreCase(user.getEmail())
-                && userRepository.existsByEmail(newEmail)) {
+        boolean emailChanged = user.getEmail() == null || !newEmail.equalsIgnoreCase(user.getEmail());
+        if (emailChanged && userRepository.existsByEmailIgnoreCase(newEmail)) {
 
             throw new BusinessException(
                     HttpStatus.CONFLICT,
@@ -103,14 +120,38 @@ public class UserServiceImpl implements UserService {
             );
         }
 
+        RefreshToken previousRefreshToken = null;
+        if (emailChanged && request.getRefreshToken() != null && !request.getRefreshToken().isBlank()) {
+            try {
+                previousRefreshToken = refreshTokenService.verify(request.getRefreshToken());
+                if (!user.getId().equals(previousRefreshToken.getUser())) {
+                    throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_REFRESH_TOKEN",
+                            "Refresh token không thuộc phiên đăng nhập hiện tại.");
+                }
+            } catch (BusinessException invalidRefreshToken) {
+                if ("INVALID_REFRESH_TOKEN".equals(invalidRefreshToken.getCode())) throw invalidRefreshToken;
+                previousRefreshToken = null;
+            }
+        }
+
         user.setFull_name(newFullName);
-        user.setEmail(newEmail);
+        if (!googleAccount && emailChanged) user.setEmail(newEmail);
         user.setPhone(newPhone);
         user.setUpdated_at(Instant.now());
 
         userRepository.save(user);
 
-        return mapToProfileResponse(user);
+        UserProfileReponse response = mapToProfileResponse(user);
+        if (emailChanged) {
+            if (previousRefreshToken != null) refreshTokenService.revoke(previousRefreshToken);
+            response = UserProfileReponse.builder()
+                    .id(response.getId()).userCode(response.getUserCode()).email(response.getEmail())
+                    .authProvider(response.getAuthProvider()).phone(response.getPhone()).full_name(response.getFull_name())
+                    .department(response.getDepartment()).position(response.getPosition()).role(response.getRole())
+                    .createdAt(response.getCreatedAt()).accessToken(jwtService.generateToken(user))
+                    .refreshToken(refreshTokenService.create(user).getToken()).build();
+        }
+        return response;
     }
 
     @Override
@@ -196,6 +237,7 @@ public class UserServiceImpl implements UserService {
                 .id(user.getId())
                 .userCode(user.getUserCode())
                 .email(user.getEmail())
+                .authProvider(isGoogleAccount(user) ? "GOOGLE" : "LOCAL")
                 .phone(user.getPhone())
                 .full_name(user.getFull_name())
                 .department(user.getDepartment())
@@ -203,5 +245,10 @@ public class UserServiceImpl implements UserService {
                 .role("USER")
                 .createdAt(user.getCreated_at())
                 .build();
+    }
+
+    private boolean isGoogleAccount(User user) {
+        return "GOOGLE".equalsIgnoreCase(user.getAuth_provider())
+                || (user.getProvider_id() != null && !user.getProvider_id().isBlank());
     }
 }

@@ -11,6 +11,10 @@ ALTER TABLE processing_jobs
         'RUNNING',
         'PROCESSING',
         'RETRYING',
+        'PAUSE_REQUESTED',
+        'PAUSED',
+        'CANCEL_REQUESTED',
+        'CANCELLED',
         'COMPLETED',
         'FAILED',
         'DLQ'
@@ -21,7 +25,9 @@ ALTER TABLE job_stages
 
 ALTER TABLE job_stages
     ADD CONSTRAINT job_stages_status_check
-    CHECK (status IN ('PENDING', 'PROCESSING', 'RETRYING', 'SUCCESS', 'FAILED', 'SKIPPED'));
+    CHECK (status IN ('PENDING', 'PROCESSING', 'RETRYING', 'PAUSED', 'CANCELLED', 'SUCCESS', 'FAILED', 'SKIPPED'));
+
+ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP WITH TIME ZONE;
 
 -- A callback updates the pre-created row for its job/stage pair. This database
 -- guard also prevents duplicate rows if concurrent job setup paths ever race.

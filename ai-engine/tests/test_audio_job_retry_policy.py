@@ -25,6 +25,22 @@ def _configure_no_speech_worker(tmp_path, monkeypatch, callback, object_key="aud
         def fget_object(self, bucket_name, object_name, file_path):
             open(file_path, "wb").close()
 
+    class HeartbeatStub:
+        def __init__(self, job_id):
+            self.job_id = job_id
+
+        def start(self):
+            pass
+
+        def checkpoint(self):
+            return {"successfulStages": []}
+
+        def _send(self):
+            return {"currentStage": "FFMPEG", "status": "PROCESSING"}
+
+        def stop(self):
+            pass
+
     ffmpeg_calls = []
     monkeypatch.setattr(redis_job_worker, "get_workspace_root", lambda: tmp_path)
     monkeypatch.setattr(redis_job_worker, "validate_safe_read_path", lambda path: path)
@@ -34,6 +50,7 @@ def _configure_no_speech_worker(tmp_path, monkeypatch, callback, object_key="aud
     })
     monkeypatch.setattr(redis_job_worker, "minio_client", MinioStub())
     monkeypatch.setattr(redis_job_worker, "ResourceTracker", ResourceTrackerStub)
+    monkeypatch.setattr(redis_job_worker, "WorkerHeartbeat", HeartbeatStub)
     monkeypatch.setattr(redis_job_worker, "require_stage_callback", callback)
     monkeypatch.setattr(redis_job_worker, "audio_extractor", SimpleNamespace(
         extract_and_normalize=lambda **kwargs: ffmpeg_calls.append(kwargs)
@@ -107,6 +124,12 @@ def test_no_speech_callback_failure_does_not_retry_celery_task(tmp_path, monkeyp
 def test_validation_error_callback_failure_does_not_retry_or_run_ffmpeg(tmp_path, monkeypatch):
     ffmpeg_calls = []
     monkeypatch.setattr(redis_job_worker, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(redis_job_worker, "WorkerHeartbeat", type("HeartbeatStub", (), {
+        "__init__": lambda self, job_id: None, "start": lambda self: None,
+        "checkpoint": lambda self: {"successfulStages": []},
+        "_send": lambda self: {"currentStage": "FFMPEG", "status": "PROCESSING"},
+        "stop": lambda self: None,
+    }))
     monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda job_id: {
         "objectKey": None, "meetingId": "meeting-1", "status": "QUEUED"
     })
@@ -134,6 +157,50 @@ def test_terminal_job_is_skipped_without_callback_or_pipeline(tmp_path, monkeypa
     result = process_audio_job.run("job-already-completed")
 
     assert result == {"status": "SKIPPED", "reason": "TERMINAL_JOB", "jobStatus": "COMPLETED"}
+
+
+def test_pause_at_safe_point_preserves_workspace_and_does_not_enter_ffmpeg(tmp_path, monkeypatch):
+    callbacks = []
+    class PauseHeartbeat:
+        def __init__(self, job_id): pass
+        def start(self): pass
+        def checkpoint(self): raise redis_job_worker._PauseAtBoundary()
+        def _send(self): return {"currentStage": "FFMPEG", "status": "PAUSE_REQUESTED"}
+        def stop(self): pass
+    monkeypatch.setattr(redis_job_worker, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda job_id: {
+        "objectKey": "audio.wav", "meetingId": "meeting-1", "status": "QUEUED"
+    })
+    monkeypatch.setattr(redis_job_worker, "WorkerHeartbeat", PauseHeartbeat)
+    monkeypatch.setattr(redis_job_worker, "require_stage_callback", lambda *args, **kwargs: callbacks.append(args))
+
+    result = redis_job_worker.process_job("job-paused")
+
+    assert result["status"] == "PAUSED"
+    assert callbacks == [("job-paused", "FFMPEG", "PAUSED")]
+    assert (tmp_path / "job-paused").is_dir()
+
+
+def test_cancel_at_safe_point_reports_cancelled_and_cleans_workspace(tmp_path, monkeypatch):
+    callbacks = []
+    class CancelHeartbeat:
+        def __init__(self, job_id): pass
+        def start(self): pass
+        def checkpoint(self): raise redis_job_worker._CancelAtBoundary()
+        def _send(self): return {"currentStage": "FFMPEG", "status": "CANCEL_REQUESTED"}
+        def stop(self): pass
+    monkeypatch.setattr(redis_job_worker, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda job_id: {
+        "objectKey": "audio.wav", "meetingId": "meeting-1", "status": "QUEUED"
+    })
+    monkeypatch.setattr(redis_job_worker, "WorkerHeartbeat", CancelHeartbeat)
+    monkeypatch.setattr(redis_job_worker, "require_stage_callback", lambda *args, **kwargs: callbacks.append(args))
+
+    result = redis_job_worker.process_job("job-cancelled")
+
+    assert result["status"] == "CANCELLED"
+    assert callbacks == [("job-cancelled", "FFMPEG", "CANCELLED")]
+    assert not (tmp_path / "job-cancelled").exists()
 
 
 def test_mp4_is_accepted_and_reaches_the_next_audio_stage(tmp_path, monkeypatch):

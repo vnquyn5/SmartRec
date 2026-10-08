@@ -1,16 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { deleteMeeting, getAllMeetings } from "../../services/meetingService";
+import { cancelJob, deleteMeeting, getAllMeetings, getJob, pauseJob, resumeJob, retryJob } from "../../services/meetingService";
+import { PauseIcon, PlayIcon, RefreshIcon } from "../../components/common/icons.jsx";
 import "./WorkspacePage.css";
 
 const POLL_INTERVAL_MS = 2500;
-const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "PROCESSING", "RUNNING", "RETRYING"]);
+const MAX_PARALLEL_JOB_POLLS = 5;
+const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "PROCESSING", "RUNNING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
+const TERMINAL_JOB_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED", "FAILED", "DLQ", "CANCELLED"]);
 const WORKSPACE_STATUSES = new Set([
   ...ACTIVE_STATUSES,
   "COMPLETED",
   "FAILED",
   "DLQ",
   "CANCELLED",
+  "PAUSE_REQUESTED",
+  "PAUSED",
+  "CANCEL_REQUESTED",
 ]);
 
 const STATUS_PRESENTATION = {
@@ -24,6 +30,9 @@ const STATUS_PRESENTATION = {
   SUCCEEDED: { label: "Hoàn tất", className: "status-completed" },
   FAILED: { label: "Thất bại", className: "status-failed" },
   CANCELLED: { label: "Đã hủy", className: "status-terminal" },
+  PAUSE_REQUESTED: { label: "Đang tạm dừng…", className: "status-processing" },
+  PAUSED: { label: "Đã tạm dừng", className: "status-terminal" },
+  CANCEL_REQUESTED: { label: "Đang hủy…", className: "status-processing" },
   DLQ: { label: "Xử lý lỗi", className: "status-failed" },
 };
 
@@ -59,10 +68,13 @@ export default function WorkspacePage() {
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [busyJobId, setBusyJobId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const timerRef = useRef(null);
   const requestRef = useRef(null);
   const mountedRef = useRef(false);
+  const terminalJobIdsRef = useRef(new Set());
+  const jobActionInFlightRef = useRef(false);
 
   const fetchMeetings = useCallback(async ({ initial = false } = {}) => {
     if (requestRef.current) return requestRef.current;
@@ -98,10 +110,16 @@ export default function WorkspacePage() {
     };
   }, [fetchMeetings]);
 
+  const activeJobs = meetings
+    .filter((meeting) => ACTIVE_STATUSES.has(String(meeting.status || "").toUpperCase())
+      && meeting.activeJobId && !terminalJobIdsRef.current.has(meeting.activeJobId))
+    .map((meeting) => ({ meetingId: meeting.id, jobId: meeting.activeJobId }));
+  const activeJobsKey = JSON.stringify(activeJobs);
+
   useEffect(() => {
     window.clearTimeout(timerRef.current);
-    const hasActive = meetings.some((meeting) => ACTIVE_STATUSES.has(String(meeting.status || "").toUpperCase()));
-    if (!hasActive) return undefined;
+    const jobsToPoll = JSON.parse(activeJobsKey);
+    if (jobsToPoll.length === 0) return undefined;
 
     let cancelled = false;
     const schedule = () => {
@@ -110,7 +128,37 @@ export default function WorkspacePage() {
           if (!cancelled) schedule();
           return;
         }
-        await fetchMeetings();
+        let terminalObserved = false;
+        for (let index = 0; index < jobsToPoll.length; index += MAX_PARALLEL_JOB_POLLS) {
+          const batch = jobsToPoll.slice(index, index + MAX_PARALLEL_JOB_POLLS);
+          await Promise.all(batch.map(async ({ meetingId, jobId }) => {
+            if (cancelled || terminalJobIdsRef.current.has(jobId)) return;
+            try {
+              const job = await getJob(jobId);
+              if (cancelled || !mountedRef.current) return;
+              const jobStatus = String(job?.status || "").trim().toUpperCase();
+              if (TERMINAL_JOB_STATUSES.has(jobStatus)) {
+                terminalJobIdsRef.current.add(jobId);
+                terminalObserved = true;
+                setMeetings((current) => current.map((meeting) =>
+                  meeting.id === meetingId && meeting.activeJobId === jobId
+                    ? { ...meeting, status: jobStatus === "SUCCESS" || jobStatus === "SUCCEEDED" ? "COMPLETED" : jobStatus }
+                    : meeting,
+                ));
+              } else if (ACTIVE_STATUSES.has(jobStatus) || jobStatus === "PAUSED") {
+                terminalJobIdsRef.current.delete(jobId);
+                setMeetings((current) => current.map((meeting) =>
+                  meeting.id === meetingId && meeting.activeJobId === jobId
+                    ? { ...meeting, status: jobStatus }
+                    : meeting,
+                ));
+              }
+            } catch {
+              // Retry transient job status failures on the next scheduled pass.
+            }
+          }));
+        }
+        if (terminalObserved && !cancelled) await fetchMeetings();
         if (!cancelled) schedule();
       }, POLL_INTERVAL_MS);
     };
@@ -119,19 +167,7 @@ export default function WorkspacePage() {
       cancelled = true;
       window.clearTimeout(timerRef.current);
     };
-  }, [meetings, fetchMeetings]);
-
-  useEffect(() => {
-    const refreshOnFocus = () => {
-      if (document.visibilityState === "visible") fetchMeetings();
-    };
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnFocus);
-    return () => {
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnFocus);
-    };
-  }, [fetchMeetings]);
+  }, [activeJobsKey, fetchMeetings]);
 
   const visibleMeetings = useMemo(() => {
     const keyword = searchQuery.trim().toLocaleLowerCase("vi");
@@ -158,6 +194,27 @@ export default function WorkspacePage() {
     } catch {
       window.alert("Không thể sao chép liên kết cuộc họp.");
     }
+  };
+
+  const runJobAction = async (meeting, event, action, nextStatus) => {
+    event.stopPropagation();
+    if (!meeting.activeJobId || jobActionInFlightRef.current) return;
+    jobActionInFlightRef.current = true;
+    setBusyJobId(meeting.activeJobId);
+    try {
+      await action(meeting.activeJobId);
+      setMeetings((current) => current.map((item) => item.id === meeting.id ? { ...item, status: nextStatus } : item));
+    } catch (actionError) {
+      window.alert(actionError?.response?.data?.message || "Không thể cập nhật trạng thái xử lý.");
+    } finally {
+      jobActionInFlightRef.current = false;
+      setBusyJobId(null);
+    }
+  };
+
+  const handleResume = (meeting, event) => {
+    if (String(meeting.status || "").toUpperCase() !== "PAUSED") return;
+    runJobAction(meeting, event, resumeJob, "QUEUED");
   };
 
   return (
@@ -213,12 +270,26 @@ export default function WorkspacePage() {
                   </div>
                   <div className="meeting-card-actions">
                     <button className="btn-action btn-insights" onClick={(event) => { event.stopPropagation(); navigate(`/meeting/${meeting.id}`); }}>Xem chi tiết</button>
-                    <button className="btn-action btn-icon-only" title="Chia sẻ" aria-label="Chia sẻ" onClick={(event) => handleShare(meeting.id, event)}>
+                    {String(meeting.status).toUpperCase() === "COMPLETED" && <button className="btn-action btn-icon-only" title="Chia sẻ" aria-label="Chia sẻ" onClick={(event) => handleShare(meeting.id, event)}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4m0-11-6.8 4" /></svg>
-                    </button>
-                    <button className="btn-action btn-icon-only btn-delete" title="Xóa" aria-label="Xóa" onClick={(event) => handleDelete(meeting.id, event)}>
+                    </button>}
+                    {ACTIVE_STATUSES.has(String(meeting.status).toUpperCase()) && meeting.status !== "PAUSE_REQUESTED" && meeting.status !== "CANCEL_REQUESTED" && <>
+                      <button type="button" className="btn-action btn-icon-only" title="Tạm dừng xử lý" aria-label="Tạm dừng xử lý" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, pauseJob, "PAUSE_REQUESTED")}><PauseIcon className="h-4 w-4" /></button>
+                      <button type="button" className="btn-action btn-icon-only" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, cancelJob, "CANCEL_REQUESTED")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+                    </>}
+                    {meeting.status === "PAUSE_REQUESTED" && <>
+                      <button type="button" className="btn-action btn-icon-only" title="Đang tạm dừng" aria-label="Tiếp tục xử lý (đang tạm dừng)" disabled><PlayIcon className="h-4 w-4" /></button>
+                      <button type="button" className="btn-action btn-icon-only" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, cancelJob, "CANCEL_REQUESTED")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+                    </>}
+                    {meeting.status === "CANCEL_REQUESTED" && <button type="button" className="btn-action btn-icon-only" title="Đang hủy" aria-label="Đang hủy xử lý" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>}
+                    {meeting.status === "PAUSED" && <>
+                      <button type="button" className="btn-action btn-icon-only" title="Tiếp tục xử lý" aria-label="Tiếp tục xử lý" disabled={!meeting.activeJobId || busyJobId === meeting.activeJobId} onClick={(event) => handleResume(meeting, event)}><PlayIcon className="h-4 w-4" /></button>
+                      <button type="button" className="btn-action btn-icon-only" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, cancelJob, "CANCEL_REQUESTED")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+                    </>}
+                    {["FAILED", "DLQ", "CANCELLED"].includes(String(meeting.status).toUpperCase()) && <button type="button" className="btn-action btn-icon-only" title="Thử xử lý lại" aria-label="Thử xử lý lại" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, retryJob, "RETRYING")}><RefreshIcon className="h-4 w-4" /></button>}
+                    {["COMPLETED", "FAILED", "DLQ", "CANCELLED"].includes(String(meeting.status).toUpperCase()) && <button className="btn-action btn-icon-only btn-delete" title="Xóa" aria-label="Xóa" onClick={(event) => handleDelete(meeting.id, event)}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></svg>
-                    </button>
+                    </button>}
                   </div>
                 </div>
               </article>

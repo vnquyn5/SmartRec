@@ -4,6 +4,8 @@ public enum JobStageStatus {
     PENDING,
     PROCESSING,
     RETRYING,
+    PAUSED,
+    CANCELLED,
     SUCCESS,
     FAILED,
     SKIPPED

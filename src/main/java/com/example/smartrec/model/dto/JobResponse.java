@@ -25,5 +25,6 @@ public class JobResponse {
     private Instant lastRetryAt;
     private Instant updatedAt;
     private Instant createdAt;
+    private Instant lastHeartbeatAt;
 
 }

@@ -16,7 +16,7 @@ public class MeetingFilterRequest {
     @Schema(description = "Page size", example = "20", defaultValue = "20")
     private Integer size = 20;
 
-    @Schema(description = "Meeting status", allowableValues = { "PENDING", "PROCESSING", "COMPLETED", "FAILED" })
+    @Schema(description = "Meeting status", allowableValues = { "UNPROCESSED", "PENDING", "PROCESSING", "COMPLETED", "FAILED" })
     private String status;
 
     @Schema(description = "Search by meeting title or original file name", example = "weekly sync")
