@@ -6,6 +6,7 @@ from pathlib import Path
 import requests
 import threading
 import time
+from uuid import uuid4
 
 # 1. Đảm bảo thư mục gốc ai-engine luôn nằm trong sys.path
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -15,10 +16,8 @@ if str(BASE_DIR) not in sys.path:
 from app.core.config import settings
 from app.services.minio_client import get_minio_client
 from app.services.audio_extractor import AudioExtractorService, InvalidMediaError
-from app.services.audio_pipeline import AudioPipelineOrchestrator
 from app.schemas.audio_schemas import AudioPipelineRequest
 from app.schemas.diarization_schemas import DiarizationExportPayload
-from app.services.speaker_labeling_service import speaker_labeling_service
 from app.tracking import ResourceTracker
 from app.services.callback_client import CallbackClient
 from app.core.path_security import get_workspace_root, validate_safe_read_path, validate_safe_write_path
@@ -42,7 +41,28 @@ INTERNAL_TOKEN = settings.smartrec_internal_token or ""
 minio_client = get_minio_client()
 callback_client = CallbackClient()
 audio_extractor = AudioExtractorService()
-pipeline_orchestrator = AudioPipelineOrchestrator()
+# These processing services are loaded on demand so importing task/control
+# code for unit tests does not require GPU inference dependencies.
+pipeline_orchestrator = None
+speaker_labeling_service = None
+
+
+def _get_pipeline_orchestrator():
+    global pipeline_orchestrator
+    if pipeline_orchestrator is None:
+        from app.services.audio_pipeline import AudioPipelineOrchestrator
+
+        pipeline_orchestrator = AudioPipelineOrchestrator()
+    return pipeline_orchestrator
+
+
+def _get_speaker_labeling_service():
+    global speaker_labeling_service
+    if speaker_labeling_service is None:
+        from app.services.speaker_labeling_service import speaker_labeling_service as service
+
+        speaker_labeling_service = service
+    return speaker_labeling_service
 
 
 class _PauseAtBoundary(Exception):
@@ -53,12 +73,18 @@ class _CancelAtBoundary(Exception):
     pass
 
 
+class _ExecutionLost(Exception):
+    pass
+
+
 class WorkerHeartbeat:
     """Keeps the backend lease fresh during long, atomic processing stages."""
-    def __init__(self, job_id: str):
+    def __init__(self, job_id: str, execution_id: str):
         self.job_id = job_id
+        self.execution_id = execution_id
         self.interval = max(5, int(os.getenv("SMARTREC_HEARTBEAT_INTERVAL_SECONDS", "12")))
         self._stop = threading.Event()
+        self._execution_lost = threading.Event()
         self._lock = threading.Lock()
         self._latest = None
         self._thread = threading.Thread(target=self._run, name=f"heartbeat-{job_id}", daemon=True)
@@ -66,10 +92,12 @@ class WorkerHeartbeat:
     def _send(self):
         response = requests.post(
             f"{BACKEND_BASE_URL}/jobs/{self.job_id}/heartbeat",
-            headers={"X-Internal-Token": INTERNAL_TOKEN}, timeout=10.0,
+            headers={"X-Internal-Token": INTERNAL_TOKEN, "X-Execution-Id": self.execution_id}, timeout=10.0,
         )
         response.raise_for_status()
         data = response.json()
+        if not data.get("executionAllowed", False):
+            self._execution_lost.set()
         with self._lock:
             self._latest = data
         return data
@@ -77,7 +105,10 @@ class WorkerHeartbeat:
     def _run(self):
         while not self._stop.wait(self.interval):
             try:
-                self._send()
+                data = self._send()
+                if not data.get("executionAllowed", False):
+                    logger.info("[%s] Execution lease bị từ chối; worker sẽ dừng tại safe point", self.job_id)
+                    return
             except Exception as exc:
                 logger.warning("[%s] Heartbeat delivery failed: %s", self.job_id, exc)
 
@@ -85,7 +116,11 @@ class WorkerHeartbeat:
         self._thread.start()
 
     def checkpoint(self):
+        if self._execution_lost.is_set():
+            raise _ExecutionLost()
         data = self._send()
+        if not data.get("executionAllowed", False):
+            raise _ExecutionLost()
         status = str(data.get("status") or "").upper()
         if status in {"PAUSE_REQUESTED", "PAUSED"}:
             raise _PauseAtBoundary()
@@ -116,7 +151,8 @@ def fetch_job_details(job_id: str) -> dict:
     return resp.json()
 
 
-def send_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None) -> bool:
+def send_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
+                        execution_id=None) -> bool:
     """Gửi payload chuẩn hóa về endpoint POST /jobs/{jobId}/callback của Backend."""
     url = f"{BACKEND_BASE_URL}/jobs/{job_id}/callback"
     payload = {
@@ -126,10 +162,13 @@ def send_stage_callback(job_id: str, stage: str, status: str, segments=None, err
         "errorMessage": error_msg,
         "segments": segments
     }
-    return callback_client.send_callback(url, payload, job_id=job_id, internal_token=INTERNAL_TOKEN)
+    return callback_client.send_callback(url, payload, job_id=job_id, internal_token=INTERNAL_TOKEN,
+                                         execution_id=execution_id)
 
-def require_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None):
-    if not send_stage_callback(job_id, stage, status, segments=segments, error_msg=error_msg, error_code=error_code):
+def require_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
+                           execution_id=None):
+    if not send_stage_callback(job_id, stage, status, segments=segments, error_msg=error_msg, error_code=error_code,
+                               execution_id=execution_id):
         raise RetryableProcessingError(f"Backend callback failed for {job_id} {stage} {status}")
 
 def parse_timestamp_to_seconds(val) -> float:
@@ -151,6 +190,7 @@ def parse_timestamp_to_seconds(val) -> float:
     return 0.0
 
 def process_job(job_id: str):
+    execution_id = str(uuid4())
     workspace_dir = os.path.join(str(get_workspace_root()), job_id)
     current_stage = "FFMPEG"
     heartbeat = None
@@ -173,7 +213,7 @@ def process_job(job_id: str):
 
         current_stage = str(job_info.get("stage") or current_stage)
 
-        heartbeat = WorkerHeartbeat(job_id)
+        heartbeat = WorkerHeartbeat(job_id, execution_id)
         heartbeat.start()
 
         object_key = job_info.get("objectKey")
@@ -238,7 +278,7 @@ def process_job(job_id: str):
             normalized_wav = os.path.join(workspace_dir, "01_normalized_16k.wav")
             if "FFMPEG" not in successful_stages or not os.path.exists(normalized_wav):
                 heartbeat.checkpoint()
-                require_stage_callback(job_id, current_stage, "PROCESSING")
+                require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
                 logger.info(f"[{job_id}] >>> Thực thi Stage 1: FFMPEG...")
                 validate_safe_write_path(normalized_wav)
                 try:
@@ -248,8 +288,8 @@ def process_job(job_id: str):
                     )
                 except InvalidMediaError as e:
                     raise NonRetryableProcessingError(e.error_code, str(e)) from e
-                require_stage_callback(job_id, current_stage, "SUCCESS")
                 heartbeat.checkpoint()
+                require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
 
             # -------------------------------------------------------------
             # STAGE 2: WEBRTC (Khử ồn ANS + Lọc vang AEC + Quality Gate)
@@ -260,20 +300,20 @@ def process_job(job_id: str):
                 clean_wav = stable_clean_wav
             else:
                 heartbeat.checkpoint()
-                require_stage_callback(job_id, current_stage, "PROCESSING")
+                require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
                 logger.info(f"[{job_id}] >>> Thực thi Stage 2: WEBRTC...")
                 pipe_req = AudioPipelineRequest(
                     job_id=job_id, input_path=normalized_wav, reference_path=None,
                     output_dir=workspace_dir, suppression_level=3
                 )
-                pipe_res = pipeline_orchestrator.process_pipeline(pipe_req)
+                pipe_res = _get_pipeline_orchestrator().process_pipeline(pipe_req)
                 if pipe_res.overall_status != "SUCCESS":
                     raise NonRetryableProcessingError("VALIDATION_ERROR", f"WebRTC Pipeline lỗi: {pipe_res.error_message}")
                 clean_wav = pipe_res.final_output_file
                 if clean_wav and os.path.abspath(clean_wav) != os.path.abspath(stable_clean_wav):
                     shutil.copy2(clean_wav, stable_clean_wav)
-                require_stage_callback(job_id, current_stage, "SUCCESS")
                 heartbeat.checkpoint()
+                require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
             clean_wav = stable_clean_wav
 
             # -------------------------------------------------------------
@@ -285,10 +325,10 @@ def process_job(job_id: str):
                 diar_payload = DiarizationExportPayload.model_validate_json(Path(diar_json_path).read_text())
             else:
                 heartbeat.checkpoint()
-                require_stage_callback(job_id, current_stage, "PROCESSING")
+                require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
                 logger.info(f"[{job_id}] >>> Thực thi Stage 3: PYANNOTE...")
                 validate_safe_write_path(diar_json_path)
-                diar_payload, _ = speaker_labeling_service.process_and_export(
+                diar_payload, _ = _get_speaker_labeling_service().process_and_export(
                     audio_path=clean_wav, output_json_path=diar_json_path, job_id=job_id
                 )
                 if diar_payload.status != "SUCCESS":
@@ -299,15 +339,15 @@ def process_job(job_id: str):
                     if error_code in {"INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY", "AUDIO_CORRUPTED", "VALIDATION_ERROR"}:
                         raise NonRetryableProcessingError(error_code, error_message)
                     raise RetryableProcessingError(error_message)
-                require_stage_callback(job_id, current_stage, "SUCCESS")
                 heartbeat.checkpoint()
+                require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
 
             # -------------------------------------------------------------
             # STAGE 4: OUTPUT (Chuẩn hóa segments và gửi về Backend)
             # -------------------------------------------------------------
             current_stage = "OUTPUT"
             heartbeat.checkpoint()
-            require_stage_callback(job_id, current_stage, "PROCESSING")
+            require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
             logger.info(f"[{job_id}] >>> Hoàn tất Stage 4: OUTPUT...")
 
             diar_dict = diar_payload.model_dump()
@@ -356,26 +396,36 @@ def process_job(job_id: str):
             # OUTPUT work is short but still has a safe point before committing
             # its terminal success callback.
             heartbeat.checkpoint()
-            require_stage_callback(job_id, current_stage, "SUCCESS", segments=formatted_segments)
+            require_stage_callback(job_id, current_stage, "SUCCESS", segments=formatted_segments,
+                                   execution_id=execution_id)
             logger.info(f"[{job_id}] ========== [HOÀN TẤT THÀNH CÔNG JOB: {job_id}] ==========")
 
+    except _ExecutionLost:
+        preserve_workspace = True
+        logger.info("[%s] Bỏ qua task vì execution lease đã thuộc worker khác hoặc Job terminal", job_id)
+        return {"status": "SKIPPED", "reason": "EXECUTION_LEASE_LOST"}
     except _PauseAtBoundary:
         control = heartbeat._send() if heartbeat else {}
         current_stage = control.get("currentStage") or current_stage
         preserve_workspace = True
-        require_stage_callback(job_id, current_stage, "PAUSED")
+        require_stage_callback(job_id, current_stage, "PAUSED", execution_id=execution_id)
         logger.info("[%s] Job paused safely at stage boundary %s", job_id, current_stage)
         return {"status": "PAUSED", "stage": current_stage}
     except _CancelAtBoundary:
         control = heartbeat._send() if heartbeat else {}
         current_stage = control.get("currentStage") or current_stage
-        require_stage_callback(job_id, current_stage, "CANCELLED")
+        require_stage_callback(job_id, current_stage, "CANCELLED", execution_id=execution_id)
         logger.info("[%s] Job cancelled safely at stage boundary %s", job_id, current_stage)
         return {"status": "CANCELLED", "stage": current_stage}
     except NonRetryableProcessingError as e:
+        if heartbeat and heartbeat._execution_lost.is_set():
+            preserve_workspace = True
+            logger.info("[%s] Không báo lỗi stage vì execution lease đã mất", job_id)
+            return {"status": "SKIPPED", "reason": "EXECUTION_LEASE_LOST"}
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
         try:
-            require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e), error_code=e.error_code)
+            require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e), error_code=e.error_code,
+                                   execution_id=execution_id)
         except Exception:
             # Reporting failure must not convert a deterministic processing failure
             # into a Celery task retry. The task returns terminally after HTTP retries.
@@ -386,9 +436,14 @@ def process_job(job_id: str):
             )
         return {"status": "FAILED", "stage": current_stage, "errorCode": e.error_code, "errorMessage": str(e)}
     except Exception as e:
+        if heartbeat and heartbeat._execution_lost.is_set():
+            preserve_workspace = True
+            logger.info("[%s] Bỏ qua exception vì execution lease đã mất", job_id)
+            return {"status": "SKIPPED", "reason": "EXECUTION_LEASE_LOST"}
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
         try:
-            require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e), error_code="RETRYABLE_PROCESSING_ERROR")
+            require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e),
+                                   error_code="RETRYABLE_PROCESSING_ERROR", execution_id=execution_id)
         except RetryableProcessingError:
             logger.exception("Failed to report worker failure to Backend")
         raise RetryableProcessingError(str(e)) from e

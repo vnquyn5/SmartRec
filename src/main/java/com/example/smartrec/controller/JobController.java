@@ -93,17 +93,19 @@ public class JobController {
     @PostMapping("/{jobId}/heartbeat")
     public ResponseEntity<WorkerJobControlResponse> heartbeat(
             @PathVariable UUID jobId,
+            @RequestHeader(value = "X-Execution-Id") UUID executionId,
             @RequestHeader(value = "X-Internal-Token", required = false) String internalToken) {
         if (internalToken == null || configuredInternalToken == null || configuredInternalToken.isBlank()
                 || !configuredInternalToken.equals(internalToken.trim())) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
-        return ResponseEntity.ok(jobService.workerHeartbeat(jobId));
+        return ResponseEntity.ok(jobService.workerHeartbeat(jobId, executionId));
     }
 
     @PostMapping("/{jobId}/callback")
     public ResponseEntity<Void> workerCallback(
             @PathVariable UUID jobId,
+            @RequestHeader(value = "X-Execution-Id") UUID executionId,
             @RequestHeader(value = "X-Internal-Token", required = false) String internalToken,
             @RequestBody WorkerCallbackRequest request) {
 
@@ -112,6 +114,7 @@ public class JobController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
+        if (request != null) request.setExecutionId(executionId);
         jobService.handleWorkerCallback(jobId, request);
         return ResponseEntity.ok().build();
     }

@@ -18,12 +18,15 @@ class CallbackClient:
         callback_url: str,
         payload: Dict[str, Any],
         job_id: Optional[str] = None,
-        internal_token: Optional[str] = None
+        internal_token: Optional[str] = None,
+        execution_id: Optional[str] = None,
     ) -> bool:
         headers = {
             "Content-Type": "application/json",
             "X-Internal-Token": internal_token or ""
         }
+        if execution_id:
+            headers["X-Execution-Id"] = execution_id
         backoff_delays = [2, 5, 10]
         tag = f"[{job_id}]" if job_id else ""
 

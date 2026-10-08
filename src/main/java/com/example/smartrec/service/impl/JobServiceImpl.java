@@ -2,13 +2,12 @@ package com.example.smartrec.service.impl;
 
 import org.springframework.stereotype.Service;
 
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.entity.Job;
 import com.example.smartrec.entity.JobStage;
+import com.example.smartrec.entity.JobDispatchOutbox;
 import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.SpeakerSegment;
 import com.example.smartrec.enums.JobStageStatus;
@@ -21,10 +20,10 @@ import com.example.smartrec.model.dto.SpeakerSegmentResponse;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
 import com.example.smartrec.model.dto.WorkerJobControlResponse;
 import com.example.smartrec.repository.JobRepository;
+import com.example.smartrec.repository.JobDispatchOutboxRepository;
 import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
-import com.example.smartrec.service.JobQueueService;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
 
@@ -34,6 +33,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.Set;
+import org.springframework.data.domain.PageRequest;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -44,8 +44,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class JobServiceImpl implements JobService {
     private final JobRepository jobRepository;
+    private final JobDispatchOutboxRepository outboxRepository;
     private final JobStageRepository jobStageRepository;
-    private final JobQueueService jobQueueService;
     private final MediaFileRepository mediaFileRepository;
     private final SpeakerSegmentRepository speakerSegmentRepository;
     private final MeetingRepository meetingRepository;
@@ -113,17 +113,7 @@ public class JobServiceImpl implements JobService {
         // cap nhat job sang queue
         job.setStatus(JobStatus.QUEUED);
         jobRepository.save(job);
-        UUID jobId = job.getId();
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    jobQueueService.enqueueJob(jobId);
-                }
-            });
-        } else {
-            jobQueueService.enqueueJob(jobId);
-        }
+        enqueueJob(job.getId());
         return toResponse(job);
     }
 
@@ -259,6 +249,10 @@ public class JobServiceImpl implements JobService {
         job.setErrorMessage(null);
         job.setFailedAt(null);
         job.setLastHeartbeatAt(null);
+        job.setExecutionId(null);
+        job.setLeaseExpiresAt(null);
+        job.setCancelRequestedAt(null);
+        job.setPauseRequestedAt(null);
         if (meeting != null) {
             meeting.setActive_job_id(job.getId());
             meeting.setStatus(MeetingStatus.PROCESSING);
@@ -267,8 +261,7 @@ public class JobServiceImpl implements JobService {
 
         jobRepository.save(job);
 
-        UUID retryJobId = job.getId();
-        enqueueAfterCommit(() -> jobQueueService.enqueueJob(retryJobId));
+        enqueueJob(job.getId());
 
         System.out.println(
                 "Manual retry Job: "
@@ -295,9 +288,22 @@ public class JobServiceImpl implements JobService {
                 .contains(job.getStatus())) {
             throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Job không thể tạm dừng ở trạng thái hiện tại");
         }
-        job.setStatus(JobStatus.PAUSE_REQUESTED);
+        Instant now = Instant.now();
+        job.setPauseRequestedAt(now);
+        if (Set.of(JobStatus.PENDING, JobStatus.QUEUED).contains(job.getStatus()) && !hasLiveLease(job, now)) {
+            job.setStatus(JobStatus.PAUSED);
+            if (job.getExecutionId() == null) job.setExecutionId(UUID.randomUUID());
+            job.setLeaseExpiresAt(null);
+            jobStageRepository.findByJobIdAndStage(jobId, job.getCurrentStage()).ifPresent(stage -> {
+                stage.setStatus(JobStageStatus.PAUSED);
+                jobStageRepository.save(stage);
+            });
+            updateMeetingLifecycle(job, MeetingStatus.PAUSED);
+        } else {
+            job.setStatus(JobStatus.PAUSE_REQUESTED);
+            updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
+        }
         jobRepository.save(job);
-        updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
     }
 
     @Override
@@ -306,15 +312,21 @@ public class JobServiceImpl implements JobService {
         Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
         meetingService.getMeeting(job.getMeetingId());
         if (job.getStatus() == JobStatus.CANCEL_REQUESTED || job.getStatus() == JobStatus.CANCELLED) return;
-        boolean wasPaused = job.getStatus() == JobStatus.PAUSED;
         if (!Set.of(JobStatus.PENDING, JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.RUNNING, JobStatus.RETRYING,
                 JobStatus.PAUSE_REQUESTED, JobStatus.PAUSED).contains(job.getStatus())) {
             throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Job không thể hủy ở trạng thái hiện tại");
         }
-        job.setStatus(JobStatus.CANCEL_REQUESTED);
+        Instant now = Instant.now();
+        job.setCancelRequestedAt(now);
+        if (job.getStatus() == JobStatus.PAUSED
+                || Set.of(JobStatus.PENDING, JobStatus.QUEUED, JobStatus.PAUSE_REQUESTED).contains(job.getStatus())
+                        && !hasLiveLease(job, now)) {
+            completeCancellation(job, now);
+        } else {
+            job.setStatus(JobStatus.CANCEL_REQUESTED);
+            updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
+        }
         jobRepository.save(job);
-        updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
-        if (wasPaused) enqueueAfterCommit(() -> jobQueueService.enqueueJob(jobId));
     }
 
     @Override
@@ -326,6 +338,7 @@ public class JobServiceImpl implements JobService {
         if (job.getStatus() != JobStatus.PAUSED) {
             throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Chỉ Job PAUSED mới được tiếp tục");
         }
+        if (job.getExecutionId() == null) job.setExecutionId(UUID.randomUUID());
         jobStageRepository.findByJobIdAndStage(jobId, job.getCurrentStage()).ifPresent(stage -> {
             stage.setStatus(JobStageStatus.PENDING);
             stage.setCompletedAt(null);
@@ -335,27 +348,79 @@ public class JobServiceImpl implements JobService {
         });
         job.setStatus(JobStatus.QUEUED);
         job.setLastHeartbeatAt(null);
+        job.setLeaseExpiresAt(null);
+        job.setPauseRequestedAt(null);
+        job.setCancelRequestedAt(null);
         jobRepository.save(job);
         updateMeetingLifecycle(job, MeetingStatus.PENDING);
-        enqueueAfterCommit(() -> jobQueueService.enqueueJob(jobId));
+        enqueueJob(jobId);
     }
 
     @Override
     @Transactional
-    public WorkerJobControlResponse workerHeartbeat(UUID jobId) {
+    public WorkerJobControlResponse workerHeartbeat(UUID jobId, UUID executionId) {
         Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
+        if (executionId == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "EXECUTION_ID_REQUIRED", "Worker executionId không được để trống");
+        }
         Instant now = Instant.now();
+        boolean terminal = Set.of(JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.DLQ, JobStatus.CANCELLED,
+                JobStatus.PAUSED)
+                .contains(job.getStatus());
+        if (terminal) return workerControl(job, false);
+
+        boolean sameExecution = executionId.equals(job.getExecutionId());
+        boolean liveLease = hasLiveLease(job, now);
+        boolean awaitingPauseOrCancel = Set.of(JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED)
+                .contains(job.getStatus());
+        // Only the current, still-leased worker may observe and acknowledge a
+        // pending stop request. An expired lease must be recovered by watchdog,
+        // never claimed by a replacement execution.
+        if (awaitingPauseOrCancel && (!sameExecution || !liveLease)) {
+            return workerControl(job, false);
+        }
+        boolean leaseExpired = !liveLease;
+        if (!sameExecution && job.getExecutionId() != null && !leaseExpired) {
+            return workerControl(job, false);
+        }
+        job.setExecutionId(executionId);
+        job.setLeaseExpiresAt(now.plusSeconds(heartbeatTimeoutSeconds));
         job.setLastHeartbeatAt(now);
         if (Set.of(JobStatus.QUEUED, JobStatus.PENDING, JobStatus.RETRYING).contains(job.getStatus())) {
             job.setStatus(JobStatus.PROCESSING);
             updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
         }
         jobRepository.save(job);
+        return workerControl(job, true);
+    }
+
+    private WorkerJobControlResponse workerControl(Job job, boolean executionAllowed) {
         String objectKey = mediaFileRepository.findById(job.getMediaFileId()).map(MediaFile::getObject_key).orElse(null);
-        List<PipelineStage> successfulStages = jobStageRepository.findByJobIdOrderByStageAsc(jobId).stream()
+        List<PipelineStage> successfulStages = jobStageRepository.findByJobIdOrderByStageAsc(job.getId()).stream()
                 .filter(stage -> stage.getStatus() == JobStageStatus.SUCCESS).map(JobStage::getStage).toList();
-        return WorkerJobControlResponse.builder().jobId(jobId).meetingId(job.getMeetingId()).objectKey(objectKey)
-                .status(job.getStatus()).currentStage(job.getCurrentStage()).successfulStages(successfulStages).build();
+        return WorkerJobControlResponse.builder().jobId(job.getId()).meetingId(job.getMeetingId()).objectKey(objectKey)
+                .status(job.getStatus()).currentStage(job.getCurrentStage()).successfulStages(successfulStages)
+                .executionAllowed(executionAllowed).build();
+    }
+
+    private boolean hasLiveLease(Job job, Instant now) {
+        return job.getExecutionId() != null && job.getLeaseExpiresAt() != null
+                && job.getLeaseExpiresAt().isAfter(now);
+    }
+
+    private void completeCancellation(Job job, Instant now) {
+        job.setStatus(JobStatus.CANCELLED);
+        job.setExecutionId(null);
+        job.setLeaseExpiresAt(null);
+        JobStage currentStage = job.getCurrentStage() == null ? null
+                : jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).orElse(null);
+        if (currentStage != null) {
+            currentStage.setStatus(JobStageStatus.CANCELLED);
+            currentStage.setCompletedAt(now);
+            jobStageRepository.save(currentStage);
+            markDownstreamStagesSkipped(job, currentStage);
+        }
+        updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
     }
 
     @Override
@@ -367,30 +432,58 @@ public class JobServiceImpl implements JobService {
                 JobStatus.PROCESSING,
                 JobStatus.RUNNING,
                 JobStatus.RETRYING,
-                JobStatus.PAUSE_REQUESTED);
-        for (Job candidate : jobRepository.findByStatusIn(monitored)) {
-            Instant lastSeen = candidate.getLastHeartbeatAt() != null ? candidate.getLastHeartbeatAt()
-                    : candidate.getUpdatedAt() != null ? candidate.getUpdatedAt() : candidate.getCreatedAt();
-            if (lastSeen == null || !lastSeen.isBefore(cutoff)) continue;
+                JobStatus.PAUSE_REQUESTED,
+                JobStatus.CANCEL_REQUESTED);
+        for (Job candidate : jobRepository.findByStatusInOrderByUpdatedAtAsc(monitored, PageRequest.of(0, 100))) {
             Job job = jobRepository.findByIdForUpdate(candidate.getId()).orElse(null);
-            if (job == null || !monitored.contains(job.getStatus())) continue;
-            job.setStatus(JobStatus.FAILED);
-            job.setErrorCode("WORKER_LOST");
-            job.setErrorMessage("AI worker heartbeat timed out; worker may have stopped unexpectedly.");
-            job.setFailedAt(now);
-            jobRepository.save(job);
-            if (job.getCurrentStage() != null) {
-                jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).ifPresent(stage -> {
-                    stage.setStatus(JobStageStatus.FAILED);
-                    stage.setErrorCode("WORKER_LOST");
-                    stage.setErrorMessage(job.getErrorMessage());
-                    stage.setCompletedAt(now);
-                    jobStageRepository.save(stage);
-                    markDownstreamStagesSkipped(job, stage);
-                });
+            if (job == null || !monitored.contains(job.getStatus()) || !isWorkerLeaseStale(job, cutoff, now)) continue;
+            if (job.getStatus() == JobStatus.CANCEL_REQUESTED) {
+                completeCancellation(job, now);
+                job.setErrorCode("CANCEL_RECOVERED_AFTER_WORKER_LOST");
+                job.setErrorMessage("Cancellation was finalized after the execution lease expired.");
+            } else if (job.getStatus() == JobStatus.PAUSE_REQUESTED) {
+                job.setStatus(JobStatus.PAUSED);
+                job.setExecutionId(null);
+                job.setLeaseExpiresAt(null);
+                if (job.getCurrentStage() != null) {
+                    jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).ifPresent(stage -> {
+                        stage.setStatus(JobStageStatus.PAUSED);
+                        stage.setErrorCode(null);
+                        stage.setErrorMessage(null);
+                        jobStageRepository.save(stage);
+                    });
+                }
+                updateMeetingLifecycle(job, MeetingStatus.PAUSED);
+            } else {
+                job.setStatus(JobStatus.FAILED);
+                job.setErrorCode("WORKER_LOST");
+                job.setErrorMessage("AI worker heartbeat timed out; worker may have stopped unexpectedly.");
+                job.setFailedAt(now);
+                job.setExecutionId(null);
+                job.setLeaseExpiresAt(null);
+                if (job.getCurrentStage() != null) {
+                    jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).ifPresent(stage -> {
+                        stage.setStatus(JobStageStatus.FAILED);
+                        stage.setErrorCode("WORKER_LOST");
+                        stage.setErrorMessage(job.getErrorMessage());
+                        stage.setCompletedAt(now);
+                        jobStageRepository.save(stage);
+                        markDownstreamStagesSkipped(job, stage);
+                    });
+                }
+                markMeetingFailed(job);
             }
-            markMeetingFailed(job);
+            jobRepository.save(job);
         }
+    }
+
+    private boolean isWorkerLeaseStale(Job job, Instant fallbackCutoff, Instant now) {
+        if (job.getExecutionId() != null && job.getLeaseExpiresAt() != null) {
+            return !job.getLeaseExpiresAt().isAfter(now);
+        }
+        Instant lastSeen = job.getLastHeartbeatAt() != null ? job.getLastHeartbeatAt()
+                : job.getUpdatedAt() != null ? job.getUpdatedAt() : job.getCreatedAt();
+        return lastSeen != null && lastSeen.isBefore(fallbackCutoff);
     }
 
     private void updateMeetingLifecycle(Job job, MeetingStatus status) {
@@ -447,17 +540,31 @@ public class JobServiceImpl implements JobService {
     @Override
     @Transactional
     public void handleWorkerCallback(UUID jobId, WorkerCallbackRequest request) {
-        Job job = findJob(jobId);
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
         if (request == null || request.getStage() == null || request.getStatus() == null) {
             throw new BusinessException(
                     HttpStatus.BAD_REQUEST,
                     "INVALID_CALLBACK",
                     "Stage không được để trống");
         }
-        if (Set.of(JobStatus.COMPLETED, JobStatus.DLQ, JobStatus.CANCELLED).contains(job.getStatus())) {
-            if (job.getStatus() == JobStatus.CANCELLED && request != null && request.getStatus() == JobStageStatus.CANCELLED) return;
+        if (request.getExecutionId() == null || !request.getExecutionId().equals(job.getExecutionId())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "STALE_EXECUTION_CALLBACK",
+                    "Callback thiếu execution ID hợp lệ hoặc không thuộc execution hiện tại của Job");
+        }
+        JobStage jobStage = jobStageRepository.findByJobIdAndStage(jobId, request.getStage())
+                .orElseThrow(() -> new BusinessException(
+                        HttpStatus.NOT_FOUND,
+                        "JOB_STAGE_NOT_FOUND",
+                        "Không tìm thấy Job Stage"));
+        if (isIdempotentCallback(job, jobStage, request)) return;
+        if (Set.of(JobStatus.COMPLETED, JobStatus.DLQ, JobStatus.CANCELLED, JobStatus.PAUSED, JobStatus.FAILED)
+                .contains(job.getStatus())) {
             throw new BusinessException(HttpStatus.CONFLICT, "TERMINAL_JOB_CALLBACK",
                     "Không nhận callback cho Job đã kết thúc");
+        }
+        if (!ownsExecution(job, request.getExecutionId())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "STALE_EXECUTION_CALLBACK",
+                    "Callback không thuộc execution lease hiện tại của Job");
         }
         if (job.getMeetingId() != null) {
             Meeting meeting = meetingRepository.findById(job.getMeetingId()).orElse(null);
@@ -467,24 +574,16 @@ public class JobServiceImpl implements JobService {
                         "Callback thuộc về Job không còn active của Meeting");
             }
         }
-        JobStage jobStage = jobStageRepository.findByJobIdAndStage(jobId, request.getStage())
-                .orElseThrow(() -> new BusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "JOB_STAGE_NOT_FOUND",
-                        "Không tìm thấy Job Stage"));
-
-        if (job.getStatus() == JobStatus.PAUSED && request.getStatus() == JobStageStatus.PAUSED
-                && jobStage.getStatus() == JobStageStatus.PAUSED) return;
-
-        // Repeated terminal failure callbacks are acknowledged without changing retry state.
-        if (job.getStatus() == JobStatus.FAILED && jobStage.getStatus() == JobStageStatus.FAILED) {
-            return;
-        }
-        if (job.getStatus() == JobStatus.FAILED) {
-            throw new BusinessException(HttpStatus.CONFLICT, "TERMINAL_JOB_CALLBACK", "Không nhận callback cho Job đã thất bại");
-        }
-        if (job.getStatus() == JobStatus.RETRYING && jobStage.getStatus() == JobStageStatus.RETRYING
-                && request.getStatus() == JobStageStatus.FAILED) {
+        if (request.getStatus() == JobStageStatus.SUCCESS && job.getStatus() == JobStatus.CANCEL_REQUESTED) {
+            Instant now = Instant.now();
+            jobStage.setStatus(JobStageStatus.CANCELLED);
+            jobStage.setCompletedAt(now);
+            job.setStatus(JobStatus.CANCELLED);
+            job.setLeaseExpiresAt(null);
+            markDownstreamStagesSkipped(job, jobStage);
+            updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
+            jobStageRepository.save(jobStage);
+            jobRepository.save(job);
             return;
         }
 
@@ -551,6 +650,7 @@ public class JobServiceImpl implements JobService {
             }
             jobStage.setStatus(JobStageStatus.PAUSED);
             job.setStatus(JobStatus.PAUSED);
+            job.setLeaseExpiresAt(null);
             updateMeetingLifecycle(job, MeetingStatus.PAUSED);
         } else if (request.getStatus() == JobStageStatus.CANCELLED) {
             if (job.getStatus() != JobStatus.CANCEL_REQUESTED && job.getStatus() != JobStatus.CANCELLED) {
@@ -559,27 +659,49 @@ public class JobServiceImpl implements JobService {
             jobStage.setStatus(JobStageStatus.CANCELLED);
             jobStage.setCompletedAt(Instant.now());
             job.setStatus(JobStatus.CANCELLED);
+            job.setLeaseExpiresAt(null);
             markDownstreamStagesSkipped(job, jobStage);
             updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
         }
 
         jobStageRepository.save(jobStage);
 
+        if (request.getStatus() == JobStageStatus.FAILED || job.getStatus() == JobStatus.COMPLETED) {
+            job.setLeaseExpiresAt(null);
+        }
+
         jobRepository.save(job);
 
     }
 
-    private void enqueueAfterCommit(Runnable enqueue) {
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    enqueue.run();
-                }
-            });
-        } else {
-            enqueue.run();
-        }
+    private void enqueueJob(UUID jobId) {
+        Instant now = Instant.now();
+        outboxRepository.save(JobDispatchOutbox.builder()
+                .jobId(jobId)
+                .attemptCount(0)
+                .availableAt(now)
+                .createdAt(now)
+                .build());
+    }
+
+    private boolean ownsExecution(Job job, UUID executionId) {
+        return executionId != null && job.getExecutionId() != null && job.getExecutionId().equals(executionId)
+                && job.getLeaseExpiresAt() != null
+                && job.getLeaseExpiresAt().isAfter(Instant.now());
+    }
+
+    private boolean isIdempotentCallback(Job job, JobStage stage, WorkerCallbackRequest request) {
+        if (!request.getExecutionId().equals(job.getExecutionId())) return false;
+        return (job.getStatus() == JobStatus.CANCELLED && request.getStatus() == JobStageStatus.CANCELLED
+                    && stage.getStatus() == JobStageStatus.CANCELLED)
+                || (job.getStatus() == JobStatus.PAUSED && request.getStatus() == JobStageStatus.PAUSED
+                    && job.getCurrentStage() == request.getStage() && stage.getStatus() == JobStageStatus.PAUSED)
+                || (job.getStatus() == JobStatus.COMPLETED && request.getStage() == PipelineStage.OUTPUT
+                    && request.getStatus() == JobStageStatus.SUCCESS && stage.getStatus() == JobStageStatus.SUCCESS)
+                || ((job.getStatus() == JobStatus.FAILED || job.getStatus() == JobStatus.DLQ)
+                    && request.getStatus() == JobStageStatus.FAILED && stage.getStatus() == JobStageStatus.FAILED)
+                || (job.getStatus() == JobStatus.RETRYING && stage.getStatus() == JobStageStatus.RETRYING
+                    && request.getStatus() == JobStageStatus.FAILED);
     }
 
     private void markMeetingProcessing(Job job) {

@@ -68,3 +68,7 @@ __pycache__/
 /private/tmp/smartrec_workspace/
 .DS_Store
 *.db
+
+# Local backups and Python test environments
+backups/
+.venv-test/
