@@ -21,7 +21,7 @@ public interface JobService {
     void pauseForCurrentUser(UUID jobId);
     void resumeForCurrentUser(UUID jobId);
     void cancelForCurrentUser(UUID jobId);
-    WorkerJobControlResponse workerHeartbeat(UUID jobId);
+    WorkerJobControlResponse workerHeartbeat(UUID jobId, UUID executionId);
     void markStaleJobsFailed();
     
 } 

@@ -70,6 +70,18 @@ public class Job {
     @Column(name = "last_heartbeat_at")
     private Instant lastHeartbeatAt;
 
+    @Column(name = "execution_id")
+    private UUID executionId;
+
+    @Column(name = "lease_expires_at")
+    private Instant leaseExpiresAt;
+
+    @Column(name = "pause_requested_at")
+    private Instant pauseRequestedAt;
+
+    @Column(name = "cancel_requested_at")
+    private Instant cancelRequestedAt;
+
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;

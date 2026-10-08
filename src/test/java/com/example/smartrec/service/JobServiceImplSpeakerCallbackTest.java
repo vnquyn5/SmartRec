@@ -46,6 +46,7 @@ class JobServiceImplSpeakerCallbackTest {
 
     private UUID jobId;
     private UUID meetingId;
+    private UUID executionId;
     private Job job;
     private JobStage outputStage;
     private Meeting meeting;
@@ -55,8 +56,10 @@ class JobServiceImplSpeakerCallbackTest {
         ReflectionTestUtils.setField(jobService, "maxRetry", 5);
         jobId = UUID.randomUUID();
         meetingId = UUID.randomUUID();
+        executionId = UUID.randomUUID();
         job = Job.builder().id(jobId).meetingId(meetingId).status(JobStatus.PROCESSING)
-                .currentStage(PipelineStage.OUTPUT).build();
+                .currentStage(PipelineStage.OUTPUT).executionId(executionId)
+                .leaseExpiresAt(java.time.Instant.now().plusSeconds(60)).build();
         outputStage = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
                 .status(JobStageStatus.PROCESSING).build();
         meeting = Meeting.builder().id(meetingId).build();
@@ -69,7 +72,8 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
                 .thenReturn(Optional.of(outputStage));
         WorkerCallbackRequest request = WorkerCallbackRequest.builder()
-                .stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS).segments(java.util.List.of()).build();
+                .executionId(executionId).stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
+                .segments(java.util.List.of()).build();
 
         jobService.handleWorkerCallback(jobId, request);
 
@@ -89,7 +93,7 @@ class JobServiceImplSpeakerCallbackTest {
                 .thenReturn(Optional.of(ffmpegStage));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.FFMPEG).status(JobStageStatus.SUCCESS).build());
+                .executionId(executionId).stage(PipelineStage.FFMPEG).status(JobStageStatus.SUCCESS).build());
 
         assertEquals(JobStatus.QUEUED, job.getStatus());
         assertEquals(PipelineStage.WEBRTC, job.getCurrentStage());
@@ -106,7 +110,7 @@ class JobServiceImplSpeakerCallbackTest {
                 .thenReturn(Optional.of(ffmpegStage));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.FFMPEG).status(JobStageStatus.PROCESSING).build());
+                .executionId(executionId).stage(PipelineStage.FFMPEG).status(JobStageStatus.PROCESSING).build());
 
         assertEquals(JobStatus.PROCESSING, job.getStatus());
         assertEquals(PipelineStage.FFMPEG, job.getCurrentStage());
@@ -130,7 +134,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.FFMPEG))
                 .thenReturn(Optional.of(ffmpegStage));
         WorkerCallbackRequest request = WorkerCallbackRequest.builder()
-                .stage(PipelineStage.FFMPEG).status(JobStageStatus.PROCESSING).build();
+                .executionId(executionId).stage(PipelineStage.FFMPEG).status(JobStageStatus.PROCESSING).build();
 
         jobService.handleWorkerCallback(jobId, request);
         jobService.handleWorkerCallback(jobId, request);
@@ -147,7 +151,7 @@ class JobServiceImplSpeakerCallbackTest {
 
         assertThrows(BusinessException.class, () -> jobService.handleWorkerCallback(jobId,
                 WorkerCallbackRequest.builder().stage(PipelineStage.OUTPUT)
-                        .status(JobStageStatus.SUCCESS).segments(java.util.List.of()).build()));
+                        .executionId(executionId).status(JobStageStatus.SUCCESS).segments(java.util.List.of()).build()));
 
         org.mockito.Mockito.verifyNoInteractions(speakerSegmentRepository);
     }
@@ -165,7 +169,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(java.util.List.of(pyannote, output));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
+                .executionId(executionId).stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
                 .errorCode("NO_SPEECH_DETECTED").errorMessage("No speech").build());
 
         assertEquals(JobStatus.FAILED, job.getStatus());
@@ -192,7 +196,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(java.util.List.of(pyannote, output));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
+                .executionId(executionId).stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
                 .errorCode("NO_SPEECH_DETECTED").errorMessage("No speech").build());
 
         assertEquals(JobStageStatus.SUCCESS, output.getStatus());
@@ -211,7 +215,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(java.util.List.of(pyannote, output));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
+                .executionId(executionId).stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
                 .errorCode("NO_SPEECH_DETECTED").errorMessage("No speech").build());
 
         assertEquals(JobStageStatus.FAILED, output.getStatus());
@@ -223,13 +227,14 @@ class JobServiceImplSpeakerCallbackTest {
         job.setStatus(JobStatus.FAILED);
         job.setCurrentStage(PipelineStage.PYANNOTE);
         job.setErrorCode("NO_SPEECH_DETECTED");
+        job.setLeaseExpiresAt(null);
         JobStage pyannote = JobStage.builder().jobId(jobId).stage(PipelineStage.PYANNOTE)
                 .status(JobStageStatus.FAILED).retryCount(0).createdAt(java.time.Instant.now())
                 .errorCode("NO_SPEECH_DETECTED").build();
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.PYANNOTE)).thenReturn(Optional.of(pyannote));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
+                .executionId(executionId).stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
                 .errorCode("NO_SPEECH_DETECTED").errorMessage("duplicate").build());
 
         assertEquals(JobStatus.FAILED, job.getStatus());
@@ -248,7 +253,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.PYANNOTE)).thenReturn(Optional.of(pyannote));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
+                .executionId(executionId).stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
                 .errorCode("RETRYABLE_PROCESSING_ERROR").errorMessage("timeout").build());
 
         assertEquals(JobStatus.RETRYING, job.getStatus());
@@ -266,7 +271,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.PYANNOTE)).thenReturn(Optional.of(pyannote));
 
         jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
+                .executionId(executionId).stage(PipelineStage.PYANNOTE).status(JobStageStatus.FAILED)
                 .errorCode("RETRYABLE_PROCESSING_ERROR").errorMessage("timeout").build());
 
         assertEquals(JobStatus.DLQ, job.getStatus());
@@ -280,7 +285,8 @@ class JobServiceImplSpeakerCallbackTest {
         UUID otherJobId = UUID.randomUUID();
         UUID otherMeetingId = UUID.randomUUID();
         Job otherJob = Job.builder().id(otherJobId).meetingId(otherMeetingId).status(JobStatus.QUEUED)
-                .currentStage(PipelineStage.FFMPEG).retryCount(0).build();
+                .currentStage(PipelineStage.FFMPEG).retryCount(0).executionId(executionId)
+                .leaseExpiresAt(java.time.Instant.now().plusSeconds(60)).build();
         JobStage otherStage = JobStage.builder().jobId(otherJobId).stage(PipelineStage.FFMPEG)
                 .status(JobStageStatus.PENDING).retryCount(0).createdAt(java.time.Instant.now()).build();
         Meeting otherMeeting = Meeting.builder().id(otherMeetingId).build();
@@ -289,7 +295,7 @@ class JobServiceImplSpeakerCallbackTest {
         when(meetingRepository.findById(otherMeetingId)).thenReturn(Optional.of(otherMeeting));
 
         jobService.handleWorkerCallback(otherJobId, WorkerCallbackRequest.builder()
-                .stage(PipelineStage.FFMPEG).status(JobStageStatus.PROCESSING).build());
+                .executionId(executionId).stage(PipelineStage.FFMPEG).status(JobStageStatus.PROCESSING).build());
 
         assertEquals(JobStatus.PROCESSING, otherJob.getStatus());
         assertEquals(JobStatus.FAILED, job.getStatus());

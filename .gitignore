@@ -73,3 +73,6 @@ __pycache__/
 /ai-engine/hf-cache/
 .env.gpu
 .env.gpu.local
+# Local backups and Python test environments
+backups/
+.venv-test/

@@ -17,4 +17,5 @@ public class WorkerJobControlResponse {
     private JobStatus status;
     private PipelineStage currentStage;
     private List<PipelineStage> successfulStages;
+    private boolean executionAllowed;
 }
