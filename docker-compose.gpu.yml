@@ -1,0 +1,40 @@
+services:
+  redis:
+    ports: !override
+      - "127.0.0.1:6379:6379"
+
+  ai-engine:
+    ports: !override
+      - "${GPU_TAILSCALE_IP:?Set GPU_TAILSCALE_IP}:8000:8000"
+
+    depends_on: !override
+      - redis
+
+    environment:
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:?Set BACKEND_BASE_URL}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?Set MINIO_ENDPOINT}
+
+  ai-worker:
+    build:
+      context: ./ai-engine
+      dockerfile: Dockerfile.gpu
+
+    gpus: all
+
+    depends_on: !override
+      - redis
+
+    environment:
+      PYANNOTE_DEVICE: cuda
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:?Set BACKEND_BASE_URL}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?Set MINIO_ENDPOINT}
+
+      HF_HOME: /app/hf-cache
+      HF_TOKEN: ${HF_TOKEN:?Set HF_TOKEN}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
+
+    volumes:
+      - ./ai-engine/hf-cache:/app/hf-cache

@@ -68,3 +68,8 @@ __pycache__/
 /private/tmp/smartrec_workspace/
 .DS_Store
 *.db
+
+# GPU deployment
+/ai-engine/hf-cache/
+.env.gpu
+.env.gpu.local

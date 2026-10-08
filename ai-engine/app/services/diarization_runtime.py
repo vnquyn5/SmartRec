@@ -8,7 +8,12 @@ from typing import Optional, Union, Any, Dict, List
 
 import numpy as np
 import torch
-
+from torch.torch_version import TorchVersion
+from pyannote.audio.core.task import (
+    Specifications,
+    Problem,
+    Resolution,
+)
 logger = logging.getLogger("smartrec.diarization_runtime")
 
 
@@ -174,10 +179,16 @@ class DiarizationRuntimeManager:
 
             logger.info(f"Đang tải pretrained pipeline '{self.model_name}' từ Hugging Face Hub...")
             try:
-                pipeline = Pipeline.from_pretrained(
-                    self.model_name,
-                    use_auth_token=self.hf_token
-                )
+                with torch.serialization.safe_globals([
+                    TorchVersion,
+                    Specifications,
+                    Problem,
+                    Resolution,
+                ]):
+                    pipeline = Pipeline.from_pretrained(
+                        self.model_name,
+                        use_auth_token=self.hf_token,
+                    )
             except Exception as e:
                 err_msg = str(e).lower()
                 if "401" in err_msg or "gated" in err_msg or "unauthorized" in err_msg or "access" in err_msg:

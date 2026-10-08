@@ -1,0 +1,36 @@
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# Install application dependencies.
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+# Proven GPU stack: PyTorch 2.7.1 + CUDA 12.8
+RUN python -m pip install --no-cache-dir \
+      torch==2.7.1 \
+      torchaudio==2.7.1 \
+      --index-url https://download.pytorch.org/whl/cu128 \
+    && python -m pip check
+
+COPY app ./app
+
+ENV PYANNOTE_DEVICE=cuda \
+    HF_HOME=/app/hf-cache
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
