@@ -81,16 +81,58 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-smartrec-media}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
+      SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
+      SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:8082/api/v1}
+      HF_TOKEN: ${HF_TOKEN:-}
     depends_on:
       - redis
       - minio
       - chromadb
+    restart: unless-stopped
+    networks:
+      - smartrec-net
+
+  ai-worker:
+    build:
+      context: ./ai-engine
+    container_name: smartrec-ai-worker
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=${CELERY_WORKER_CONCURRENCY:-1}",
+      ]
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-smartrec-media}
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
+      SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:8082/api/v1}
+      HF_TOKEN: ${HF_TOKEN:-}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
+    depends_on:
+      - redis
+      - minio
     restart: unless-stopped
     networks:
       - smartrec-net

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import router as audio_router
+from app.api.routes import router as audio_router, internal_router
 
 app = FastAPI(
     title="SmartRec AI Engine - Audio Preprocessing Service",
@@ -8,7 +8,8 @@ app = FastAPI(
 )
 
 # Đăng ký router tiền xử lý âm thanh
-app.include_router(audio_router)
+app.include_router(audio_router, prefix="/api/v1")
+app.include_router(internal_router)
 
 
 @app.get("/health", tags=["Health Check"])

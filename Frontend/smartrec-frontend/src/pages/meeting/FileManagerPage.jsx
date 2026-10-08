@@ -24,6 +24,7 @@ import {
   downloadMeetings,
   getMeetings,
   renameMeeting as renameMeetingApi,
+  startMeetingProcessing,
 } from "../../services/meetingService.js";
 import { softDeleteMediaFile } from "../../services/trashService.js";
 
@@ -36,6 +37,16 @@ const EMPTY_PAGE = {
   first: true,
   last: true,
 };
+const ACTIVE_MEETING_STATUSES = new Set([
+  "PENDING",
+  "QUEUED",
+  "RUNNING",
+  "PROCESSING",
+  "RETRYING",
+]);
+const isMeetingActive = (meeting) =>
+  ACTIVE_MEETING_STATUSES.has(String(meeting?.status || "").trim().toUpperCase());
+
 const formatDate = (value) =>
   value
     ? new Intl.DateTimeFormat("vi-VN", {
@@ -85,6 +96,9 @@ const triggerBlobDownload = (blob, fileName) => {
 export default function FileManagerPage() {
   const [data, setData] = useState(EMPTY_PAGE);
   const [loading, setLoading] = useState(true);
+  const [isDocumentVisible, setIsDocumentVisible] = useState(
+    () => document.visibilityState !== "hidden",
+  );
   const [error, setError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("");
@@ -103,27 +117,110 @@ export default function FileManagerPage() {
   const [infoMeeting, setInfoMeeting] = useState(null);
   const [shareMeeting, setShareMeeting] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [processMeeting, setProcessMeeting] = useState(null);
+  const [isStartingProcess, setIsStartingProcess] = useState(false);
+  const [processError, setProcessError] = useState("");
   const selectAllRef = useRef(null);
+  const inFlightRequestsRef = useRef(new Map());
+  const activeQueryKeyRef = useRef("");
   const navigate = useNavigate();
 
-  const loadMeetings = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setData(
-        await getMeetings({ page, size: 10, status, keyword: keyword.trim() }),
-      );
-    } catch (requestError) {
-      setError(requestError?.message || "Không thể tải danh sách file.");
-    } finally {
-      setLoading(false);
+  const normalizedKeyword = keyword.trim();
+  const queryKey = JSON.stringify([page, status, normalizedKeyword]);
+  activeQueryKeyRef.current = queryKey;
+
+  const loadMeetings = useCallback(async ({ background = false } = {}) => {
+    const requestKey = JSON.stringify([page, status, keyword.trim()]);
+    const existingRequest = inFlightRequestsRef.current.get(requestKey);
+    if (existingRequest) {
+      if (!background) {
+        setLoading(true);
+        setError("");
+        try {
+          return await existingRequest;
+        } finally {
+          if (activeQueryKeyRef.current === requestKey) setLoading(false);
+        }
+      }
+      return existingRequest;
     }
-  }, [keyword, page, status]);
+
+    if (!background) {
+      setLoading(true);
+      setError("");
+    }
+
+    const request = (async () => {
+      try {
+        const nextData = await getMeetings({
+          page,
+          size: 10,
+          status,
+          keyword: keyword.trim(),
+        });
+        if (activeQueryKeyRef.current === requestKey) setData(nextData);
+        return nextData;
+      } catch (requestError) {
+        if (!background && activeQueryKeyRef.current === requestKey) {
+          setError(requestError?.message || "Không thể tải danh sách file.");
+        }
+        return null;
+      } finally {
+        if (inFlightRequestsRef.current.get(requestKey) === request) {
+          inFlightRequestsRef.current.delete(requestKey);
+        }
+        if (!background && activeQueryKeyRef.current === requestKey) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    inFlightRequestsRef.current.set(requestKey, request);
+    return request;
+  }, [inFlightRequestsRef, keyword, page, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(loadMeetings, keyword ? 300 : 0);
     return () => window.clearTimeout(timer);
   }, [loadMeetings, keyword]);
+
+  const hasActiveMeetings = data.content.some(isMeetingActive);
+
+  useEffect(() => {
+    if (loading || !isDocumentVisible || !hasActiveMeetings) return undefined;
+
+    let cancelled = false;
+    let timer;
+    const poll = async () => {
+      await loadMeetings({ background: true });
+      if (!cancelled) timer = window.setTimeout(poll, 2500);
+    };
+
+    timer = window.setTimeout(poll, 2500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [hasActiveMeetings, isDocumentVisible, loadMeetings, loading]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      const visible = document.visibilityState !== "hidden";
+      setIsDocumentVisible(visible);
+      if (visible) void loadMeetings({ background: true });
+    };
+    const refreshOnFocus = () => {
+      setIsDocumentVisible(true);
+      void loadMeetings({ background: true });
+    };
+
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [loadMeetings]);
 
   useEffect(() => {
     const visibleIdSet = new Set(data.content.map((meeting) => meeting.id));
@@ -233,6 +330,27 @@ export default function FileManagerPage() {
 
   const handleDownload = (meeting) => {
     handleDownloadSelected([meeting]);
+  };
+
+  const confirmStartProcessing = async () => {
+    if (!processMeeting || isStartingProcess) return;
+    setIsStartingProcess(true);
+    setProcessError("");
+    try {
+      const job = await startMeetingProcessing(processMeeting.id);
+      setData((currentData) => ({
+        ...currentData,
+        content: currentData.content.map((meeting) => meeting.id === processMeeting.id
+          ? { ...meeting, status: "PROCESSING", activeJobId: job?.id ?? meeting.activeJobId }
+          : meeting),
+      }));
+      setProcessMeeting(null);
+      void loadMeetings({ background: true });
+    } catch (requestError) {
+      setProcessError(requestError?.message || "Không thể bắt đầu xử lý cuộc họp.");
+    } finally {
+      setIsStartingProcess(false);
+    }
   };
 
   const handleDownloadSelected = async (meetings = selectedMeetings) => {
@@ -448,11 +566,7 @@ export default function FileManagerPage() {
             <div>
               <p className="text-[11px] text-slate-500">Đang xử lý AI</p>
               <strong className="mt-1 block text-xl text-white">
-                {
-                  data.content.filter(
-                    (meeting) => meeting.status === MEETING_STATUS.PROCESSING,
-                  ).length
-                }
+                {data.content.filter(isMeetingActive).length}
               </strong>
               <span className="text-[10px] text-slate-600">
                 trên trang hiện tại
@@ -546,7 +660,8 @@ export default function FileManagerPage() {
                 className="rounded-lg border border-slate-800 bg-[#171d31] px-2.5 py-2 text-[11px] text-slate-400 outline-none focus:border-blue-500/60"
               >
                 <option value="">Tất cả trạng thái</option>
-                <option value="PENDING">Chưa xử lý</option>
+                <option value="UNPROCESSED">Chưa xử lý</option>
+                <option value="PENDING">Chờ xử lý AI</option>
                 <option value="PROCESSING">Đang xử lý</option>
                 <option value="COMPLETED">Hoàn tất</option>
                 <option value="FAILED">Lỗi</option>
@@ -554,7 +669,7 @@ export default function FileManagerPage() {
               <button
                 type="button"
                 title="Tải lại"
-                onClick={loadMeetings}
+                onClick={() => loadMeetings()}
                 className="rounded-lg border border-slate-800 p-2 text-slate-500 transition hover:border-slate-600 hover:text-white"
               >
                 <RefreshIcon className="h-3.5 w-3.5" />
@@ -726,14 +841,14 @@ export default function FileManagerPage() {
                               </button>
                               <button
                                 type="button"
-                                title="Đưa vào Workspace"
+                                title={meeting.status === "UNPROCESSED" ? "Xử lý AI" : "Chỉ khả dụng khi chưa xử lý"}
+                                disabled={meeting.status !== "UNPROCESSED" || isStartingProcess}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setActionMessage(
-                                    `Đã chọn “${displayFile.name}” để đưa vào quy trình Workspace.`,
-                                  );
+                                  setProcessError("");
+                                  setProcessMeeting(meeting);
                                 }}
-                                className="rounded p-1.5 text-slate-600 transition hover:bg-emerald-500/10 hover:text-emerald-300"
+                                className="rounded p-1.5 text-slate-600 transition hover:bg-emerald-500/10 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-30"
                               >
                                 <PlayIcon />
                               </button>
@@ -1003,6 +1118,19 @@ export default function FileManagerPage() {
                 {renameError}
               </p>
             )}
+          </div>
+        </div>
+      )}
+      {processMeeting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50" role="dialog" aria-modal="true" aria-labelledby="process-meeting-title">
+            <h2 id="process-meeting-title" className="text-lg font-bold text-white">Xử lý cuộc họp</h2>
+            <p className="mt-2 text-sm text-slate-300">Bạn muốn xử lý cuộc họp này bây giờ?</p>
+            {processError && <p role="alert" className="mt-3 text-sm text-red-300">{processError}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" disabled={isStartingProcess} onClick={() => { setProcessMeeting(null); setProcessError(""); }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:border-slate-500 disabled:opacity-50">Để sau</button>
+              <button type="button" disabled={isStartingProcess} onClick={confirmStartProcessing} className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400 disabled:opacity-50">{isStartingProcess ? "Đang bắt đầu…" : "Xử lý"}</button>
+            </div>
           </div>
         </div>
       )}

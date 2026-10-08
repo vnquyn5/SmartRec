@@ -36,10 +36,10 @@ import com.example.smartrec.service.FileService;
 import com.example.smartrec.service.FileChecksumService;
 import com.example.smartrec.service.MinioService;
 
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class FileServiceImpl implements FileService {
     private static final int CURRENT_FINGERPRINT_VERSION = 2;
     private static final Logger log = LoggerFactory.getLogger(FileServiceImpl.class);
@@ -53,7 +53,6 @@ public class FileServiceImpl implements FileService {
     private final MinioService minioService;
     private final FileChecksumService fileChecksumService;
     private final TaskExecutor applicationTaskExecutor;
-
     @Override
     @Transactional
     public FileUploadResponse upLoadFile(MultipartFile file, String title) {
@@ -474,7 +473,7 @@ public class FileServiceImpl implements FileService {
                 .workspace_id(workspaceId)
                 .media_file_id(savedMediaFile.getId())
                 .title(title == null || title.isBlank() ? safeFileName : title)
-                .status(MeetingStatus.PENDING)
+                .status(MeetingStatus.UNPROCESSED)
                 .build();
         Meeting savedMeeting;
         try {
@@ -484,7 +483,7 @@ public class FileServiceImpl implements FileService {
                     savedMediaFile.getId(),
                     workspaceId,
                     meeting.getTitle(),
-                    MeetingStatus.PENDING,
+                    MeetingStatus.UNPROCESSED,
                     elapsedMs(meetingSaveStartNanos));
         } catch (DataAccessException e) {
             log.error(
@@ -492,7 +491,7 @@ public class FileServiceImpl implements FileService {
                     savedMediaFile.getId(),
                     workspaceId,
                     meeting.getTitle(),
-                    MeetingStatus.PENDING,
+                    MeetingStatus.UNPROCESSED,
                     e);
             throw e;
         } finally {
@@ -567,7 +566,7 @@ public class FileServiceImpl implements FileService {
                             .workspace_id(mediaFile.getWorkspace_id())
                             .media_file_id(mediaFile.getId())
                             .title(mediaFile.getOriginal_name())
-                            .status(MeetingStatus.PENDING)
+                            .status(MeetingStatus.UNPROCESSED)
                             .build());
                     log.info("[simple-upload] complete repaired Meeting meetingId={}, mediaFileId={}, elapsedMs={}",
                             repairedMeeting.getId(), mediaFile.getId(), elapsedMs(meetingSaveStartNanos));

@@ -1,385 +1,237 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { meetingApi } from "../../api/meetingApi";
+import { deleteMeeting, getAllMeetings } from "../../services/meetingService";
 import "./WorkspacePage.css";
 
-const mockData = [
-  {
-    id: 1,
-    title: "Q4_Planning_Session_Final.mp4",
-    fileName: "Q4_Planning_Session_Final.mp4",
-    fileType: "video",
-    createdAt: "2023-10-24T10:30:00",
-    duration: 1710, // 28:30
-    thumbnailUrl:
-      "https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&w=600&q=80",
-  },
-  {
-    id: 2,
-    title: "BING_Official_Audio.mp3",
-    fileName: "BING_Official_Audio.mp3",
-    fileType: "audio",
-    createdAt: "2023-10-22T09:00:00",
-    duration: 2712, // 45:12
-    thumbnailUrl:
-      "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
-  },
-  {
-    id: 3,
-    title: "New_Product_Demo_v2.0.mp4",
-    fileName: "New_Product_Demo_v2.0.mp4",
-    fileType: "video",
-    createdAt: "2023-10-19T14:45:00",
-    duration: 725, // 12:05
-    thumbnailUrl:
-      "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=600&q=80",
-  },
-  {
-    id: 4,
-    title: "Marketing_Strategy_Brainstorm.mp3",
-    fileName: "Marketing_Strategy_Brainstorm.mp3",
-    fileType: "audio",
-    createdAt: "2023-10-18T11:15:00",
-    duration: 1940, // 32:20
-    thumbnailUrl:
-      "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=600&q=80",
-  },
-  {
-    id: 5,
-    title: "UX_Design_Review_Mobile.mp4",
-    fileName: "UX_Design_Review_Mobile.mp4",
-    fileType: "video",
-    createdAt: "2023-10-15T16:30:00",
-    duration: 3490, // 58:10
-    thumbnailUrl:
-      "https://images.unsplash.com/photo-1581291518857-4e27b48ff24e?auto=format&fit=crop&w=600&q=80",
-  },
-];
+const POLL_INTERVAL_MS = 2500;
+const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "PROCESSING", "RUNNING", "RETRYING"]);
+const WORKSPACE_STATUSES = new Set([
+  ...ACTIVE_STATUSES,
+  "COMPLETED",
+  "FAILED",
+  "DLQ",
+  "CANCELLED",
+]);
 
-const WorkspacePage = () => {
+const STATUS_PRESENTATION = {
+  PENDING: { label: "Chờ xử lý", className: "status-pending" },
+  QUEUED: { label: "Chờ xử lý", className: "status-pending" },
+  RUNNING: { label: "Đang xử lý", className: "status-processing" },
+  PROCESSING: { label: "Đang xử lý", className: "status-processing" },
+  RETRYING: { label: "Đang thử lại", className: "status-processing" },
+  COMPLETED: { label: "Hoàn tất", className: "status-completed" },
+  SUCCESS: { label: "Hoàn tất", className: "status-completed" },
+  SUCCEEDED: { label: "Hoàn tất", className: "status-completed" },
+  FAILED: { label: "Thất bại", className: "status-failed" },
+  CANCELLED: { label: "Đã hủy", className: "status-terminal" },
+  DLQ: { label: "Xử lý lỗi", className: "status-failed" },
+};
+
+function formatDuration(seconds) {
+  if (seconds == null || !Number.isFinite(Number(seconds))) return null;
+  const total = Math.max(0, Math.floor(Number(seconds)));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainder = total % 60;
+  return hours
+    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function formatDate(value) {
+  if (!value) return "Chưa có ngày tải lên";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Chưa có ngày tải lên";
+  return date.toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function getMeetingTitle(meeting) {
+  return meeting.fileName || meeting.title || "Cuộc họp chưa có tên";
+}
+
+function getStatus(meeting) {
+  const key = String(meeting.status || "").toUpperCase();
+  return STATUS_PRESENTATION[key] || { label: key || "Chưa xác định", className: "status-terminal" };
+}
+
+export default function WorkspacePage() {
   const navigate = useNavigate();
-  const [meetings, setMeetings] = useState(mockData);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [meetings, setMeetings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const timerRef = useRef(null);
+  const requestRef = useRef(null);
+  const mountedRef = useRef(false);
 
-  // Debounce search query
+  const fetchMeetings = useCallback(async ({ initial = false } = {}) => {
+    if (requestRef.current) return requestRef.current;
+    if (initial) setLoading(true);
+
+    const request = getAllMeetings()
+      .then((response) => {
+        if (!mountedRef.current) return;
+        const data = Array.isArray(response?.content) ? response.content : [];
+        setMeetings(data.filter((meeting) =>
+          WORKSPACE_STATUSES.has(String(meeting?.status || "").trim().toUpperCase()),
+        ));
+        setError("");
+      })
+      .catch((fetchError) => {
+        if (!mountedRef.current) return;
+        setError(fetchError?.response?.data?.message || "Không thể tải danh sách cuộc họp.");
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) setLoading(false);
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
   useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-    }, 500);
-    return () => clearTimeout(handler);
-  }, [searchQuery]);
-
-  const fetchMeetings = async () => {
-    setLoading(true);
-    // Simulate API delay
-    setTimeout(() => {
-      if (debouncedSearch) {
-        const filtered = mockData.filter((m) =>
-          m.title.toLowerCase().includes(debouncedSearch.toLowerCase()),
-        );
-        setMeetings(filtered);
-      } else {
-        setMeetings(mockData);
-      }
-      setLoading(false);
-    }, 300);
-  };
+    mountedRef.current = true;
+    fetchMeetings({ initial: true });
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(timerRef.current);
+    };
+  }, [fetchMeetings]);
 
   useEffect(() => {
-    fetchMeetings();
-  }, [debouncedSearch]);
+    window.clearTimeout(timerRef.current);
+    const hasActive = meetings.some((meeting) => ACTIVE_STATUSES.has(String(meeting.status || "").toUpperCase()));
+    if (!hasActive) return undefined;
 
-  const handleDelete = async (id, e) => {
-    e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this meeting?"))
-      return;
+    let cancelled = false;
+    const schedule = () => {
+      timerRef.current = window.setTimeout(async () => {
+        if (cancelled || document.visibilityState === "hidden") {
+          if (!cancelled) schedule();
+          return;
+        }
+        await fetchMeetings();
+        if (!cancelled) schedule();
+      }, POLL_INTERVAL_MS);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerRef.current);
+    };
+  }, [meetings, fetchMeetings]);
 
-    // Simulate API deletion delay for mock data
+  useEffect(() => {
+    const refreshOnFocus = () => {
+      if (document.visibilityState === "visible") fetchMeetings();
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnFocus);
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnFocus);
+    };
+  }, [fetchMeetings]);
+
+  const visibleMeetings = useMemo(() => {
+    const keyword = searchQuery.trim().toLocaleLowerCase("vi");
+    if (!keyword) return meetings;
+    return meetings.filter((meeting) => getMeetingTitle(meeting).toLocaleLowerCase("vi").includes(keyword));
+  }, [meetings, searchQuery]);
+
+  const handleDelete = async (id, event) => {
+    event.stopPropagation();
+    if (!window.confirm("Bạn có chắc muốn xóa cuộc họp này?")) return;
     try {
-      setMeetings((prev) => prev.filter((m) => m.id !== id));
-    } catch (err) {
-      console.error("Failed to delete meeting", err);
-      alert("Failed to delete the meeting.");
+      await deleteMeeting(id);
+      setMeetings((current) => current.filter((meeting) => meeting.id !== id));
+    } catch (deleteError) {
+      window.alert(deleteError?.response?.data?.message || "Không thể xóa cuộc họp.");
     }
   };
 
-  const handleShare = (id, e) => {
-    e.stopPropagation();
-    const link = `${window.location.origin}/meeting/${id}`;
-    navigator.clipboard.writeText(link);
-    alert("Meeting link copied to clipboard!");
-  };
-
-  const handleViewInsights = (meeting) => {
-    navigate(`/meeting/${meeting.id}`, { state: { meeting } });
-  };
-
-  const handleAddAnother = () => {
-    navigate("/upload");
-  };
-
-  const formatDuration = (seconds) => {
-    if (!seconds) return "00:00";
-    const m = Math.floor(seconds / 60)
-      .toString()
-      .padStart(2, "0");
-    const s = Math.floor(seconds % 60)
-      .toString()
-      .padStart(2, "0");
-    return `${m}:${s}`;
-  };
-
-  const formatDateStr = (dateString) => {
-    if (!dateString) return "Unknown Date";
-    return new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  };
-
-  const formatTimeStr = (dateString) => {
-    if (!dateString) return "Unknown Time";
-    return new Date(dateString).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  const handleShare = async (id, event) => {
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/meeting/${id}`);
+      window.alert("Đã sao chép liên kết cuộc họp.");
+    } catch {
+      window.alert("Không thể sao chép liên kết cuộc họp.");
+    }
   };
 
   return (
-    <>
-      <div className="workspace-container">
-        <div className="workspace-header">
-          <h2 className="workspace-title">Cuộc họp đã xử lý</h2>
-          <p className="workspace-description">
-            Dưới đây là danh sách các cuộc họp đã được xử lý bởi hệ thống. Bạn
-            có thể xem chi tiết, chia sẻ hoặc xóa các cuộc họp này.
-          </p>
+    <div className="workspace-container">
+      <div className="workspace-header">
+        <h2 className="workspace-title">Cuộc họp đã xử lý</h2>
+        <p className="workspace-description">
+          Theo dõi trạng thái xử lý và xem kết quả của các cuộc họp trong không gian của bạn.
+        </p>
+        <label className="workspace-search">
+          <span className="sr-only">Tìm cuộc họp</span>
+          <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Tìm theo tên file/cuộc họp" />
+        </label>
+      </div>
+
+      {loading && meetings.length === 0 ? (
+        <div className="loading-container"><div className="spinner" /></div>
+      ) : error && meetings.length === 0 ? (
+        <div className="empty-state" role="alert">
+          <p>{error}</p>
+          <button onClick={() => fetchMeetings({ initial: true })} className="btn-action btn-insights">Thử lại</button>
         </div>
-
-        {loading ? (
-          <div className="loading-container">
-            <div className="spinner"></div>
-          </div>
-        ) : error ? (
-          <div className="empty-state">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="8" x2="12" y2="12"></line>
-              <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
-            <p>{error}</p>
-            <button
-              onClick={fetchMeetings}
-              className="btn-action btn-insights"
-              style={{ marginTop: "16px", maxWidth: "200px" }}
-            >
-              Try Again
-            </button>
-          </div>
-        ) : (
-          <div className="meetings-grid">
-            {meetings.map((meeting) => (
-              <div
-                key={meeting.id}
-                className="meeting-card"
-                onClick={() => handleViewInsights(meeting)}
-              >
+      ) : (
+        <div className="meetings-grid">
+          {visibleMeetings.map((meeting) => {
+            const status = getStatus(meeting);
+            const duration = formatDuration(meeting.durationSeconds);
+            const title = getMeetingTitle(meeting);
+            return (
+              <article key={meeting.id} className="meeting-card" onClick={() => navigate(`/meeting/${meeting.id}`)}>
                 <div className="meeting-card-thumbnail">
-                  {meeting.thumbnailUrl ? (
-                    <img
-                      src={meeting.thumbnailUrl}
-                      alt={meeting.title || "Meeting"}
-                    />
-                  ) : (
-                    <div className="thumbnail-placeholder">
-                      <svg
-                        width="48"
-                        height="48"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="rgba(255, 255, 255, 0.2)"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect
-                          x="2"
-                          y="2"
-                          width="20"
-                          height="20"
-                          rx="2.18"
-                          ry="2.18"
-                        ></rect>
-                        <line x1="7" y1="2" x2="7" y2="22"></line>
-                        <line x1="17" y1="2" x2="17" y2="22"></line>
-                        <line x1="2" y1="12" x2="22" y2="12"></line>
-                      </svg>
-                    </div>
-                  )}
-                  <span className="duration-badge">
-                    {formatDuration(meeting.duration)}
-                  </span>
+                  <div className="thumbnail-placeholder" aria-label="Không có ảnh xem trước">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="2" width="20" height="20" rx="3" /><path d="M7 2v20M17 2v20M2 12h20" />
+                    </svg>
+                  </div>
+                  {duration && <span className="duration-badge">{duration}</span>}
                 </div>
-
                 <div className="meeting-card-content">
                   <div className="meeting-title-row">
-                    <h3 className="meeting-card-title">
-                      {meeting.title || "Untitled Meeting"}
-                    </h3>
-                    <span className="status-badge">
-                      <span className="status-dot"></span>
-                      PROCESSED
+                    <h3 className="meeting-card-title" title={title}>{title}</h3>
+                    <span className={`status-badge ${status.className}`}>
+                      {ACTIVE_STATUSES.has(String(meeting.status || "").toUpperCase()) && <span className="status-spinner" aria-hidden="true" />}
+                      {!ACTIVE_STATUSES.has(String(meeting.status || "").toUpperCase()) && <span className="status-dot" />}
+                      {status.label}
                     </span>
                   </div>
-
                   <div className="meeting-card-meta">
                     <div className="meta-item">
-                      <svg
-                        className="meta-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect
-                          x="3"
-                          y="4"
-                          width="18"
-                          height="18"
-                          rx="2"
-                          ry="2"
-                        ></rect>
-                        <line x1="16" y1="2" x2="16" y2="6"></line>
-                        <line x1="8" y1="2" x2="8" y2="6"></line>
-                        <line x1="3" y1="10" x2="21" y2="10"></line>
-                      </svg>
-                      <span>
-                        {formatDateStr(
-                          meeting.createdAt || meeting.processedAt,
-                        )}
-                      </span>
-                      <span className="meta-dot">&middot;</span>
-                      <svg
-                        className="meta-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <polyline points="12 6 12 12 16 14"></polyline>
-                      </svg>
-                      <span>
-                        {formatTimeStr(
-                          meeting.createdAt || meeting.processedAt,
-                        )}
-                      </span>
+                      <svg className="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+                      <span>{formatDate(meeting.createdAt)}</span>
                     </div>
                   </div>
-
                   <div className="meeting-card-actions">
-                    <button
-                      className="btn-action btn-insights"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleViewInsights(meeting);
-                      }}
-                    >
-                      Xem chi tiết
+                    <button className="btn-action btn-insights" onClick={(event) => { event.stopPropagation(); navigate(`/meeting/${meeting.id}`); }}>Xem chi tiết</button>
+                    <button className="btn-action btn-icon-only" title="Chia sẻ" aria-label="Chia sẻ" onClick={(event) => handleShare(meeting.id, event)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4m0-11-6.8 4" /></svg>
                     </button>
-                    <button
-                      className="btn-action btn-icon-only"
-                      title="Share"
-                      onClick={(e) => handleShare(meeting.id, e)}
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <circle cx="18" cy="5" r="3"></circle>
-                        <circle cx="6" cy="12" r="3"></circle>
-                        <circle cx="18" cy="19" r="3"></circle>
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-                      </svg>
-                    </button>
-                    <button
-                      className="btn-action btn-icon-only btn-delete"
-                      title="Delete"
-                      onClick={(e) => handleDelete(meeting.id, e)}
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="3 6 5 6 21 6"></polyline>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                        <line x1="10" y1="11" x2="10" y2="17"></line>
-                        <line x1="14" y1="11" x2="14" y2="17"></line>
-                      </svg>
+                    <button className="btn-action btn-icon-only btn-delete" title="Xóa" aria-label="Xóa" onClick={(event) => handleDelete(meeting.id, event)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></svg>
                     </button>
                   </div>
                 </div>
-              </div>
-            ))}
-
-            {/* Add Another Card */}
-            <div
-              className="meeting-card add-another-card"
-              onClick={handleAddAnother}
-            >
-              <div className="add-another-icon">
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </div>
-              <span className="add-another-text">Add Another</span>
-              <span className="add-another-subtext">
-                Click to upload or drag & drop video files here.
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-    </>
+              </article>
+            );
+          })}
+          <button type="button" className="meeting-card add-another-card" onClick={() => navigate("/upload")}>
+            <span className="add-another-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg></span>
+            <span className="add-another-text">Tải lên cuộc họp khác</span>
+            <span className="add-another-subtext">Nhấn để chọn tệp và bắt đầu xử lý.</span>
+          </button>
+          {visibleMeetings.length === 0 && <p className="workspace-no-results">{meetings.length ? "Không tìm thấy cuộc họp phù hợp." : "Chưa có cuộc họp nào."}</p>}
+        </div>
+      )}
+    </div>
   );
-};
-
-export default WorkspacePage;
+}

@@ -1,6 +1,7 @@
-/** @typedef {'PENDING'|'PROCESSING'|'COMPLETED'|'FAILED'} MeetingStatus */
+/** @typedef {'UNPROCESSED'|'PENDING'|'PROCESSING'|'COMPLETED'|'FAILED'} MeetingStatus */
 
 export const MEETING_STATUS = Object.freeze({
+  UNPROCESSED: "UNPROCESSED",
   PENDING: "PENDING",
   PROCESSING: "PROCESSING",
   COMPLETED: "COMPLETED",
@@ -9,8 +10,14 @@ export const MEETING_STATUS = Object.freeze({
 
 /** @type {Record<MeetingStatus, {label: string, badgeClass: string, dotClass: string}>} */
 export const MEETING_STATUS_CONFIG = Object.freeze({
-  PENDING: {
+  UNPROCESSED: {
     label: "Chưa xử lý",
+    badgeClass:
+      "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-500/20",
+    dotClass: "bg-slate-400",
+  },
+  PENDING: {
+    label: "Đang xử lý AI",
     badgeClass:
       "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-500/20",
     dotClass: "bg-slate-400",

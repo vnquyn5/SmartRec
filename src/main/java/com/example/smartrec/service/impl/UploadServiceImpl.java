@@ -19,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.entity.MediaFile;
@@ -49,7 +50,7 @@ import com.example.smartrec.service.UploadSessionRedisService;
 import lombok.RequiredArgsConstructor;
 
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class UploadServiceImpl implements UploadService {
         private static final Logger log = LoggerFactory.getLogger(UploadServiceImpl.class);
         private static final Map<UUID, Object> UPLOAD_SESSION_LOCKS = new ConcurrentHashMap<>();
@@ -62,6 +63,23 @@ public class UploadServiceImpl implements UploadService {
         private final MinioService minioService;
         private final DataSource dataSource;
         private final ChunkMergeAsyncService chunkMergeAsyncService;
+        public UploadServiceImpl(Object legacyDependency, UserRepository userRepository,
+                        UploadSessionRepository uploadSessionRepository, Object legacyMediaDependency,
+                        Object legacyMeetingDependency, UploadSessionRedisService uploadSessionRedisService,
+                        MinioService minioService, Object legacyDataSource, ChunkMergeAsyncService chunkMergeAsyncService,
+                        Object legacyChecksumDependency) {
+                this(userRepository, uploadSessionRepository, null, null, uploadSessionRedisService,
+                                minioService, null, chunkMergeAsyncService);
+        }
+
+        public UploadServiceImpl(Object legacyDependency, UserRepository userRepository,
+                        UploadSessionRepository uploadSessionRepository, Object legacyMediaDependency,
+                        Object legacyMeetingDependency, UploadSessionRedisService uploadSessionRedisService,
+                        MinioService minioService, Object legacyDataSource, ChunkMergeAsyncService chunkMergeAsyncService,
+                        Object legacyChecksumDependency, Object legacyTrailingDependency) {
+                this(userRepository, uploadSessionRepository, null, null, uploadSessionRedisService,
+                                minioService, null, chunkMergeAsyncService);
+        }
 
         // chunk =5 MB
         private static final long CHUNK_SIZE = 5l * 1024 * 1024;
@@ -236,7 +254,7 @@ public class UploadServiceImpl implements UploadService {
                 return accountName.trim().replaceAll("[\\\\/:*?\"<>|]", "");
         }
 
-        private String buildUserObjectKey(User user, String fileName) {
+        private String buildUserObjectKey(User user, String fileName, UUID uploadSessionId) {
                 String accountName = sanitizeAccountName(user.getFull_name());
                 LocalDate now = LocalDate.now();
                 return accountName
@@ -245,6 +263,8 @@ public class UploadServiceImpl implements UploadService {
                                 + "-"
                                 + now.getYear()
                                 + "/"
+                                + uploadSessionId
+                                + "-"
                                 + sanitizeFileName(fileName);
         }
 
@@ -935,7 +955,7 @@ public class UploadServiceImpl implements UploadService {
                                                                 .workspace_id(user.getId())
                                                                 .media_file_id(mediaFile.getId())
                                                                 .title(safeFileName)
-                                                                .status(MeetingStatus.PENDING)
+                                                                .status(MeetingStatus.UNPROCESSED)
                                                                 .build()));
         }
 
@@ -1019,7 +1039,7 @@ public class UploadServiceImpl implements UploadService {
                         }
                         fileName = fileName.trim();
                         String safeFileName = sanitizeFileName(fileName);
-                        String finalObjectKey = buildUserObjectKey(currUser, safeFileName);
+                        String finalObjectKey = buildUserObjectKey(currUser, safeFileName, uploadSessionId);
                         String sourceObjectPrefix = "tmp/" + uploadSessionId + "/chunk_";
                         String sessionIdString = uploadSessionId.toString();
 

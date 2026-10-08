@@ -48,7 +48,7 @@ public class Meeting {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
     @Builder.Default
-    private MeetingStatus status = MeetingStatus.PENDING;
+    private MeetingStatus status = MeetingStatus.UNPROCESSED;
 
     @Column(name = "active_job_id")
     private UUID active_job_id;

@@ -6,10 +6,8 @@ import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 import TranscriptPanel from './TranscriptPanel';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeek }) {
-  // Mặc định mở tab Slide nếu là video để khớp giao diện Figma
-  const [activeTab, setActiveTab] = useState(fileType === 'video' ? 'slide' : 'summary');
-  const [aiStatus, setAiStatus] = useState('completed');
+export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onStartProcessing, startingProcess, retrying }) {
+  const [activeTab, setActiveTab] = useState('speaker');
 
   // Khai báo các tab theo yêu cầu 
   const tabs = [
@@ -120,24 +118,51 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex-1">
-                <AudioAiStatus status={aiStatus} onRetry={() => setAiStatus('processing')} />
-              </div>
-              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0f1526] border border-[#1e2a44] rounded-xl self-start sm:self-center shrink-0">
-                <span className="text-[11px] text-slate-400 font-semibold">Trạng thái AI:</span>
-                <select
-                  value={aiStatus}
-                  onChange={(e) => setAiStatus(e.target.value)}
-                  className="bg-[#18233c] text-white text-xs px-2 py-1 rounded-lg border border-[#26375c] focus:outline-none cursor-pointer"
-                >
-                  <option value="completed">Completed (Hoàn tất)</option>
-                  <option value="processing">Processing (Đang xử lý)</option>
-                  <option value="failed">Failed (Thất bại)</option>
-                </select>
+                <AudioAiStatus status={aiStatus} errorMessage={aiError} retrying={retrying} onRetry={onRetry} onStartProcessing={onStartProcessing} startingProcess={startingProcess} />
+                {jobLoading && <p className="mt-2 text-[11px] text-slate-400">Đang tải trạng thái xử lý…</p>}
               </div>
             </div>
 
-            {/* Quản lý danh sách Speaker và Timestamps (Đáp ứng Task 2.15.2) */}
-            <SpeakerManagementPanel initialSpeakers={speakers} onSave={onSaveSpeakers} />
+            {aiStatus === 'unprocessed' ? (
+              <p className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-5 py-8 text-center text-sm text-slate-400">
+                Cuộc họp chưa được xử lý AI.
+              </p>
+            ) : aiStatus === 'processing' || aiStatus === 'queued' ? (
+              <p className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-5 py-8 text-center text-sm text-slate-400">
+                Hệ thống đang phân tích âm thanh và nhận diện người nói.
+              </p>
+            ) : aiStatus === 'failed' ? (
+              <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-5 py-8 text-center text-sm text-rose-200">
+                Xử lý âm thanh thất bại. Kết quả người nói không khả dụng.
+              </p>
+            ) : aiStatus === 'error' ? (
+              <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-5 py-8 text-center text-sm text-amber-200">
+                Không thể tải trạng thái hoặc kết quả Audio AI.
+              </p>
+            ) : speakerLoading ? (
+              <p className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-5 py-8 text-center text-sm text-slate-400">
+                Đang tải kết quả người nói…
+              </p>
+            ) : speakerError ? (
+              <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-5 py-8 text-center text-sm text-amber-200">
+                {speakerError}
+              </p>
+            ) : speakers.length === 0 ? (
+              <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-5 py-8 text-center">
+                <h3 className="text-sm font-semibold text-white">Không phát hiện người nói</h3>
+                <p className="mt-2 text-sm text-slate-400">Hệ thống đã hoàn tất xử lý nhưng không tìm thấy đoạn phát ngôn phù hợp.</p>
+              </div>
+            ) : (
+              <>
+                <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-4 py-3">
+                  <h2 className="text-sm font-semibold text-white">Người nói</h2>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {speakers.length} người nói · {speakers.reduce((total, speaker) => total + speaker.segments.length, 0)} đoạn phát ngôn
+                  </p>
+                </div>
+                <SpeakerManagementPanel key={speakers.map((speaker) => speaker.id).join('|')} initialSpeakers={speakers} onSave={onSaveSpeakers} onSeekSegment={onSeekSegment} />
+              </>
+            )}
           </div>
         )}
         {activeTab === 'slide' && <SlideOcrTab />}

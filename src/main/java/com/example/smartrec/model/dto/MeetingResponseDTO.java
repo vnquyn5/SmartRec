@@ -23,4 +23,5 @@ public class MeetingResponseDTO {
     private Integer durationSeconds;
     private Instant createdAt;
     private Instant updatedAt;
+    private UUID activeJobId;
 }

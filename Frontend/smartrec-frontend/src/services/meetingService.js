@@ -78,3 +78,7 @@ export async function downloadMeetings(ids) {
 export async function renameMeeting(id, fileName) {
   return httpClient.patch(`/meetings/${id}/name`, { fileName });
 }
+
+export async function startMeetingProcessing(id) {
+  return httpClient.post(`/meetings/${id}/process`);
+}

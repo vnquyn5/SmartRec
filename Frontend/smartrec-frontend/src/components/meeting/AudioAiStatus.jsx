@@ -28,7 +28,36 @@ function AlertCircleIcon({ className = "w-4 h-4", ...props }) {
   );
 }
 
-export default function AudioAiStatus({ status, onRetry }) {
+export default function AudioAiStatus({ status, onRetry, onStartProcessing, startingProcess = false, errorMessage, retrying = false }) {
+  if (status === 'unprocessed') {
+    return (
+      <div className="w-full bg-[#0c101d] border border-slate-600/40 rounded-lg p-2.5 shadow-sm flex items-center justify-between font-sans">
+        <div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-white text-[13px] font-bold">Audio AI</span>
+            <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-slate-700 text-slate-200">Chưa xử lý</span>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">Cuộc họp chưa được xử lý AI.</p>
+        </div>
+        {onStartProcessing && <button type="button" onClick={onStartProcessing} disabled={startingProcess} className="px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-400 text-white text-[11px] font-semibold disabled:opacity-50">{startingProcess ? 'Đang bắt đầu…' : 'Xử lý ngay'}</button>}
+      </div>
+    );
+  }
+  if (status === 'queued') {
+    return (
+      <div className="w-full bg-[#0c101d] border border-slate-600/40 rounded-lg p-2.5 shadow-sm flex items-center gap-2.5 font-sans">
+        <div className="w-7 h-7 rounded-md bg-slate-800 border border-slate-600/50 flex items-center justify-center text-slate-300 shrink-0">…</div>
+        <div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-white text-[13px] font-bold">Audio AI</span>
+            <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-slate-700 text-slate-200">Chờ xử lý</span>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">Job đang chờ worker xử lý.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (status === 'processing') {
     return (
       <div className="w-full bg-[#0c101d] border border-[#2563eb]/40 rounded-lg p-2.5 shadow-sm flex items-center justify-between font-sans">
@@ -67,7 +96,7 @@ export default function AudioAiStatus({ status, onRetry }) {
               </span>
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">
-              Đã nhận diện thành công các Speaker và đoạn hội thoại trong cuộc họp.
+              {status === 'empty' ? 'Đã xử lý xong. Không phát hiện đoạn hội thoại nào.' : 'Đã nhận diện thành công các Speaker và đoạn hội thoại trong cuộc họp.'}
             </p>
           </div>
         </div>
@@ -90,7 +119,7 @@ export default function AudioAiStatus({ status, onRetry }) {
               </span>
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">
-              Không thể xử lý bản ghi âm này. Vui lòng kiểm tra lại định dạng file hoặc thử lại.
+              {errorMessage || 'Không thể xử lý bản ghi âm này. Vui lòng thử lại.'}
             </p>
           </div>
         </div>
@@ -98,15 +127,24 @@ export default function AudioAiStatus({ status, onRetry }) {
           <button
             type="button"
             onClick={onRetry}
+            disabled={retrying}
             className="px-3 py-1.5 rounded-lg bg-[#ef4444] hover:bg-[#dc2626] text-white text-[11px] font-semibold shadow-sm transition-colors shrink-0"
           >
-            Thử lại
+            {retrying ? 'Đang gửi…' : 'Thử lại'}
           </button>
         )}
       </div>
     );
   }
 
+  if (status === 'error') {
+    return (
+      <div role="alert" className="w-full bg-[#0c101d] border border-[#f59e0b]/40 rounded-lg p-2.5 shadow-sm font-sans">
+        <span className="text-[13px] font-bold text-white">Không thể tải trạng thái Audio AI</span>
+        <p className="text-[11px] text-amber-200 mt-1">{errorMessage || 'Kiểm tra kết nối hoặc đăng nhập rồi tải lại trang.'}</p>
+      </div>
+    );
+  }
+
   return null;
 }
-

@@ -1,3 +1,4 @@
+import math
 import os
 import json
 from typing import Dict, Any, List, Optional
@@ -52,6 +53,9 @@ class AudioChunker:
         Xử lý kiểm tra thời lượng và tiến hành chunking nếu > 2h.
         Trả về dictionary chứa thông tin xử lý và Manifest.
         """
+        if not isinstance(target_chunk_duration, (int, float)) or not math.isfinite(target_chunk_duration) or target_chunk_duration <= 0:
+            raise AudioChunkerError(f"target_chunk_duration phải lớn hơn 0s (nhận được: {target_chunk_duration}s).")
+
         input_path = os.path.abspath(input_path)
         if not os.path.isfile(input_path):
             raise FileNotFoundError(f"File nguồn không tồn tại: {input_path}")

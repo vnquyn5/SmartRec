@@ -44,7 +44,6 @@ public class ChunkMergeAsyncService {
     private final MediaFileRepository mediaFileRepository;
     private final MeetingRepository meetingRepository;
     private final FileChecksumService fileChecksumService;
-
     public void mergeAsync(MergeJob job) {
         applicationTaskExecutor.execute(() -> runMerge(job));
     }
@@ -485,7 +484,7 @@ public class ChunkMergeAsyncService {
                                 .workspace_id(job.userId())
                                 .media_file_id(mediaFile.getId())
                                 .title(job.safeFileName())
-                                .status(MeetingStatus.PENDING)
+                                .status(MeetingStatus.UNPROCESSED)
                                 .build()));
     }
 

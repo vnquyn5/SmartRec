@@ -7,12 +7,18 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
+import jakarta.persistence.LockModeType;
 
 public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select m from Meeting m where m.id = :meetingId")
+    Optional<Meeting> findByIdForUpdate(@Param("meetingId") UUID meetingId);
+
     @Query("select m from Meeting m where m.media_file_id = :mediaFileId")
     Optional<Meeting> findByMediaFileId(@Param("mediaFileId") UUID mediaFileId);
 

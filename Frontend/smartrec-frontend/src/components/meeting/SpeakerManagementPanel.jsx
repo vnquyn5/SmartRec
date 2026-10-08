@@ -199,7 +199,8 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
 
 export default function SpeakerManagementPanel({
   initialSpeakers = [],
-  onSave
+  onSave,
+  onSeekSegment
 }) {
   const [names, setNames] = useState({});
   const [errors, setErrors] = useState({});
@@ -207,6 +208,8 @@ export default function SpeakerManagementPanel({
   const [errorMessage, setErrorMessage] = useState('');
   const [applyToAll, setApplyToAll] = useState(false);
   const [activeDropdownId, setActiveDropdownId] = useState(null);
+  const [expandedSpeakers, setExpandedSpeakers] = useState({});
+  const [activeSegmentKey, setActiveSegmentKey] = useState(null);
 
   useEffect(() => {
     const map = {};
@@ -335,6 +338,9 @@ export default function SpeakerManagementPanel({
 
         {/* Speaker Rename List Items */}
         <div className="space-y-4">
+          {initialSpeakers.length === 0 && (
+            <p className="text-sm text-slate-400 py-5 text-center">Chưa có Speaker hoặc đoạn phát ngôn.</p>
+          )}
           {initialSpeakers.map((speaker, index) => {
             const dotColor = DOT_COLORS[index % DOT_COLORS.length];
             const originalLabel = speaker.originalLabel || `Speaker ${index + 1}`;
@@ -342,6 +348,7 @@ export default function SpeakerManagementPanel({
             const value = names[speaker.id] !== undefined ? names[speaker.id] : (speaker.name || '');
             const error = errors[speaker.id];
             const isDropdownOpen = activeDropdownId === speaker.id;
+            const isExpanded = expandedSpeakers[speaker.id] !== false;
 
             return (
               <div
@@ -388,14 +395,29 @@ export default function SpeakerManagementPanel({
                   <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
                     <ClockIcon className="w-3 h-3 text-[#38bdf8]" />
                     <span>Speaking Timeline</span>
+                    <button type="button" className="ml-auto text-sky-300 normal-case" onClick={() => setExpandedSpeakers((prev) => ({ ...prev, [speaker.id]: !isExpanded }))}>
+                      {isExpanded ? 'Thu gọn' : 'Mở rộng'}
+                    </button>
                   </div>
 
-                  {speaker.segments && speaker.segments.length > 0 ? (
+                  {isExpanded && speaker.segments && speaker.segments.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {speaker.segments.map((seg, sIdx) => (
-                        <div
-                          key={sIdx}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#161d33] border border-[#222d4d] text-[11px] font-mono text-slate-300"
+                        <button
+                          key={`${speaker.id}-${seg.startSeconds}-${sIdx}`}
+                          type="button"
+                          title={`Phát từ ${seg.start}`}
+                          aria-pressed={activeSegmentKey === `${speaker.id}-${sIdx}`}
+                          onClick={() => {
+                            const key = `${speaker.id}-${sIdx}`;
+                            setActiveSegmentKey(key);
+                            if (Number.isFinite(Number(seg.startSeconds))) onSeekSegment?.(Number(seg.startSeconds));
+                          }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-mono transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38bdf8] ${
+                            activeSegmentKey === `${speaker.id}-${sIdx}`
+                              ? 'bg-[#12304a] border-[#38bdf8] text-white ring-1 ring-[#38bdf8]/50'
+                              : 'bg-[#161d33] border-[#222d4d] text-slate-300 hover:bg-[#1d2b49] hover:border-[#38bdf8]/70'
+                          }`}
                         >
                           <div
                             className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -404,12 +426,12 @@ export default function SpeakerManagementPanel({
                           <span className="text-white">{seg.start}</span>
                           <span className="text-slate-500">→</span>
                           <span className="text-slate-300">{seg.end}</span>
-                        </div>
+                        </button>
                       ))}
                     </div>
-                  ) : (
-                    <p className="text-xs text-slate-500 italic">Chưa có đoạn phát ngôn nào.</p>
-                  )}
+                  ) : isExpanded ? (
+                      <p className="text-xs text-slate-500 italic">Chưa có đoạn phát ngôn nào.</p>
+                    ) : null}
                 </div>
               </div>
             );

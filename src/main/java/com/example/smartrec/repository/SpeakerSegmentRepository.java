@@ -17,5 +17,7 @@ public interface SpeakerSegmentRepository extends JpaRepository<SpeakerSegment,U
     // meeting_id: Segment thuoc meeting nao
     // speaker_label: thuoc speaker nao
     List<SpeakerSegment> findByMeetingIdAndSpeakerLabel(UUID meetingId, String speakerLabel);
+
+    void deleteByMeetingId(UUID meetingId);
     
 }

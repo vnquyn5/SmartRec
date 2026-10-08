@@ -19,6 +19,21 @@
 .workspace-description {
   color: #9ca3af;
   font-size: 0.95rem;
+  margin-bottom: 14px;
+}
+
+.workspace-search input {
+  width: min(100%, 420px);
+  padding: 9px 12px;
+  border: 1px solid #26344f;
+  border-radius: 8px;
+  color: #e5e7eb;
+  background: #111827;
+  outline: none;
+}
+
+.workspace-search input:focus {
+  border-color: #3b82f6;
 }
 
 .meetings-grid {
@@ -110,6 +125,7 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   flex: 1;
+  min-width: 0;
 }
 
 .status-badge {
@@ -123,6 +139,8 @@
   font-size: 0.7rem;
   font-weight: 600;
   border: 1px solid rgba(59, 130, 246, 0.2);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .status-dot {
@@ -130,6 +148,21 @@
   height: 6px;
   background-color: #3b82f6;
   border-radius: 50%;
+}
+
+.status-pending { background: rgba(120, 113, 108, .2); color: #d6d3d1; border-color: rgba(168, 162, 158, .25); }
+.status-processing { background: rgba(30, 58, 138, .4); color: #60a5fa; border-color: rgba(59, 130, 246, .25); }
+.status-completed { background: rgba(6, 78, 59, .35); color: #34d399; border-color: rgba(16, 185, 129, .25); }
+.status-failed { background: rgba(127, 29, 29, .35); color: #fca5a5; border-color: rgba(239, 68, 68, .25); }
+.status-terminal { background: rgba(55, 65, 81, .45); color: #d1d5db; border-color: rgba(107, 114, 128, .25); }
+
+.status-spinner {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
 }
 
 .meeting-card-meta {
@@ -269,6 +302,12 @@
   color: #9ca3af;
 }
 
+.workspace-no-results {
+  color: #9ca3af;
+  padding: 24px 8px;
+  text-align: center;
+}
+
 .empty-state svg {
   width: 64px;
   height: 64px;
@@ -296,4 +335,12 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+@media (max-width: 640px) {
+  .workspace-container { padding: 5px 16px 25px; }
+  .meetings-grid { grid-template-columns: minmax(0, 1fr); }
+  .meeting-title-row { flex-wrap: wrap; }
+  .meeting-card-title { flex-basis: 100%; }
+  .meeting-card-actions { gap: 8px; }
 }

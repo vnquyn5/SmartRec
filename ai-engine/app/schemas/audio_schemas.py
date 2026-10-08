@@ -1,129 +1,246 @@
-from typing import Optional
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import os
+import re
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+
+def validate_safe_path(path_str: Optional[str], field_name: str = "path") -> Optional[str]:
+    """Kiểm tra và chuẩn hóa đường dẫn an toàn (Chống Path Traversal)."""
+    if path_str is None:
+        return None
+
+    clean_path = path_str.strip()
+    if not clean_path:
+        raise ValueError(f"Trường '{field_name}' không được để trống.")
+
+    # Chuẩn hóa đường dẫn
+    normalized = os.path.normpath(clean_path)
+
+    if "\x00" in normalized:
+        raise ValueError(f"Đường dẫn '{field_name}' chứa ký tự không hợp lệ.")
+
+    parts = normalized.split(os.sep)
+    if ".." in parts:
+        raise ValueError(f"Đường dẫn '{field_name}' chứa mẫu Path Traversal trái phép ('..').")
+
+    return normalized
+
+
+def validate_job_id_format(job_id_str: str) -> str:
+    """[H3] Khóa chặt job_id: Chỉ cho phép chữ cái, chữ số, gạch dưới và gạch ngang."""
+    clean_id = job_id_str.strip()
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", clean_id):
+        raise ValueError(
+            f"job_id '{job_id_str}' không hợp lệ. Chỉ cho phép ký tự chữ cái, số, '-' hoặc '_', độ dài 1-64 ký tự."
+        )
+    return clean_id
+
+
+# -----------------------------------------------------------------------------
+# 1. EXTRACT & NORMALIZE SCHEMAS
+# -----------------------------------------------------------------------------
 class AudioExtractionRequest(BaseModel):
-    """Schema nhận request tiền xử lý âm thanh từ Backend Spring Boot."""
-    input_path: str = Field(
-        ...,
-        description="Đường dẫn tuyệt đối hoặc tương đối tới tệp media nguồn (MP4, MKV, MP3, WAV...)"
-    )
-    output_path: Optional[str] = Field(
-        None,
-        description="Đường dẫn lưu file WAV đích. Nếu để trống, hệ thống tự sinh tên file chuẩn hóa cùng thư mục."
-    )
-    target_sample_rate: int = Field(
-        16000,
-        description="Tần số lấy mẫu mục tiêu (chuẩn AI là 16000Hz)"
-    )
-    target_channels: int = Field(
-        1,
-        description="Số kênh âm thanh mục tiêu (1: Mono, 2: Stereo)"
-    )
+    input_path: str = Field(..., description="Đường dẫn file video/audio nguồn")
+    output_path: Optional[str] = Field(None, description="Đường dẫn lưu file WAV sau chuẩn hóa")
+    target_sample_rate: int = Field(16000, description="Tần số lấy mẫu mục tiêu (16kHz)")
+    target_channels: int = Field(1, description="Số kênh âm thanh (Mono)")
+
+    @field_validator("input_path", "output_path")
+    @classmethod
+    def check_paths(cls, v, info):
+        return validate_safe_path(v, info.field_name)
+
+    @field_validator("target_sample_rate")
+    @classmethod
+    def check_sample_rate(cls, v):
+        if v != 16000:
+            raise ValueError("Hệ thống chỉ chấp nhận target_sample_rate = 16000 (16kHz).")
+        return v
+
+    @field_validator("target_channels")
+    @classmethod
+    def check_channels(cls, v):
+        if v != 1:
+            raise ValueError("Hệ thống chỉ chấp nhận target_channels = 1 (Mono).")
+        return v
+
+    @model_validator(mode="after")
+    def prevent_self_overwrite(self):
+        if self.output_path and os.path.abspath(self.input_path) == os.path.abspath(self.output_path):
+            raise ValueError("output_path không được trùng với input_path (tránh ghi đè file nguồn).")
+        return self
 
 
 class AudioExtractionResponse(BaseModel):
-    """Schema trả về kết quả tiền xử lý âm thanh cho pipeline."""
-    status: str = Field(..., description="Trạng thái xử lý: SUCCESS hoặc FAILED")
-    input_file: str = Field(..., description="Đường dẫn file nguồn đã nhận")
-    output_file: Optional[str] = Field(None, description="Đường dẫn file WAV đã chuẩn hóa")
-    format: Optional[str] = Field(None, description="Định dạng container (wav)")
-    codec: Optional[str] = Field(None, description="Codec âm thanh (pcm_s16le)")
-    sample_rate: Optional[int] = Field(None, description="Tần số lấy mẫu thực tế (Hz)")
-    channels: Optional[int] = Field(None, description="Số kênh âm thanh thực tế")
-    duration_seconds: Optional[float] = Field(None, description="Độ dài âm thanh tính bằng giây")
-    file_size_bytes: Optional[int] = Field(None, description="Dung lượng file output (bytes)")
-    processing_time_seconds: Optional[float] = Field(None, description="Thời gian thực thi trích xuất (giây)")
-    error_message: Optional[str] = Field(None, description="Thông báo lỗi chi tiết nếu xử lý thất bại")
-
-class AudioChunkItem(BaseModel):
-    """Schema mô tả metadata của từng chunk âm thanh."""
-    chunk_index: int = Field(..., description="Thứ tự chunk (1, 2, 3...)")
-    file_path: str = Field(..., description="Đường dẫn tuyệt đối tới file chunk trên ổ đĩa")
-    file_name: str = Field(..., description="Tên tệp chunk")
-    start: str = Field(..., description="Thời điểm bắt đầu định dạng HH:MM:SS")
-    end: str = Field(..., description="Thời điểm kết thúc định dạng HH:MM:SS")
-    start_seconds: float = Field(..., description="Thời điểm bắt đầu (giây)")
-    end_seconds: float = Field(..., description="Thời điểm kết thúc (giây)")
-    duration: float = Field(..., description="Độ dài phân đoạn chunk (giây)")
+    status: str = Field(..., example="SUCCESS")
+    output_path: str = Field(...)
+    sample_rate: int = Field(16000)
+    channels: int = Field(1)
+    duration_seconds: float = Field(...)
+    file_size_bytes: int = Field(...)
+    message: Optional[str] = None
 
 
-class AudioManifest(BaseModel):
-    """Schema Manifest ánh xạ giữa các chunk và timeline của audio gốc."""
-    source: str = Field(..., description="Tên tệp âm thanh nguồn")
-    source_path: str = Field(..., description="Đường dẫn tệp nguồn")
-    duration: float = Field(..., description="Tổng thời lượng tệp nguồn (giây)")
-    chunk_count: int = Field(..., description="Tổng số lượng chunks")
-    chunks: List[AudioChunkItem] = Field(..., description="Danh sách chi tiết các chunks")
-
-
+# -----------------------------------------------------------------------------
+# 2. CHUNKER SCHEMAS
+# -----------------------------------------------------------------------------
 class AudioChunkRequest(BaseModel):
-    """Schema nhận request phân đoạn audio từ Orchestrator/Backend."""
-    input_path: str = Field(
-        ...,
-        description="Đường dẫn tới tệp audio WAV 16kHz Mono nguồn"
-    )
-    output_dir: Optional[str] = Field(
-        None,
-        description="Thư mục lưu các chunks và file manifest.json. Mặc định tạo thư mục con cùng cấp."
-    )
+    input_path: str = Field(..., description="Đường dẫn file WAV nguồn")
+    output_dir: Optional[str] = Field(None, description="Thư mục lưu các phân đoạn chunk")
     target_chunk_duration: float = Field(
         2400.0,
-        description="Thời lượng mục tiêu mỗi chunk tính bằng giây (Mặc định 2400s = 40 phút)"
+        ge=600.0,
+        le=2700.0,
+        description="Thời lượng mỗi chunk (từ 600s/10 phút đến 2700s/45 phút)"
     )
+
+    @field_validator("input_path", "output_dir")
+    @classmethod
+    def check_paths(cls, v, info):
+        return validate_safe_path(v, info.field_name)
 
 
 class AudioChunkResponse(BaseModel):
-    """Schema trả về kết quả chunking cho pipeline xử lý AI."""
-    status: str = Field(..., description="Trạng thái: SUCCESS, SKIPPED hoặc FAILED")
-    message: str = Field(..., description="Mô tả kết quả xử lý")
-    total_duration_seconds: Optional[float] = Field(None, description="Tổng thời lượng file nguồn")
-    is_chunked: bool = Field(..., description="Đánh dấu file có bị chia nhỏ hay không")
-    manifest_file: Optional[str] = Field(None, description="Đường dẫn tệp manifest.json trên ổ đĩa")
-    manifest: Optional[AudioManifest] = Field(None, description="Dữ liệu manifest chi tiết")
-    error_message: Optional[str] = Field(None, description="Chi tiết lỗi nếu thất bại")
-    
-    
+    status: str = Field(..., example="SUCCESS")
+    message: str = Field(...)
+    total_duration_seconds: float = Field(...)
+    is_chunked: bool = Field(...)
+    manifest_file: Optional[str] = Field(None)
+    manifest: Optional[Dict[str, Any]] = Field(None)
+
+
+# -----------------------------------------------------------------------------
+# 3. ANS & AEC SCHEMAS
+# -----------------------------------------------------------------------------
 class AudioANSRequest(BaseModel):
-    """Schema nhận request lọc tạp âm WebRTC ANS."""
-    input_path: str = Field(..., description="Đường dẫn tuyệt đối hoặc tương đối tới file WAV 16kHz Mono")
-    output_path: Optional[str] = Field(None, description="Đường dẫn lưu file sau ANS. Nếu để trống, hệ thống tự sinh đuôi '_ans.wav'")
-    suppression_level: int = Field(3, ge=0, le=3, description="Mức độ triệt tiêu tạp âm: 0 (Mild), 1 (Medium), 2 (High), 3 (Aggressive)")
+    input_path: str = Field(..., description="File WAV 16kHz Mono đầu vào")
+    output_path: Optional[str] = Field(None, description="File WAV đích sau khi khử nhiễu")
+    suppression_level: int = Field(3, ge=0, le=3, description="Mức độ giảm nhiễu (0-3)")
+
+    @field_validator("input_path", "output_path")
+    @classmethod
+    def check_paths(cls, v, info):
+        return validate_safe_path(v, info.field_name)
+
+    @model_validator(mode="after")
+    def prevent_self_overwrite(self):
+        if self.output_path and os.path.abspath(self.input_path) == os.path.abspath(self.output_path):
+            raise ValueError("output_path không được trùng với input_path.")
+        return self
 
 
 class AudioANSResponse(BaseModel):
-    """Schema trả về kết quả sau khi lọc tạp âm."""
-    status: str = Field(..., description="Trạng thái: SUCCESS hoặc FAILED")
-    input_file: str = Field(..., description="Đường dẫn file nguồn đã xử lý")
-    output_file: Optional[str] = Field(None, description="Đường dẫn file sạch sau lọc")
-    sample_rate: Optional[int] = Field(None, description="Tần số lấy mẫu (chuẩn 16000Hz)")
-    channels: Optional[int] = Field(None, description="Số kênh âm thanh (chuẩn 1 Mono)")
-    suppression_level: Optional[int] = Field(None, description="Mức lọc đã áp dụng (0 - 3)")
-    duration_seconds: Optional[float] = Field(None, description="Thời lượng file sau xử lý")
-    noise_reduction_db: Optional[float] = Field(None, description="Mức năng lượng tạp âm giảm được (dB)")
-    processing_time_seconds: Optional[float] = Field(None, description="Thời gian thực thi (giây)")
-    error_message: Optional[str] = Field(None, description="Thông điệp chi tiết nếu xảy ra lỗi")
-    
+    status: str = Field(..., example="SUCCESS")
+    output_path: str = Field(...)
+    noise_reduction_db: float = Field(...)
+    processing_time_seconds: float = Field(...)
+    suppression_level: int = Field(3)
+    output_file: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_output_fields(cls, data: Any):
+        if isinstance(data, dict):
+            # Đồng bộ output_path và output_file
+            p = data.get("output_path") or data.get("output_file")
+            if p:
+                data["output_path"] = p
+                data["output_file"] = p
+            # Phòng ngừa suppression_level bị None
+            if data.get("suppression_level") is None:
+                data["suppression_level"] = 3
+        return data
+
+
 class AudioAECRequest(BaseModel):
-    """Schema nhận request triệt tiêu tiếng vang WebRTC AEC."""
-    capture_path: str = Field(..., description="Đường dẫn file WAV 16kHz Mono từ microphone")
-    reference_path: Optional[str] = Field(None, description="Đường dẫn file WAV 16kHz Mono từ loa ngoài (nếu có)")
-    output_path: Optional[str] = Field(None, description="Đường dẫn lưu file sau AEC (mặc định tự sinh '_aec.wav')")
+    capture_path: str = Field(..., description="File thu âm mic có tiếng vọng")
+    reference_path: Optional[str] = Field(None, description="File âm thanh loa tham chiếu")
+    output_path: Optional[str] = Field(None, description="File đích sau khi triệt tiêu echo")
+
+    @field_validator("capture_path", "reference_path", "output_path")
+    @classmethod
+    def check_paths(cls, v, info):
+        return validate_safe_path(v, info.field_name)
+
+    @model_validator(mode="after")
+    def prevent_self_overwrite(self):
+        if self.output_path and os.path.abspath(self.capture_path) == os.path.abspath(self.output_path):
+            raise ValueError("output_path không được trùng với capture_path.")
+        return self
 
 
 class AudioAECResponse(BaseModel):
-    """Schema phản hồi kết quả sau khi xử lý AEC."""
-    status: str = Field(..., description="Trạng thái: SUCCESS, BYPASS_NO_REFERENCE, hoặc BYPASS_INVALID_REFERENCE")
-    message: str = Field(..., description="Mô tả chi tiết kết quả xử lý")
-    capture_file: str = Field(..., description="Đường dẫn file capture đầu vào")
-    reference_file: Optional[str] = Field(None, description="Đường dẫn file reference đối chiếu (nếu có)")
-    output_file: Optional[str] = Field(None, description="Đường dẫn file âm thanh sau AEC")
-    sample_rate: Optional[int] = Field(None, description="Sample rate (16000Hz)")
-    channels: Optional[int] = Field(None, description="Số kênh âm thanh (1 Mono)")
-    duration_seconds: Optional[float] = Field(None, description="Thời lượng file sau xử lý")
-    erle_db: Optional[float] = Field(None, description="Mức giảm tiếng vang loa thu được (dB)")
-    input_rms: Optional[float] = Field(None, description="Năng lượng tín hiệu trước xử lý")
-    output_rms: Optional[float] = Field(None, description="Năng lượng tín hiệu sau xử lý")
-    processing_time_seconds: Optional[float] = Field(None, description="Thời gian thực thi thuật toán (giây)")
-    error_message: Optional[str] = Field(None, description="Thông báo lỗi chi tiết nếu phát sinh sự cố")
+    status: str = Field(..., example="SUCCESS")
+    output_path: str = Field(...)
+    erle_db: float = Field(...)
+    processing_time_seconds: float = Field(...)
+    reference_provided: bool = Field(True)
+    output_file: Optional[str] = None  # Đồng bộ đầy đủ với service payload
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_output_fields(cls, data: Any):
+        if isinstance(data, dict):
+            p = data.get("output_path") or data.get("output_file")
+            if p:
+                data["output_path"] = p
+                data["output_file"] = p
+        return data
+
+
+# -----------------------------------------------------------------------------
+# 4. PIPELINE SCHEMAS (Khắc phục H3)
+# -----------------------------------------------------------------------------
+class QualityCheckMetrics(BaseModel):
+    passed: bool = Field(...)
+    sample_rate: int = Field(16000)
+    channels: int = Field(1)
+    duration_seconds: float = Field(...)
+    file_size_bytes: int = Field(...)
+    rms_energy: float = Field(...)
+    is_silent: bool = Field(False)
+    is_clipped: bool = Field(False)
+    duration_drift_samples: int = Field(0)
+    error_message: Optional[str] = None
+
+
+class StepLogEntry(BaseModel):
+    step: str = Field(...)
+    status: str = Field(...)
+    input_file: str = Field(...)
+    output_file: str = Field(...)
+    input_duration: float = Field(...)
+    output_duration: float = Field(...)
+    processing_time_seconds: float = Field(...)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+
+
+class AudioPipelineRequest(BaseModel):
+    job_id: str = Field(..., description="Mã định danh duy nhất (chỉ gồm a-z, A-Z, 0-9, _, -)")
+    session_id: Optional[str] = Field(None)
+    input_path: str = Field(...)
+    reference_path: Optional[str] = Field(None)
+    suppression_level: int = Field(3, ge=0, le=3)
+    output_dir: Optional[str] = Field(None)
+
+    @field_validator("job_id")
+    @classmethod
+    def check_job_id(cls, v):
+        return validate_job_id_format(v)
+
+    @field_validator("input_path", "reference_path", "output_dir")
+    @classmethod
+    def check_paths(cls, v, info):
+        return validate_safe_path(v, info.field_name)
+
+
+class AudioPipelineResponse(BaseModel):
+    job_id: str = Field(...)
+    session_id: Optional[str] = None
+    overall_status: str = Field(...)
+    final_output_file: Optional[str] = None
+    total_processing_time_seconds: float = Field(...)
+    quality_check: Optional[QualityCheckMetrics] = None
+    step_logs: List[StepLogEntry] = Field(default_factory=list)
+    error_message: Optional[str] = None

@@ -108,6 +108,13 @@ public class MeetingServiceImpl implements MeetingService {
 
     @Override
     @Transactional(readOnly = true)
+    public MeetingResponseDTO getMeeting(UUID meetingId) {
+        User currentUser = getCurrentUser();
+        return toResponse(getMeetingForUser(meetingId, currentUser));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public MeetingDownloadFile getDownloadFile(UUID meetingId) {
         User currentUser = getCurrentUser();
         Meeting meeting = getMeetingForUser(meetingId, currentUser);
@@ -181,10 +188,14 @@ public class MeetingServiceImpl implements MeetingService {
         }
 
     private Meeting getMeetingForUser(UUID meetingId, User currentUser) {
-        return meetingRepository.findById(meetingId)
-                .filter(item -> item.getWorkspace_id().equals(currentUser.getId()))
+        Meeting meeting = meetingRepository.findById(meetingId)
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp hoặc bạn không có quyền truy cập"));
+                        "MEETING_NOT_FOUND", "Không tìm thấy cuộc họp"));
+        if (!meeting.getWorkspace_id().equals(currentUser.getId())) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "MEETING_ACCESS_DENIED",
+                    "Bạn không có quyền truy cập cuộc họp này");
+        }
+        return meeting;
     }
 
     private MediaFile getMediaFile(Meeting meeting) {
@@ -230,7 +241,8 @@ public class MeetingServiceImpl implements MeetingService {
                 mediaFile == null ? null : mediaFile.getFile_size_bytes(),
                 mediaFile == null ? null : mediaFile.getDuration_seconds(),
                 meeting.getCreated_at(),
-                meeting.getUpdated_at());
+                meeting.getUpdated_at(),
+                meeting.getActive_job_id());
     }
 
     private MeetingStatus parseStatus(String value) {
@@ -241,7 +253,7 @@ public class MeetingServiceImpl implements MeetingService {
             return MeetingStatus.valueOf(value.trim().toUpperCase());
         } catch (IllegalArgumentException ex) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_MEETING_STATUS",
-                    "status phải là PENDING, PROCESSING, COMPLETED hoặc FAILED");
+                    "status phải là UNPROCESSED, PENDING, PROCESSING, COMPLETED hoặc FAILED");
         }
     }
 

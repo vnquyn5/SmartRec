@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,8 +12,21 @@ class Settings(BaseSettings):
     minio_bucket: str = "smartrec-media"
     chroma_host: str = "localhost"
     chroma_port: int = 8001
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
+    smartrec_internal_token: Optional[str] = None
+    workspace_root: str = "/tmp/smartrec_workspace"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # Pyannote Speaker Diarization Settings
+    hf_token: Optional[str] = None
+    pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
+    pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
 
 settings = Settings()

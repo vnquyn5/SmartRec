@@ -2,43 +2,11 @@ import React, { useState } from 'react';
 
 export default function TranscriptPanel({ onSeek }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeSegmentId, setActiveSegmentId] = useState('2');
+  const [activeSegmentId, setActiveSegmentId] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [selectedSpeaker, setSelectedSpeaker] = useState('All');
 
-  const transcripts = [
-    {
-      id: '1',
-      time: '12:30',
-      speaker: 'Speaker A (Alex Nguyen)',
-      text: "So, looking at the current roadmap, we really need to prioritize the before the Q1 marketing push. Does that align with your team's",
-    },
-    {
-      id: '2',
-      time: '12:45',
-      speaker: 'Speaker B (Sarah Chen)',
-      text: "I think it makes sense. However, I'm slightly worried about the issues we saw during the last stress test. We should probably allocate two sprints for this instead",
-      isActive: true,
-    },
-    {
-      id: '3',
-      time: '13:12',
-      speaker: 'Speaker A (Alex Nguyen)',
-      text: "Good point. Let's make sure we have the dev environment ready preliminary tests. Sarah, can you lead that sync?",
-    },
-    {
-      id: '4',
-      time: '13:40',
-      speaker: 'Speaker B (Sarah Chen)',
-      text: "Absolutely. I'll sync with the infrastructure team today. We also need compatibility with the new API endpoints being pushed this afternoon.",
-    },
-    {
-      id: '5',
-      time: '14:05',
-      speaker: 'Speaker C (Michael Scott)',
-      text: "Will there be snacks at this sync meeting? Just kidding. But really ensure the documentation is updated simultaneously.",
-    },
-  ];
+  const transcripts = [];
 
   const handleCopyAll = () => {
     const fullText = transcripts
@@ -139,6 +107,9 @@ export default function TranscriptPanel({ onSeek }) {
 
       {/* Transcript Items List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {filteredTranscripts.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-8">Chưa có dữ liệu transcript cho cuộc họp này.</p>
+        )}
         {filteredTranscripts.map((item) => {
           const isSelected = activeSegmentId === item.id;
           return (

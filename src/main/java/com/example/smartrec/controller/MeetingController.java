@@ -22,10 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.model.dto.MeetingFilterRequest;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
+import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.model.dto.RenameSpeakerRequest;
 import com.example.smartrec.model.dto.SpeakerSegmentResponse;
+import com.example.smartrec.service.MeetingProcessingService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MeetingSpeakerService;
@@ -49,6 +51,7 @@ import lombok.AllArgsConstructor;
 public class MeetingController {
     private final MeetingService meetingService;
     private final MeetingSpeakerService meetingSpeakerService;
+    private final MeetingProcessingService meetingProcessingService;
 
     @GetMapping
     @Operation(summary = "List meeting files", description = "Returns the authenticated user's meeting files with pagination, status filtering and keyword search.")
@@ -60,6 +63,16 @@ public class MeetingController {
     public ResponseEntity<PageResponse<MeetingResponseDTO>> findMeetings(
             @ModelAttribute MeetingFilterRequest request) {
         return ResponseEntity.ok(meetingService.findMeetings(request));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<MeetingResponseDTO> getMeeting(@PathVariable UUID id) {
+        return ResponseEntity.ok(meetingService.getMeeting(id));
+    }
+
+    @PostMapping("/{id}/process")
+    public ResponseEntity<JobResponse> processMeeting(@PathVariable UUID id) {
+        return ResponseEntity.ok(meetingProcessingService.processMeeting(id));
     }
 
     @DeleteMapping("/{id}")

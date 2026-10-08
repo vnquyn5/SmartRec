@@ -45,7 +45,7 @@ def create_synthetic_noise_audio(output_path: str, duration_sec: float = 3.123, 
 
 def run_ans_verification_tests():
     print("\n" + "=" * 70)
-    print(">>> BẮT ĐẦU KIỂM THỬ ĐỘC LẬP WEBRTC ANS (TASK 2.9 - SUBTASK 2.9.1) <<<")
+    print(">>> BẮT ĐẦU KIỂM THỬ ĐỘC LẬP WEBRTC ANS <<<")
     print("=" * 70 + "\n")
 
     ans_service = AudioANSService(default_suppression_level=3)
@@ -59,7 +59,7 @@ def run_ans_verification_tests():
     # -------------------------------------------------------------------------
     real_sample = os.path.join(input_dir, "input2_normalized_16k.wav")
     print("[TEST 1] Xử lý lọc ồn trên file thực tế: input2_normalized_16k.wav...")
-    
+
     if not os.path.isfile(real_sample):
         print(f"[FAIL] Không tìm thấy file {real_sample} để test Happy Path.")
         sys.exit(1)
@@ -92,7 +92,7 @@ def run_ans_verification_tests():
     odd_duration = 3.147  # Thời lượng lẻ không bao giờ chia hết cho 160 samples (10ms)
     odd_input = os.path.join(output_dir, "synth_odd_noise.wav")
     odd_output = os.path.join(output_dir, "synth_odd_noise_ans.wav")
-    
+
     print(f"[TEST 2] Kiểm thử bảo toàn timeline tuyệt đối với file lẻ ({odd_duration}s)...")
     create_synthetic_noise_audio(odd_input, duration_sec=odd_duration)
 
@@ -139,7 +139,7 @@ def run_ans_verification_tests():
     # -------------------------------------------------------------------------
     unnormalized_sample = os.path.join(input_dir, "input2.wav")
     print("[TEST 4] Bắt lỗi khi đưa vào file chưa chuẩn hóa (input2.wav 48kHz Stereo)...")
-    
+
     if os.path.isfile(unnormalized_sample):
         try:
             ans_service.apply_noise_suppression(

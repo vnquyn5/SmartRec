@@ -30,7 +30,7 @@ function EditPencilIcon({ className = "w-3.5 h-3.5", ...props }) {
 const DOT_COLORS = ['#2563eb', '#818cf8', '#f97316', '#10b981'];
 
 export default function SpeakerList({
-  status = 'completed',
+  status = 'processing',
   speakers = [],
   selectedSpeakerId,
   onSelectSpeaker,
@@ -49,14 +49,7 @@ export default function SpeakerList({
     }));
   };
 
-  // Ensure at least 4 speakers are rendered to showcase the complete Figma layout
-  const displaySpeakers = speakers.length >= 4
-    ? speakers
-    : [
-        ...speakers,
-        ...(speakers.length < 3 ? [{ id: '3', originalLabel: 'Speaker 3', name: '', segments: [] }] : []),
-        ...(speakers.length < 4 ? [{ id: '4', originalLabel: 'Speaker 4', name: '', segments: [] }] : []),
-      ];
+  const displaySpeakers = speakers;
 
   return (
     <div className="w-full bg-[#0c101c] border border-[#1e2640] rounded-2xl shadow-xl overflow-hidden font-sans select-none">

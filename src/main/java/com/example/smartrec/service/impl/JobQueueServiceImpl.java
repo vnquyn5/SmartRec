@@ -1,65 +1,69 @@
 package com.example.smartrec.service.impl;
 
+import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
 
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import com.example.smartrec.service.JobQueueService;
 
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
-
-@Service 
-@RequiredArgsConstructor 
+@Service
+@Slf4j
 public class JobQueueServiceImpl implements JobQueueService {
-    private static final String JOB_QUEUE = "smartrec:job:queue";
-    private static  final String RETRY_QUEUE = "smartrec:retry:queue";
-    private static final String DLQ_QUEUE = "smartrec:job:dql";
-    private final StringRedisTemplate redisTemplate;
 
-    // dua job moi vao main queue
-    @Override 
-    public void enqueueJob(UUID jobId){
-        redisTemplate.opsForList()// noi voi redis la toi muon thao tac voi kieu du lieu list trong redis
-                                 .rightPush(JOB_QUEUE, jobId.toString());   
+    private final RestTemplate restTemplate;
+    private final String internalToken;
+
+    public JobQueueServiceImpl(
+            RestTemplateBuilder builder,
+            @Value("${smartrec.ai-engine.base-url:http://localhost:8000}") String aiEngineBaseUrl,
+            @Value("${smartrec.internal-token:}") String internalToken) {
+
+        this.restTemplate = builder
+                .rootUri(aiEngineBaseUrl)
+                .setConnectTimeout(Duration.ofSeconds(5))
+                .setReadTimeout(Duration.ofSeconds(10))
+                .build();
+
+        this.internalToken = internalToken;
     }
 
-    // dua job vao retry queue
-    @Override 
-    public void enqueueRetry(UUID jobId){
-        redisTemplate.opsForList()
-                                 .rightPush(RETRY_QUEUE,jobId.toString());
-    }
+    @Override
+    public void enqueueJob(UUID jobId) {
 
-    // dua job vao DQL
-    @Override 
-    public void enqueueDLQ(UUID jobId){
-        redisTemplate.opsForList()  
-                                 .rightPush(DLQ_QUEUE, jobId.toString());
-    }
+        if (internalToken == null || internalToken.isBlank()) {
+            throw new IllegalStateException(
+                    "SMARTREC_INTERNAL_TOKEN must be configured to enqueue AI jobs"
+            );
+        }
 
-    
-    // lay job tu main queue
-    @Override 
-    public String pollJob(){
-        // lay api thao tc voi redis list
-        return  redisTemplate.opsForList()
-                                        .leftPop(JOB_QUEUE);// lay phan tu dau tien ra khoi list dong thoi xoa no khoi list
-    }
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Internal-Token", internalToken);
 
-    // lay job tu retry queue
-    @Override 
-    public String pollRetryJob(){
-        return redisTemplate.opsForList()
-                                        .leftPop(RETRY_QUEUE);
+        try {
+            restTemplate.exchange(
+                    "/internal/jobs/{jobId}/enqueue",
+                    HttpMethod.POST,
+                    new HttpEntity<>(headers),
+                    Map.class,
+                    jobId
+            );
+        } catch (RuntimeException e) {
+            log.error(
+                    "Failed to enqueue AI job {} through AI Engine",
+                    jobId,
+                    e
+            );
+            throw e;
+        }
     }
-
-    // lay job tu DQL 
-    @Override 
-    public String pollDLQ(){
-        return redisTemplate.opsForList()
-                                        .leftPop(DLQ_QUEUE);
-    }
-    
 }
