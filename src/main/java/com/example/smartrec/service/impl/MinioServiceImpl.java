@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -36,12 +37,16 @@ public class MinioServiceImpl implements MinioService {
     private static final int MAX_COMPOSE_SOURCES_PER_REQUEST = 500;
 
     private final MinioClient minioClient;
+    private final MinioClient playbackMinioClient;
 
     @Value("${minio.bucket-name}")
     private String bucket;
 
-    public MinioServiceImpl(MinioClient minioClient) {
+    public MinioServiceImpl(
+            @Qualifier("minioClient") MinioClient minioClient,
+            @Qualifier("playbackMinioClient") MinioClient playbackMinioClient) {
         this.minioClient = minioClient;
+        this.playbackMinioClient = playbackMinioClient;
     }
 
     @PostConstruct
@@ -87,6 +92,17 @@ public class MinioServiceImpl implements MinioService {
         return minioClient.getPresignedObjectUrl(
                 GetPresignedObjectUrlArgs.builder()
                         .method(Method.PUT)
+                        .bucket(bucket)
+                        .object(objectKey)
+                        .expiry(expirySeconds, TimeUnit.SECONDS)
+                        .build());
+    }
+
+    @Override
+    public String presignGetObject(String objectKey, int expirySeconds) throws Exception {
+        return playbackMinioClient.getPresignedObjectUrl(
+                GetPresignedObjectUrlArgs.builder()
+                        .method(Method.GET)
                         .bucket(bucket)
                         .object(objectKey)
                         .expiry(expirySeconds, TimeUnit.SECONDS)
