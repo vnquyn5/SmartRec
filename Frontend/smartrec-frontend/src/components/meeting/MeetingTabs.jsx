@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import SlideOcrTab from './SlideOcrTab';
+import SlideGallery from './SlideGallery';
 import MeetingTasksTab from './MeetingTasksTab';
 import MeetingSummaryTab from './MeetingSummaryTab';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
@@ -165,7 +165,8 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
             )}
           </div>
         )}
-        {activeTab === 'slide' && <SlideOcrTab />}
+        {activeTab === 'slide' && <SlideGallery onSeekSegment=
+        {onSeekSegment} />}
       </div>
     </div>
   );

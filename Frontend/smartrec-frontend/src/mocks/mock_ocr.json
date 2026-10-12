@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": "05:12",
+    "thumbnail_icon": "play",
+    "slide_title": "Q4 Product Roadmap",
+    "raw_text": "Backend Refactor: Sprint 3-4 | New API: Sprint 5 | Launch: Dec 15",
+    "tags": ["MILESTONE 3", "TARGET Dec 15"]
+  },
+  {
+    "timestamp": "08:47",
+    "thumbnail_icon": "activity",
+    "slide_title": "Q4 Revenue Breakdown",
+    "raw_text": "Total_Revenue: $2.4M | YoY Growth: +18% | Churn: 3.1%",
+    "tags": ["REVENUE $2.4M", "YOY +18%", "CHURN 3.1%"]
+  },
+  {
+    "timestamp": "12:30",
+    "thumbnail_icon": "calendar",
+    "slide_title": "Project Timeline Overview",
+    "raw_text": "Kickoff: Nov 1 | Beta: Jan 15 | GA Release: Feb 28",
+    "tags": ["DURATION 16 wks", "GA DATE Feb 28"]
+  }
+]
+

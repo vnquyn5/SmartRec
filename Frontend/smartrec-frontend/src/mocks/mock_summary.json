@@ -1,0 +1,43 @@
+{
+  "summary": [
+    {
+      "heading": "1. muc tieu va dinh huong quy 4",
+      "content": "Trong quy 4, muc tieu cua chung ta la tang truong doanh thu 20% so voi quy truoc, giam ty le chuyen doi khach hang moi xuong duoi 5%, va hoan thanh cac muc tieu phat trien san pham theo lich trinh."
+    },
+    {
+      "heading": "2. cac san pham va tinh nang chinh",
+      "content": "chung ta se ra mat cac tinh nang moi nhu tu dong hoa quy trinh, bao cao thoi gian thuc, va tu dong hoa bao cao. nhung tinh nang nay se giup khach hang tiet kiem thoi gian va nang cao hieu suat."
+    },
+    {
+      "heading": "3. loi ich cho khach hang",
+      "content": "dam bao rang khach hang se co trai nghiem tot hon voi san pham cua chung ta, giup ho giam thoi gian va nang cao hieu suat trong cong viec hang ngay."
+    }
+  ],
+  "task": [
+    {
+      "task_index": 1,
+      "timestamp": "13:12",
+      "content": "hoan thien dev environtement va cai dat cac cong cu can thiet cho quy trinh phat trien.",
+      "assignee": "dev_team",
+      "responsible": "dev_team_lead",
+      "deadline": "2026-05-10"
+    },
+    {
+      "task_index": 2,
+      "timestamp": "13:40",
+      "content": "dong bo du lieu tu he thong cu sang he thong moi va kiem tra tinh chinh xac cua du lieu.",
+      "assignee": "Alex Nguyen",
+      "responsible": "Sarah Lee",
+      "deadline": "2026-02-10"
+    },
+    {
+      "task_index": 3,
+      "timestamp": "14:05",
+      "content": "danh gia lai resource va dieu chinh ke hoach phat trien de dam bao tien do du an.",
+      "assignee": "",
+      "responsible": "",
+      "deadline": ""
+    }
+  ]
+}
+
