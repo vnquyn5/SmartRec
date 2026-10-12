@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import SlideGallery from './SlideGallery';
-import MeetingTasksTab from './MeetingTasksTab';
-import MeetingSummaryTab from './MeetingSummaryTab';
+import TaskMatrixTable from './TaskMatrixTable';
+import ExecutiveSummary from './ExecutiveSummary';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 import TranscriptPanel from './TranscriptPanel';
+import AiUsageBadge from './AiUsageBadge';
 
 export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('speaker');
@@ -76,42 +77,49 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
   return (
     <div className="w-full h-full flex flex-col bg-[#090f1d] border border-[#1b2640] rounded-2xl overflow-hidden shadow-xl">
       {/* Tab Navigation Header chuẩn Figma */}
-      <div className="flex items-center gap-6 px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122] overflow-x-auto">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`py-3.5 flex items-center gap-2 text-xs font-semibold border-b-2 transition-all relative top-[1px] whitespace-nowrap shrink-0 ${
-                isActive
-                  ? 'border-[#38bdf8] text-[#38bdf8]'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span className="shrink-0">{tab.icon}</span>
-              <span>{tab.label}</span>
-              {tab.count !== undefined && (
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                    isActive
-                      ? 'bg-[#2563eb] text-white shadow-sm'
-                      : 'bg-[#18243c] text-slate-400'
-                  }`}
-                >
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <div className="flex items-center justify-between px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122]">
+        <div className="flex items-center gap-6 overflow-x-auto py-0.5">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-3.5 flex items-center gap-2 text-xs font-semibold border-b-2 transition-all relative top-[1px] whitespace-nowrap shrink-0 ${
+                  isActive
+                    ? 'border-[#38bdf8] text-[#38bdf8]'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span className="shrink-0">{tab.icon}</span>
+                <span>{tab.label}</span>
+                {tab.count !== undefined && (
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                      isActive
+                        ? 'bg-[#2563eb] text-white shadow-sm'
+                        : 'bg-[#18243c] text-slate-400'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* AI Usage Badge góc header (SCRUM-292) */}
+        <div className="shrink-0 py-2 hidden md:block">
+          <AiUsageBadge />
+        </div>
       </div>
 
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
-        {activeTab === 'summary' && <MeetingSummaryTab />}
-        {activeTab === 'task' && <MeetingTasksTab />}
+        {activeTab === 'summary' && <ExecutiveSummary />}
+        {activeTab === 'task' && <TaskMatrixTable onSeekSegment={onSeekSegment} />}
         {activeTab === 'transcript' && <TranscriptPanel onSeek={onSeek} />}
         {activeTab === 'speaker' && (
           <div className="h-full flex flex-col gap-4">
