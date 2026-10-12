@@ -120,7 +120,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
         {activeTab === 'summary' && <ExecutiveSummary />}
         {activeTab === 'task' && <TaskMatrixTable onSeekSegment={onSeekSegment} />}
-        {activeTab === 'transcript' && <TranscriptPanel onSeek={onSeek} />}
+        {activeTab === 'transcript' && <TranscriptPanel onSeekSegment={onSeekSegment} />}
         {activeTab === 'speaker' && (
           <div className="h-full flex flex-col gap-4">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}

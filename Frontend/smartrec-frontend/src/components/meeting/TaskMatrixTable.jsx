@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import mockSummaryData from '../../mocks/mock_summary.json';
 
-// Chuyển đổi timestamp MM:SS sang giây
+
 function parseTimeToSeconds(timeStr) {
   if (!timeStr) return 0;
   const parts = timeStr.split(':').map((p) => Number(p.trim()) || 0);
@@ -52,14 +52,14 @@ export default function TaskMatrixTable({ onSeekSegment }) {
 
       {/* Table Ma trận công việc */}
       <div className="w-full overflow-x-auto rounded-2xl border border-[#1b2742] bg-[#0d1526] shadow-xl">
-        <table className="w-full text-left border-collapse text-xs">
+        <table className="w-full min-w-[780px] text-left border-collapse text-xs">
           <thead>
-            <tr className="border-b border-[#18233d] bg-[#090f1d] text-slate-400 font-semibold uppercase tracking-wider text-[11px]">
+            <tr className="border-b border-[#18233d] bg-[#090f1d] text-slate-400 font-semibold uppercase tracking-wider text-[11px] whitespace-nowrap">
               <th className="py-3.5 px-4 w-12 text-center">#</th>
-              <th className="py-3.5 px-4 min-w-[200px]">Nhiệm vụ (Task)</th>
-              <th className="py-3.5 px-3 w-24 text-center">Thời gian</th>
-              <th className="py-3.5 px-4 min-w-[150px]">Người thực hiện</th>
-              <th className="py-3.5 px-4 min-w-[130px]">Người giám sát</th>
+              <th className="py-3.5 px-4 min-w-[280px]">Nhiệm vụ (Task)</th>
+              <th className="py-3.5 px-3 w-28 text-center">Thời gian</th>
+              <th className="py-3.5 px-4 w-44">Người thực hiện</th>
+              <th className="py-3.5 px-4 w-36">Người giám sát</th>
               <th className="py-3.5 px-4 w-36">Hạn chót</th>
             </tr>
           </thead>
@@ -67,21 +67,21 @@ export default function TaskMatrixTable({ onSeekSegment }) {
             {tasks.map((task) => (
               <tr key={task.task_index} className="hover:bg-[#121c33] transition">
                 {/* STT */}
-                <td className="py-3 px-4 text-center font-bold text-slate-400">
+                <td className="py-3.5 px-4 text-center font-bold text-slate-400 whitespace-nowrap">
                   {task.task_index}
                 </td>
 
                 {/* Nội dung task */}
-                <td className="py-3 px-4 text-slate-200 font-medium leading-relaxed">
+                <td className="py-3.5 px-4 text-slate-200 font-medium leading-relaxed">
                   {task.content}
                 </td>
 
                 {/* Timestamp + Nút tua video */}
-                <td className="py-3 px-3 text-center">
+                <td className="py-3.5 px-3 text-center whitespace-nowrap">
                   <button
                     type="button"
                     onClick={() => handleSeek(task.timestamp)}
-                    className="inline-flex items-center gap-1 bg-[#101b30] hover:bg-[#1c3057] text-[#38bdf8] font-mono font-bold px-2 py-0.5 rounded border border-[#233a69] transition text-[11px]"
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap bg-[#101b30] hover:bg-[#1c3057] text-[#38bdf8] font-mono font-bold px-2.5 py-1 rounded border border-[#233a69] transition text-[11px]"
                     title="Nhấp để tua video đến mốc này"
                   >
                     ▶ {task.timestamp}
@@ -89,7 +89,7 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                 </td>
 
                 {/* Assignee (Dropdown chọn / sửa) */}
-                <td className="py-3 px-4">
+                <td className="py-3.5 px-4 whitespace-nowrap">
                   <select
                     value={task.assignee || ''}
                     onChange={(e) => handleUpdate(task.task_index, 'assignee', e.target.value)}
@@ -111,12 +111,12 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                 </td>
 
                 {/* Responsible */}
-                <td className="py-3 px-4 text-slate-400">
+                <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
                   {task.responsible || <span className="text-slate-500 italic">Chưa xác định</span>}
                 </td>
 
                 {/* Deadline (Input Date) */}
-                <td className="py-3 px-4">
+                <td className="py-3.5 px-4 whitespace-nowrap">
                   <input
                     type="date"
                     value={task.deadline || ''}
