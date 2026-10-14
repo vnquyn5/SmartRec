@@ -1,0 +1,12 @@
+{
+  "name": "tester",
+  "version": "1.0.0",
+  "description": "BlackBox UI Automation Tests for SmartRec Frontend",
+  "scripts": {
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run"
+  },
+  "devDependencies": {
+    "cypress": "^13.17.0"
+  }
+}
