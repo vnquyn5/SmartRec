@@ -185,6 +185,7 @@ export default function TranscriptView({ onSeekSegment }) {
                 key={item.id}
                 ref={(el) => (itemRefs.current[item.id] = el)}
                 onClick={() => handleSelectSegment(item)}
+                data-testid="transcript-card"
                 className={`p-3.5 rounded-xl transition-all cursor-pointer text-xs relative ${
                   isActive
                     ? 'bg-[#132247] border border-[#38bdf8] shadow-lg shadow-cyan-950/30'
