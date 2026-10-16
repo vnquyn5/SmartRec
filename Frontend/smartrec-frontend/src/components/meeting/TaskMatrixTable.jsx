@@ -10,6 +10,14 @@ function parseTimeToSeconds(timeStr) {
   return Number(timeStr) || 0;
 }
 
+const PRIORITY_OPTIONS = ['High', 'Medium', 'Low'];
+
+const PRIORITY_STYLES = {
+  High: 'border-rose-500/50 bg-rose-950/40 text-rose-300',
+  Medium: 'border-amber-500/50 bg-amber-950/40 text-amber-300',
+  Low: 'border-emerald-500/50 bg-emerald-950/40 text-emerald-300',
+};
+
 export default function TaskMatrixTable({ onSeekSegment }) {
   const initialTasks = mockSummaryData?.task || [];
   const [tasks, setTasks] = useState(initialTasks);
@@ -52,22 +60,23 @@ export default function TaskMatrixTable({ onSeekSegment }) {
 
       {/* Table Ma trận công việc */}
       <div className="w-full overflow-x-auto rounded-2xl border border-[#1b2742] bg-[#0d1526] shadow-xl">
-        <table className="w-full min-w-[780px] text-left border-collapse text-xs">
+        <table className="w-full min-w-[840px] text-left border-collapse text-xs">
           <thead>
             <tr className="border-b border-[#18233d] bg-[#090f1d] text-slate-400 font-semibold uppercase tracking-wider text-[11px] whitespace-nowrap">
-              <th className="py-3.5 px-4 w-12 text-center">#</th>
+              <th className="py-3.5 px-3 w-12 text-center">#</th>
               <th className="py-3.5 px-4 min-w-[280px]">Nhiệm vụ (Task)</th>
               <th className="py-3.5 px-3 w-28 text-center">Thời gian</th>
               <th className="py-3.5 px-4 w-44">Người thực hiện</th>
               <th className="py-3.5 px-4 w-36">Người giám sát</th>
               <th className="py-3.5 px-4 w-36">Hạn chót</th>
+              <th className= "py-3.5 px-4 w-36 text-center">Do uu tien</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#152037]">
             {tasks.map((task) => (
               <tr key={task.task_index} className="hover:bg-[#121c33] transition">
                 {/* STT */}
-                <td className="py-3.5 px-4 text-center font-bold text-slate-400 whitespace-nowrap">
+                <td className="py-3.5 px-3 text-center font-bold text-slate-400 whitespace-nowrap">
                   {task.task_index}
                 </td>
 
@@ -76,7 +85,7 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                   {task.content}
                 </td>
 
-                {/* Timestamp + Nút tua video */}
+                {/* Timestamp Button */}
                 <td className="py-3.5 px-3 text-center whitespace-nowrap">
                   <button
                     type="button"
@@ -127,6 +136,29 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                         : 'border border-amber-500/60 bg-amber-950/40 text-amber-300 font-medium'
                     }`}
                   />
+                </td>
+
+                {/* Priority */}
+                <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                  <select
+                    value={task.priority || 'Medium'}
+                    onChange={(e) =>
+                handleUpdate(task.task_index, 'priority',
+                  e.target.value)}
+                            className={`rounded-lg px-2.5 py-1
+                  text-xs font-semibold focus:outline-none cursor-pointer
+                  border transition [color-scheme:dark] ${
+                    PRIORITY_STYLES[task.priority] ||
+              PRIORITY_STYLES.Medium
+                            }`}
+                    >
+                      {PRIORITY_OPTIONS.map((p) => (
+                        <option key={p} value={p}
+          className="bg-[#0b1325] text-slate-200 font-medium">
+                    {p}
+                  </option>
+                      ))}
+                      </select>
                 </td>
               </tr>
             ))}

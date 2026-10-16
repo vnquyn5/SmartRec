@@ -76,9 +76,20 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
 
   return (
     <div className="w-full h-full flex flex-col bg-[#090f1d] border border-[#1b2640] rounded-2xl overflow-hidden shadow-xl">
-      {/* Tab Navigation Header chuẩn Figma */}
-      <div className="flex items-center justify-between px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122]">
-        <div className="flex items-center gap-6 overflow-x-auto py-0.5">
+      {/* TẦNG 1: Header phía trên dành riêng cho AI Usage Badge */}
+      <div className="flex items-center justify-between px-6 py-2.5 bg-[#070c18] border-b border-[#18233c] shrink-0">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="w-2 h-2 rounded-full bg-[#38bdf8]"></span>
+          <span className="font-semibold text-slate-300">Không gian phân tích AI</span>
+        </div>
+        <div className="shrink-0">
+          <AiUsageBadge />
+        </div>
+      </div>
+
+      {/* TẦNG 2: Tab Navigation Header chuẩn Figma thông thoáng */}
+      <div className="flex items-center px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122] overflow-x-auto">
+        <div className="flex items-center gap-6 py-0.5">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -108,11 +119,6 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
               </button>
             );
           })}
-        </div>
-
-        {/* AI Usage Badge góc header (SCRUM-292) */}
-        <div className="shrink-0 py-2 hidden md:block">
-          <AiUsageBadge />
         </div>
       </div>
 
