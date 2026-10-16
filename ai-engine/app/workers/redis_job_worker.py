@@ -255,14 +255,20 @@ def process_job(job_id: str):
             "WEBRTC": os.path.join(workspace_dir, "02_cleaned.wav"),
             "PYANNOTE": os.path.join(workspace_dir, "03_diarization.json"),
         }
-        missing_artifact = next((stage for stage in successful_stages
-                                 if stage in required_resume_artifacts
-                                 and not os.path.isfile(required_resume_artifacts[stage])), None)
-        if missing_artifact:
-            raise NonRetryableProcessingError(
-                "WORKSPACE_LOST",
-                f"Không thể tiếp tục từ stage {missing_artifact}: workspace trung gian không còn đầy đủ.",
-            )
+        # Nếu artifact trung gian không còn đầy đủ (ví dụ do restart container hoặc dọn dẹp workspace),
+        # tự động loại bỏ các stage đó để pipeline chạy lại an toàn thay vì crash.
+        stage_order = ["FFMPEG", "WEBRTC", "PYANNOTE"]
+        for idx, stage in enumerate(stage_order):
+            if stage in successful_stages:
+                req_file = required_resume_artifacts.get(stage)
+                if req_file and not os.path.isfile(req_file):
+                    logger.warning(
+                        "[%s] Artifact của stage '%s' (%s) không còn tồn tại. Reset pipeline từ stage này.",
+                        job_id, stage, req_file
+                    )
+                    for later_stage in stage_order[idx:]:
+                        successful_stages.discard(later_stage)
+                    break
 
         with ResourceTracker(
             job_id=job_id,

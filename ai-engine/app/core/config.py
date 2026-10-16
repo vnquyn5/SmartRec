@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
 
+    # Cloud GPU diarization (server chạy trên Colab/GPU + tunnel). Để trống = chạy pyannote local như cũ.
+    cloud_gpu_url: Optional[str] = None
+    cloud_gpu_timeout_seconds: int = 900
+    # "Hộp thư" GitHub Gist: server GPU tự ghi link tunnel mới vào đây mỗi lần bật lại.
+    cloud_gpu_registry_gist_id: Optional[str] = None
+    cloud_gpu_registry_github_token: Optional[str] = None
+    cloud_gpu_registry_filename: str = "gpu_url.txt"
+    cloud_gpu_registry_ttl_seconds: int = 20
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
