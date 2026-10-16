@@ -52,6 +52,8 @@ _configure_torch_threads_once()
 from pyannote.audio import Pipeline
 from pyannote.core import Annotation
 
+from app.services.cloud_gpu_client import cloud_gpu_client, CloudGpuError
+
 
 def _audio_duration_and_label(audio_input: Union[str, Path, Dict[str, Any]]) -> tuple[Optional[float], str]:
     if isinstance(audio_input, (str, Path)):
@@ -226,7 +228,15 @@ class DiarizationRuntimeManager:
         """
         Thực thi Speaker Diarization trên audio đầu vào.
         Thread-safe: Sử dụng _inference_lock bảo vệ model dùng chung khi fallback MPS -> CPU.
+        Nếu CLOUD_GPU_URL được cấu hình thì gửi file lên Cloud GPU thay vì nạp model local.
         """
+        if cloud_gpu_client.is_enabled() and isinstance(audio_input, (str, Path)):
+            try:
+                return cloud_gpu_client.diarize(audio_input)
+            except CloudGpuError as cloud_err:
+                logger.error(f"Cloud GPU diarization thất bại: {cloud_err}")
+                raise DiarizationInferenceError(f"Cloud GPU diarization thất bại: {cloud_err}") from cloud_err
+
         with self._inference_lock:
             pipeline = self.load_pipeline()
             audio_duration, file_label = _audio_duration_and_label(audio_input)
@@ -284,6 +294,17 @@ class DiarizationRuntimeManager:
         """
         if not speaker_segments:
             return {}
+
+        if cloud_gpu_client.is_enabled():
+            cached = cloud_gpu_client.get_embeddings(audio_path)
+            if not cached:
+                logger.warning("Cloud GPU không trả embeddings cho file này. Bỏ qua trích xuất vector đặc trưng.")
+                return {}
+            wanted = {
+                _get_field_value(seg, "speaker") or _get_field_value(seg, "raw_speaker_id")
+                for seg in speaker_segments
+            }
+            return {spk: vec for spk, vec in cached.items() if spk in wanted}
 
         pipeline = self.load_pipeline()
         emb_model = getattr(pipeline, "_embedding", None)

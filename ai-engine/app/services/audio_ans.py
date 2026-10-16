@@ -3,6 +3,7 @@ import wave
 import time
 import math
 import struct
+import numpy as np
 from typing import Dict, Any, Optional
 
 try:
@@ -69,14 +70,13 @@ class AudioANSService:
 
     @staticmethod
     def _calculate_rms(pcm_data: bytes) -> float:
-        """Tính toán năng lượng hiệu dụng (RMS) của dữ liệu âm thanh PCM 16-bit."""
-        count = len(pcm_data) // 2
-        if count == 0:
+        """Tính toán năng lượng hiệu dụng (RMS) của dữ liệu âm thanh PCM 16-bit siêu tốc qua numpy."""
+        if not pcm_data:
             return 0.0
-        format_str = f"<{count}h"
-        samples = struct.unpack(format_str, pcm_data)
-        sum_squares = sum(s * s for s in samples)
-        return math.sqrt(sum_squares / count)
+        arr = np.frombuffer(pcm_data, dtype=np.int16)
+        if len(arr) == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(arr.astype(np.float64) ** 2)))
 
     def apply_noise_suppression(
         self,
@@ -163,6 +163,8 @@ class AudioANSService:
             frame = padded_bytes[offset:offset + self.FRAME_SIZE_BYTES]
             cleaned_frame = self._process_frame(processor, frame)
             processed_chunks.append(cleaned_frame)
+            if offset % 320000 == 0:
+                time.sleep(0.001)  # Nhường GIL để thread WorkerHeartbeat luôn gửi nhịp tim đều đặn
 
         # 4. Ghép frame và cắt padding dư
         combined_cleaned_bytes = b"".join(processed_chunks)
