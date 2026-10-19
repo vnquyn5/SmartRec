@@ -62,7 +62,7 @@ function CheckIcon({ className = "w-3.5 h-3.5", ...props }) {
   );
 }
 
-const DOT_COLORS = ['#2563eb', '#818cf8', '#f97316', '#10b981'];
+export const DOT_COLORS = ['#2563eb', '#818cf8', '#f97316', '#10b981'];
 
 const WORKSPACE_MEMBERS = [
   { name: 'Anh Quyền', role: 'CEO', initials: 'AQ', bg: 'bg-[#4f46e5]' },
@@ -200,7 +200,10 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
 export default function SpeakerManagementPanel({
   initialSpeakers = [],
   onSave,
-  onSeekSegment
+  onSeekSegment,
+  selectedChunkKey,
+  onSelectChunk,
+  onNamesChange
 }) {
   const [names, setNames] = useState({});
   const [errors, setErrors] = useState({});
@@ -217,12 +220,17 @@ export default function SpeakerManagementPanel({
       map[s.id] = s.name || s.originalLabel || '';
     });
     setNames(map);
+    onNamesChange?.(map);
     setErrors({});
     setStatus('default');
   }, [initialSpeakers]);
 
   const handleChange = (id, val) => {
-    setNames(prev => ({ ...prev, [id]: val }));
+    setNames(prev => { 
+      const next = {...prev, [id]: val };
+      onNamesChange?.(next);
+      return next;
+  });
     setStatus('editing');
     if (errors[id]) {
       setErrors(prev => {
@@ -264,6 +272,7 @@ export default function SpeakerManagementPanel({
       map[s.id] = s.name || s.originalLabel || '';
     });
     setNames(map);
+    onNamesChange?.(map);
     setErrors({});
     setStatus('default');
   };
@@ -411,7 +420,15 @@ export default function SpeakerManagementPanel({
                           onClick={() => {
                             const key = `${speaker.id}-${sIdx}`;
                             setActiveSegmentKey(key);
-                            if (Number.isFinite(Number(seg.startSeconds))) onSeekSegment?.(Number(seg.startSeconds));
+                            onSelectChunk?.({
+                              chunkKey:
+                              `${speaker.id}-${seg.startSeconds}-${seg.endSeconds}`,
+                              speakerId: speaker.id,
+                              startSeconds:Number(seg.startSeconds),
+                              endSeconds: Number(seg.endSeconds),
+                            });
+                            if (Number.isFinite(Number(seg.startSeconds))) 
+                              onSeekSegment?.(Number(seg.startSeconds));
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-mono transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38bdf8] ${
                             activeSegmentKey === `${speaker.id}-${sIdx}`

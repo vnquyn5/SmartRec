@@ -10,21 +10,56 @@ function timeToSeconds(timeStr) {
   return Number(timeStr) || 0;
 }
 
-export default function TranscriptView({ onSeekSegment }) {
+export default function TranscriptView({ 
+  speakers = [],
+  speakerNameMap = {},
+  selectedChunk = null,
+  onSelectCHUNK,
+  onSeekSegment, 
+}) {
   
+  // trả về một mảng raw và lấy mảng dữ liệu array từ mockdata
   const rawList = Array.isArray(mockSttData)
     ? mockSttData
     : (mockSttData?.mock_stt || []);
+// -----------------------------------------------------//
+  const transcripts = speakers.length > 0
+  ? speakers 
+      .flatMap ((spk) =>
+      (spk.segments || []).map((seg) => ({
+        speakerId: spk.id,
+        speakerName:
+      speakerNameMap[spk.id] || spk.name || spk.originalLabel || spk.id,
+          timeStart: seg.start || "00:00",
+          timeEnd: seg.end || "00:00",
+          seconds: Number(seg.startSeconds) || 0,
+          endSeconds: Number(seg.endSeconds) || 0,
+          chunkKey:
+        `${spk.id}-${seg.startSeconds}-${seg.endSeconds}`,
 
-  const transcripts = rawList.map((item, index) => ({
-    id: index + 1,
-    speakerId: item.speaker_id || `spk_${index + 1}`,
-    speakerName: item.speaker_name_temp || item.speaker_id || `Speaker ${index + 1}`,
-    timeStart: item.timestamp_start || "00:00:00",
-    timeEnd: item.timestamp_end || "00:00:10",
-    seconds: timeToSeconds(item.timestamp_start),
-    text: item.text || "",
-  }));
+      }))
+    )
+    .sort((a, b) => a.seconds - b.seconds)
+    .map((chunk, index) => ({
+      ...chunk,
+      id: index + 1,
+      text: rawList[index % Math.max(1,
+    rawList.length)]?.text || "",
+      }))
+        : rawList.map((item, index) => {
+          const spkId = item.speaker_id || `spk_${index + 1}`;
+        return {
+        id: index + 1,
+        speakerId: spkId,
+        speakerName: speakerNameMap[spkId]
+    || item.speaker_name_temp || spkId || `Speaker ${index + 1}`,
+      timeStart: item.timestamp_start || "00:00:00",
+      timeEnd: item.timestamp_end || "00:00:10",
+      seconds: timeToSeconds(item.timestamp_start),
+      chunkKey: `${spkId}-${timeToSeconds(item.timestamp_start)}-${timeToSeconds(item.timestamp_end)}`,
+      text: item.text || "",
+        }
+    });
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSpeaker, setSelectedSpeaker] = useState('All');
@@ -51,7 +86,12 @@ export default function TranscriptView({ onSeekSegment }) {
     return matchSpeaker && matchSearch;
   });
 
-  
+  useEffect(() => {
+    if (!selectedChunk?.chunkKey) return;
+    const found = transcripts.find((t) => t.chunkKey === selectedChunk.chunkKey);
+    if (found) setActiveSegmentId(found.id);
+  }, [selectedChunk]);
+
   useEffect(() => {
     if (autoScroll && activeSegmentId && itemRefs.current[activeSegmentId]) {
       try {
@@ -68,6 +108,12 @@ export default function TranscriptView({ onSeekSegment }) {
   
   const handleSelectSegment = (item) => {
     setActiveSegmentId(item.id);
+    onSelectChunk?.({
+      chunkKey: item.chunkKey,
+      speakerId: item.speakerId,
+      startSeconds: item.seconds,
+      endSeconds: item.endSeconds,
+    });
     if (typeof onSeekSegment === 'function') {
       onSeekSegment(item.seconds);
     }
