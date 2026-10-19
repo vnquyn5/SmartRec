@@ -716,10 +716,9 @@ const mergeUpload = async (item: LargeUploadItem) => {
       latestItem.uploadSessionId,
       latestItem.file.name,
     );
-    let finalMergeResponse = mergeResponse;
+    let finalMergeResponse: any = mergeResponse;
     if (mergeResponse.status === "MERGING") {
-      finalMergeResponse =
-        (await pollMergeStatus(latestItem.id, latestItem.uploadSessionId)) ||
+      finalMergeResponse = (await pollMergeStatus(latestItem.id, latestItem.uploadSessionId)) ||
         mergeResponse;
     }
     const completedAt = new Date().toISOString();

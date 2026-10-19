@@ -4,11 +4,13 @@ import TaskMatrixTable from './TaskMatrixTable';
 import ExecutiveSummary from './ExecutiveSummary';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
-import TranscriptPanel from './TranscriptPanel';
+import TranscriptView from './TranscriptView';
 import AiUsageBadge from './AiUsageBadge';
 
 export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
-  const [activeTab, setActiveTab] = useState('speaker');
+  const [activeTab, setActiveTab] = useState('transcript');
+  const [speakerNameMap, setSpeakerNameMap] = useState({});
+  const [selectedChunk, setSelectedChunk] = useState(null);
 
   // Khai báo các tab theo yêu cầu 
   const tabs = [
@@ -35,18 +37,8 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
       ),
     },
     {
-      id: 'speaker',
-      label: 'Speaker',
-      icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-          <circle cx="12" cy="7" r="4" />
-        </svg>
-      ),
-    },
-    {
       id: 'transcript',
-      label: 'Transcript',
+      label: 'Transcript & Người nói',
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -75,7 +67,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
   }
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#090f1d] border border-[#1b2640] rounded-2xl overflow-hidden shadow-xl">
+    <div className="w-full h-full flex flex-col bg-[#090f1d] border border-[#1b2640] rounded-2xl overflow-hidden shadow-xl relative z-0 isolate">
       {/* TẦNG 1: Header phía trên dành riêng cho AI Usage Badge */}
       <div className="flex items-center justify-between px-6 py-2.5 bg-[#070c18] border-b border-[#18233c] shrink-0">
         <div className="flex items-center gap-2 text-xs">
@@ -126,8 +118,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
         {activeTab === 'summary' && <ExecutiveSummary />}
         {activeTab === 'task' && <TaskMatrixTable onSeekSegment={onSeekSegment} />}
-        {activeTab === 'transcript' && <TranscriptPanel onSeekSegment={onSeekSegment} />}
-        {activeTab === 'speaker' && (
+        {activeTab === 'transcript' && (
           <div className="h-full flex flex-col gap-4">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -174,13 +165,27 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                     {speakers.length} người nói · {speakers.reduce((total, speaker) => total + speaker.segments.length, 0)} đoạn phát ngôn
                   </p>
                 </div>
-                <SpeakerManagementPanel key={speakers.map((speaker) => speaker.id).join('|')} initialSpeakers={speakers} onSave={onSaveSpeakers} onSeekSegment={onSeekSegment} />
+                <SpeakerManagementPanel
+                  key={speakers.map((speaker) => speaker.id).join('|')}
+                  initialSpeakers={speakers}
+                  onSave={onSaveSpeakers}
+                  onSeekSegment={onSeekSegment}
+                  selectedChunkKey={selectedChunk?.chunkKey}
+                  onSelectChunk={setSelectedChunk}
+                  onNamesChange={setSpeakerNameMap}
+                />
               </>
             )}
+            <TranscriptView
+              speakers={speakers}
+              speakerNameMap={speakerNameMap}
+              selectedChunk={selectedChunk}
+              onSelectChunk={setSelectedChunk}
+              onSeekSegment={onSeekSegment}
+            />
           </div>
         )}
-        {activeTab === 'slide' && <SlideGallery onSeekSegment=
-        {onSeekSegment} />}
+        {activeTab === 'slide' && <SlideGallery onSeekSegment={onSeekSegment} />}
       </div>
     </div>
   );
