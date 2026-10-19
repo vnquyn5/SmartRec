@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import SparkMD5 from "spark-md5";
 import { api } from "../lib/http/client.js";
 
@@ -8,6 +9,7 @@ export interface InitUploadPayload {
   fileSize: number;
   totalChunks: number;
   quickFingerprint?: string | null;
+  fingerprintVersion?: number | null;
 }
 
 export interface InitUploadResponse {
@@ -43,10 +45,10 @@ export interface UploadSessionStatusResponse {
 export async function initChunkedUpload(
   payload: InitUploadPayload,
 ): Promise<InitUploadResponse> {
-  if (import.meta.env.DEV) {
+  if (Boolean((import.meta as any).env?.DEV)) {
     console.log("[chunked-upload:init-request]", payload);
   }
-  return api.post("/upload/init", payload);
+  return (await api.post("/upload/init", payload)) as unknown as InitUploadResponse;
 }
 
 async function calculateMD5(blob: Blob): Promise<string> {
@@ -72,7 +74,6 @@ export async function uploadChunk({
 
   return api.post("/upload/chunk", formData, {
     signal,
-    headers: { "Content-Type": "multipart/form-data" },
     timeout: 0,
   });
 }
@@ -90,7 +91,7 @@ export async function mergeChunkedUpload(
   });
 
   try {
-    const response = await api.post(
+    const response = (await api.post(
       "/upload/merge",
       {
         uploadSessionId,
@@ -99,7 +100,7 @@ export async function mergeChunkedUpload(
       {
         timeout: MERGE_UPLOAD_TIMEOUT_MS,
       },
-    );
+    )) as unknown as MergeUploadResponse;
 
     console.info("[chunked-upload] merge success", {
       uploadSessionId,
@@ -133,10 +134,10 @@ export async function mergeChunkedUpload(
 export async function getChunkedUploadStatus(
   uploadSessionId: string,
 ): Promise<UploadSessionStatusResponse> {
-  return api.get("/upload/status", {
+  return (await api.get("/upload/status", {
     params: { uploadSessionId },
     timeout: 15000,
-  });
+  })) as unknown as UploadSessionStatusResponse;
 }
 
 export async function pauseChunkedUpload(uploadSessionId: string) {
