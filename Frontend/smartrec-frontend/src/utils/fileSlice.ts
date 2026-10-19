@@ -5,7 +5,8 @@ export interface FileChunk {
   size: number;
 }
 
-export const CHUNK_SIZE_5MB = 5 * 1024 * 1024; // 5MB
+export const CHUNK_SIZE_20MB = 20 * 1024 * 1024; // 20MB (tối ưu hóa tốc độ tải lên)
+export const CHUNK_SIZE_5MB = CHUNK_SIZE_20MB; // Giữ alias tương thích cho các component gọi tới
 export const LIMIT_2GB = 2 * 1024 * 1024 * 1024; // 2GB
 export const LIMIT_5GB = 5 * 1024 * 1024 * 1024; // 5GB
 export const LIMIT_4_HOURS_SEC = 4 * 60 * 60; // 4 Giờ
