@@ -14,7 +14,7 @@ export default function TranscriptView({
   speakers = [],
   speakerNameMap = {},
   selectedChunk = null,
-  onSelectCHUNK,
+  onSelectChunk,
   onSeekSegment, 
 }) {
   
@@ -67,7 +67,7 @@ export default function TranscriptView({
   const [autoScroll, setAutoScroll] = useState(true);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  
+  const listContainerRef = useRef(null);
   const itemRefs = useRef({});
 
   
@@ -93,14 +93,20 @@ export default function TranscriptView({
   }, [selectedChunk]);
 
   useEffect(() => {
-    if (autoScroll && activeSegmentId && itemRefs.current[activeSegmentId]) {
+    const container = listContainerRef.current;
+    const target = activeSegmentId ? itemRefs.current[activeSegmentId] : null;
+    if (autoScroll && container && target) {
       try {
-        itemRefs.current[activeSegmentId].scrollIntoView({
-          behavior: 'smooth',
-          block: 'nearest',
-        });
+        const containerTop = container.getBoundingClientRect().top;
+        const targetTop = target.getBoundingClientRect().top;
+        const nextScrollTop = container.scrollTop + (targetTop - containerTop) - 16;
+        if (typeof container.scrollTo === 'function') {
+          container.scrollTo({ top: Math.max(0, nextScrollTop), behavior: 'smooth' });
+        } else {
+          container.scrollTop = Math.max(0, nextScrollTop);
+        }
       } catch {
-        
+         
       }
     }
   }, [activeSegmentId, autoScroll]);
@@ -150,7 +156,7 @@ export default function TranscriptView({
   };
 
   return (
-    <div className="w-full flex-1 bg-[#090f1d] border border-[#1b2640] rounded-2xl flex flex-col overflow-hidden shadow-xl min-h-[420px]">
+    <div className="w-full flex-1 bg-[#090f1d] border border-[#1b2640] rounded-2xl flex flex-col overflow-hidden shadow-xl min-h-[420px] max-h-[520px] relative z-0 isolate">
       {/* Header */}
       <div className="px-5 py-3.5 border-b border-[#18233c] flex items-center justify-between bg-[#0a1122]">
         <div className="flex items-center gap-2">
@@ -218,7 +224,7 @@ export default function TranscriptView({
       </div>
 
       {/* DANH SÁCH CÂU THOẠI THEO THỜI GIAN  */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div ref={listContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
         {filteredTranscripts.length === 0 ? (
           <p className="text-xs text-slate-400 text-center py-10">
             Không tìm thấy câu thoại phù hợp với bộ lọc.
