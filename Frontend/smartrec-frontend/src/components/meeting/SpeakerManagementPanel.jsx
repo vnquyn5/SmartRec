@@ -92,7 +92,7 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
   );
 
   return (
-    <div className={`relative w-full ${isOpen ? 'z-50' : 'z-10'}`} ref={dropdownRef}>
+    <div className={`relative w-full ${isOpen ? 'z-50' : ''}`} ref={dropdownRef}>
       {/* Dropdown Trigger Box */}
       <div
         onClick={onToggle}
@@ -305,7 +305,7 @@ export default function SpeakerManagementPanel({
   const isEditing = status === 'editing' && hasChanges();
 
   return (
-    <div className="w-full bg-[#0c101d] border border-[#1e2742] rounded-2xl shadow-xl font-sans relative">
+    <div className="w-full bg-[#0c101d] border border-[#1e2742] rounded-2xl shadow-xl font-sans relative z-0 isolate">
       {/* Header */}
       <div className="p-5 border-b border-[#1b2542] flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0f1426]/50">
         <div>
@@ -346,7 +346,7 @@ export default function SpeakerManagementPanel({
         )}
 
         {/* Speaker Rename List Items */}
-        <div className="space-y-4">
+        <div className={`space-y-4 max-h-[420px] overflow-y-auto pr-1 ${activeDropdownId ? 'pb-48' : ''}`}>
           {initialSpeakers.length === 0 && (
             <p className="text-sm text-slate-400 py-5 text-center">Chưa có Speaker hoặc đoạn phát ngôn.</p>
           )}
@@ -363,7 +363,7 @@ export default function SpeakerManagementPanel({
               <div
                 key={speaker.id}
                 className={`bg-[#121729] border border-[#1e2742] hover:border-[#2a385c] rounded-xl p-4 transition-all relative ${
-                  isDropdownOpen ? 'z-30 shadow-2xl border-[#5452f6]/40' : 'z-10'
+                  isDropdownOpen ? 'z-30 shadow-2xl border-[#5452f6]/40' : ''
                 }`}
               >
                 {/* Speaker Info + Dropdown Row */}
@@ -410,28 +410,32 @@ export default function SpeakerManagementPanel({
                   </div>
 
                   {isExpanded && speaker.segments && speaker.segments.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {speaker.segments.map((seg, sIdx) => (
+                    <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1">
+                      {speaker.segments.map((seg, sIdx) => {
+                        const chunkKey = `${speaker.id}-${seg.startSeconds}-${seg.endSeconds}`;
+                        const isActiveChunk = selectedChunkKey
+                          ? selectedChunkKey === chunkKey
+                          : activeSegmentKey === `${speaker.id}-${sIdx}`;
+                        return (
                         <button
                           key={`${speaker.id}-${seg.startSeconds}-${sIdx}`}
                           type="button"
                           title={`Phát từ ${seg.start}`}
-                          aria-pressed={activeSegmentKey === `${speaker.id}-${sIdx}`}
+                          aria-pressed={isActiveChunk}
                           onClick={() => {
                             const key = `${speaker.id}-${sIdx}`;
                             setActiveSegmentKey(key);
                             onSelectChunk?.({
-                              chunkKey:
-                              `${speaker.id}-${seg.startSeconds}-${seg.endSeconds}`,
+                              chunkKey,
                               speakerId: speaker.id,
-                              startSeconds:Number(seg.startSeconds),
+                              startSeconds: Number(seg.startSeconds),
                               endSeconds: Number(seg.endSeconds),
                             });
                             if (Number.isFinite(Number(seg.startSeconds))) 
                               onSeekSegment?.(Number(seg.startSeconds));
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-mono transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38bdf8] ${
-                            activeSegmentKey === `${speaker.id}-${sIdx}`
+                            isActiveChunk
                               ? 'bg-[#12304a] border-[#38bdf8] text-white ring-1 ring-[#38bdf8]/50'
                               : 'bg-[#161d33] border-[#222d4d] text-slate-300 hover:bg-[#1d2b49] hover:border-[#38bdf8]/70'
                           }`}
@@ -444,7 +448,8 @@ export default function SpeakerManagementPanel({
                           <span className="text-slate-500">→</span>
                           <span className="text-slate-300">{seg.end}</span>
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : isExpanded ? (
                       <p className="text-xs text-slate-500 italic">Chưa có đoạn phát ngôn nào.</p>
