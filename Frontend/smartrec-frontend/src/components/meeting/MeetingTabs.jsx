@@ -174,15 +174,15 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                   onSelectChunk={setSelectedChunk}
                   onNamesChange={setSpeakerNameMap}
                 />
+                <TranscriptView
+                  speakers={speakers}
+                  speakerNameMap={speakerNameMap}
+                  selectedChunk={selectedChunk}
+                  onSelectChunk={setSelectedChunk}
+                  onSeekSegment={onSeekSegment}
+                />
               </>
             )}
-            <TranscriptView
-              speakers={speakers}
-              speakerNameMap={speakerNameMap}
-              selectedChunk={selectedChunk}
-              onSelectChunk={setSelectedChunk}
-              onSeekSegment={onSeekSegment}
-            />
           </div>
         )}
         {activeTab === 'slide' && <SlideGallery onSeekSegment={onSeekSegment} />}

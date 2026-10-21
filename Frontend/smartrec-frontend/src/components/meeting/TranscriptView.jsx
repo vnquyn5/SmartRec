@@ -36,30 +36,17 @@ export default function TranscriptView({
           endSeconds: Number(seg.endSeconds) || 0,
           chunkKey:
         `${spk.id}-${seg.startSeconds}-${seg.endSeconds}`,
-
+          text: seg.text || "",
       }))
     )
     .sort((a, b) => a.seconds - b.seconds)
     .map((chunk, index) => ({
       ...chunk,
       id: index + 1,
-      text: rawList[index % Math.max(1,
+      text: chunk.text || rawList[index % Math.max(1,
     rawList.length)]?.text || "",
       }))
-        : rawList.map((item, index) => {
-          const spkId = item.speaker_id || `spk_${index + 1}`;
-        return {
-        id: index + 1,
-        speakerId: spkId,
-        speakerName: speakerNameMap[spkId]
-    || item.speaker_name_temp || spkId || `Speaker ${index + 1}`,
-      timeStart: item.timestamp_start || "00:00:00",
-      timeEnd: item.timestamp_end || "00:00:10",
-      seconds: timeToSeconds(item.timestamp_start),
-      chunkKey: `${spkId}-${timeToSeconds(item.timestamp_start)}-${timeToSeconds(item.timestamp_end)}`,
-      text: item.text || "",
-        }
-    });
+        : [];
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSpeaker, setSelectedSpeaker] = useState('All');

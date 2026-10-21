@@ -1810,6 +1810,9 @@ const UploadPage = () => {
             style={{
               width: "520px",
               maxWidth: "100%",
+              maxHeight: "min(680px, calc(100vh - 48px))",
+              display: "flex",
+              flexDirection: "column",
               background: "#0f172a",
               border: "1px solid rgba(255,255,255,0.08)",
               borderRadius: "12px",
@@ -1824,6 +1827,7 @@ const UploadPage = () => {
                 justifyContent: "space-between",
                 gap: "12px",
                 marginBottom: "14px",
+                flexShrink: 0,
               }}
             >
               <div>
@@ -1863,6 +1867,7 @@ const UploadPage = () => {
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  flexShrink: 0,
                 }}
                 aria-label="Đóng thông báo"
               >
@@ -1871,7 +1876,15 @@ const UploadPage = () => {
             </div>
 
             <div
-              style={{ display: "flex", flexDirection: "column", gap: "8px" }}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                overflowY: "auto",
+                flex: 1,
+                minHeight: 0,
+                paddingRight: "4px",
+              }}
             >
               {savedFilesSummary.map((file, index) => (
                 <div
