@@ -45,6 +45,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
+                .requestMatchers(HttpMethod.POST, "/internal/stt/callback").permitAll()
                 .requestMatchers("/jobs/*/callback").permitAll()
                 .requestMatchers(HttpMethod.POST, "/jobs/*/heartbeat").permitAll()
                 .requestMatchers(HttpMethod.GET, "/jobs/dlq").authenticated()

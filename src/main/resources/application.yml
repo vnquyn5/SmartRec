@@ -65,8 +65,8 @@ trash:
 
 logging:
   level:
-    org.hibernate.SQL: DEBUG
-    org.hibernate.orm.jdbc.bind: TRACE
+    org.hibernate.SQL: INFO
+    org.hibernate.orm.jdbc.bind: INFO
 
 media:
   max-duration-hours: 4
@@ -79,7 +79,12 @@ job:
 smartrec:
   ai-engine:
     base-url: ${AI_ENGINE_BASE_URL:http://localhost:8000}
-  internal-token: ${SMARTREC_INTERNAL_TOKEN:}
+  internal-token: ${SMARTREC_INTERNAL_TOKEN:my-token-123}
+
+  stt:
+    request-path: ${STT_REQUEST_PATH:/api/v1/stt}
+    default-model: ${STT_DEFAULT_MODEL:default-stt}
+    default-language: ${STT_DEFAULT_LANGUAGE:vi}
 
 google:
   client-id: 341602707586-r5nt4c35p4jvgf1gii86b7459vfgkln0.apps.googleusercontent.com
