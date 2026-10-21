@@ -6,6 +6,7 @@ import math
 import uuid
 import shutil
 import logging
+import numpy as np
 from typing import Dict, Any, Optional
 
 
@@ -104,28 +105,31 @@ class AudioPipelineOrchestrator:
                 error_message="; ".join(header_errors)
             )
 
-        # 2. Giải mã mẫu an toàn khi đã đảm bảo chuẩn PCM 16-bit
+        # 2. Giải mã mẫu vector hóa qua NumPy theo block (vừa giới hạn RAM vừa tối ưu 100% CPU)
         max_amplitude = 0
         sum_squares = 0.0
         sample_count = 0
         clipped_samples = 0
 
         with wave.open(output_file, "rb") as wf:
-            chunk_size = 4096
+            chunk_size = 16000  # Block 1 giây (16000 mẫu = 32KB)
             while True:
                 frames = wf.readframes(chunk_size)
                 if not frames:
                     break
-                count = len(frames) // 2
-                unpacked = struct.unpack(f"<{count}h", frames)
-                for s in unpacked:
-                    abs_s = abs(s)
-                    if abs_s > max_amplitude:
-                        max_amplitude = abs_s
-                    if abs_s >= 32767:
-                        clipped_samples += 1
-                    sum_squares += float(s) * float(s)
-                sample_count += count
+                arr = np.frombuffer(frames, dtype=np.int16)
+                if len(arr) == 0:
+                    continue
+
+                # Ép kiểu int32 để tránh tràn số của mốc -32768 trong int16 khi lấy trị tuyệt đối
+                abs_arr = np.abs(arr.astype(np.int32))
+                local_max = int(np.max(abs_arr))
+                if local_max > max_amplitude:
+                    max_amplitude = local_max
+
+                clipped_samples += int(np.sum(abs_arr >= 32767))
+                sum_squares += float(np.sum(abs_arr.astype(np.float64) ** 2))
+                sample_count += len(arr)
 
         rms = math.sqrt(sum_squares / sample_count) if sample_count > 0 else 0.0
         is_silent = rms < 10.0
