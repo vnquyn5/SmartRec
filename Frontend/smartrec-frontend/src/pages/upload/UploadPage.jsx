@@ -479,7 +479,7 @@ const UploadPage = () => {
         if (!recoveryKey) {
           return;
         }
-        await saveFileHandle(recoveryKey, handle).catch(() => {});
+        await saveFileHandle(recoveryKey, handle).catch(() => { });
       }),
     );
   };
@@ -578,7 +578,7 @@ const UploadPage = () => {
         ];
         if (mergeOrCompletePhases.includes(retryItem.phase)) {
           if (retryItem.uploadSessionId) {
-            await largeUploadStore.refreshStatus(item.id).catch(() => {});
+            await largeUploadStore.refreshStatus(item.id).catch(() => { });
             retryItem =
               largeUploadStore
                 .getSnapshot()
@@ -607,7 +607,7 @@ const UploadPage = () => {
         }
 
         if (retryItem.uploadSessionId) {
-          await largeUploadStore.refreshStatus(item.id).catch(() => {});
+          await largeUploadStore.refreshStatus(item.id).catch(() => { });
           retryItem =
             largeUploadStore
               .getSnapshot()
@@ -668,7 +668,7 @@ const UploadPage = () => {
         item.mergeResponse?.durationSeconds ??
         durationByFileId[item.id] ??
         durationByFileId[
-          `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.lastModified || item.file?.lastModified || ""}`
+        `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.lastModified || item.file?.lastModified || ""}`
         ] ??
         null,
       completedAt,
@@ -757,7 +757,7 @@ const UploadPage = () => {
             chunkItem.phase === "merging" ||
             (chunkItem.phase === "merge_failed" &&
               chunkItem.uploadedChunkIndexes.length ===
-                chunkItem.chunks.length &&
+              chunkItem.chunks.length &&
               !chunkItem.mergeStarted);
           if (!canMerge) return;
           largeUploadStore.selectItem(id);
@@ -952,6 +952,14 @@ const UploadPage = () => {
     saveRequested: item.saveRequested,
   }));
   const displayQueue = [...queue, ...largeQueueItems];
+
+  const hasFiles = displayQueue.length > 0;
+  const hasUploadedSuccess = displayQueue.some(
+    (item) => item.phase === "success" || item.saved
+  );
+  const isItemUploading = displayQueue.some((item) =>
+    ["uploading", "finalizing", "merging"].includes(item.phase)
+  );
 
   return (
     <>
@@ -1555,50 +1563,50 @@ const UploadPage = () => {
                             (item.strategy !== "chunk" &&
                               isDone &&
                               !item.saved)) && (
-                            <button
-                              type="button"
-                              onClick={() => handleSaveFile(item.id)}
-                              disabled={
-                                isSavingAll ||
-                                savingIds.has(item.id) ||
-                                (isMerging && isSaveRequested)
-                              }
-                              style={{
-                                background:
+                              <button
+                                type="button"
+                                onClick={() => handleSaveFile(item.id)}
+                                disabled={
                                   isSavingAll ||
                                   savingIds.has(item.id) ||
                                   (isMerging && isSaveRequested)
-                                    ? "rgba(255,255,255,0.08)"
-                                    : "linear-gradient(135deg, #22c55e, #16a34a)",
-                                border: "none",
-                                color:
-                                  isSavingAll ||
-                                  savingIds.has(item.id) ||
-                                  (isMerging && isSaveRequested)
-                                    ? "#576176"
-                                    : "#fff",
-                                padding: "6px 16px",
-                                borderRadius: "6px",
-                                fontSize: "12px",
-                                fontWeight: "700",
-                                cursor:
-                                  isSavingAll ||
-                                  savingIds.has(item.id) ||
-                                  (isMerging && isSaveRequested)
-                                    ? "not-allowed"
-                                    : "pointer",
-                                flexShrink: 0,
-                              }}
-                            >
-                              {isMerging && isSaveRequested
-                                ? "Đang lưu file..."
-                                : savingIds.has(item.id)
-                                  ? "Đang lưu..."
-                                  : canRetryMerge
-                                    ? "Thử lại"
-                                    : "Lưu"}
-                            </button>
-                          )}
+                                }
+                                style={{
+                                  background:
+                                    isSavingAll ||
+                                      savingIds.has(item.id) ||
+                                      (isMerging && isSaveRequested)
+                                      ? "rgba(255,255,255,0.08)"
+                                      : "linear-gradient(135deg, #22c55e, #16a34a)",
+                                  border: "none",
+                                  color:
+                                    isSavingAll ||
+                                      savingIds.has(item.id) ||
+                                      (isMerging && isSaveRequested)
+                                      ? "#576176"
+                                      : "#fff",
+                                  padding: "6px 16px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  fontWeight: "700",
+                                  cursor:
+                                    isSavingAll ||
+                                      savingIds.has(item.id) ||
+                                      (isMerging && isSaveRequested)
+                                      ? "not-allowed"
+                                      : "pointer",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {isMerging && isSaveRequested
+                                  ? "Đang lưu file..."
+                                  : savingIds.has(item.id)
+                                    ? "Đang lưu..."
+                                    : canRetryMerge
+                                      ? "Thử lại"
+                                      : "Lưu"}
+                              </button>
+                            )}
                           {item.strategy === "single" && isItemUploading && (
                             <div
                               style={{
@@ -1758,6 +1766,7 @@ const UploadPage = () => {
                 padding: "0 24px",
                 fontSize: "13px",
               }}
+              disabled={!hasFiles}
               onClick={() => {
                 navigate("/");
               }}
@@ -1773,6 +1782,7 @@ const UploadPage = () => {
                 padding: "0 24px",
                 fontSize: "13px",
               }}
+              disabled={!hasUploadedSuccess || isItemUploading}
               onClick={() => {
                 navigate("/history");
               }}
