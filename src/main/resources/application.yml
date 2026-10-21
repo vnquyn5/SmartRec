@@ -86,5 +86,11 @@ smartrec:
     default-model: ${STT_DEFAULT_MODEL:default-stt}
     default-language: ${STT_DEFAULT_LANGUAGE:vi}
 
+  ai-stt:
+    base-url: ${AI_WORKER_BASE_URL:http://localhost:8000}
+    transcribe-path: ${AI_WORKER_TRANSCRIBE_PATH:/ai/stt/transcribe}
+    model-name: ${AI_STT_MODEL_NAME:faster-whisper-large-v3}
+    model-version: "1.0.0"
+
 google:
   client-id: 341602707586-r5nt4c35p4jvgf1gii86b7459vfgkln0.apps.googleusercontent.com

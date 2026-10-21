@@ -62,6 +62,7 @@ public class SecurityConfig {
                 .requestMatchers("/upload/resume").authenticated()
                 .requestMatchers("/upload/cancel").authenticated()
                 .requestMatchers("/jobs", "/jobs/**").authenticated()
+                .requestMatchers(HttpMethod.POST, "/ai/stt/transcribe").authenticated()
                 .requestMatchers("/api/user/me","/api/user/change-password").permitAll()
                 .anyRequest().authenticated()
             )
