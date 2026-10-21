@@ -105,21 +105,33 @@ class AudioPipelineOrchestrator:
                 error_message="; ".join(header_errors)
             )
 
-        # 2. Giải mã mẫu siêu tốc qua numpy thay vì vòng lặp struct.unpack
-        with wave.open(output_file, "rb") as wf:
-            raw_bytes = wf.readframes(wf.getnframes())
+        # 2. Giải mã mẫu vector hóa qua NumPy theo block (vừa giới hạn RAM vừa tối ưu 100% CPU)
+        max_amplitude = 0
+        sum_squares = 0.0
+        sample_count = 0
+        clipped_samples = 0
 
-        arr = np.frombuffer(raw_bytes, dtype=np.int16)
-        sample_count = len(arr)
-        if sample_count == 0:
-            max_amplitude = 0
-            clipped_samples = 0
-            rms = 0.0
-        else:
-            abs_arr = np.abs(arr)
-            max_amplitude = int(np.max(abs_arr))
-            clipped_samples = int(np.sum(abs_arr >= 32767))
-            rms = float(np.sqrt(np.mean(arr.astype(np.float64) ** 2)))
+        with wave.open(output_file, "rb") as wf:
+            chunk_size = 16000  # Block 1 giây (16000 mẫu = 32KB)
+            while True:
+                frames = wf.readframes(chunk_size)
+                if not frames:
+                    break
+                arr = np.frombuffer(frames, dtype=np.int16)
+                if len(arr) == 0:
+                    continue
+
+                # Ép kiểu int32 để tránh tràn số của mốc -32768 trong int16 khi lấy trị tuyệt đối
+                abs_arr = np.abs(arr.astype(np.int32))
+                local_max = int(np.max(abs_arr))
+                if local_max > max_amplitude:
+                    max_amplitude = local_max
+
+                clipped_samples += int(np.sum(abs_arr >= 32767))
+                sum_squares += float(np.sum(abs_arr.astype(np.float64) ** 2))
+                sample_count += len(arr)
+
+        rms = math.sqrt(sum_squares / sample_count) if sample_count > 0 else 0.0
         is_silent = rms < 10.0
 
         clipping_ratio = (clipped_samples / sample_count) if sample_count > 0 else 0.0

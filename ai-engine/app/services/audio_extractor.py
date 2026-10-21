@@ -1,3 +1,4 @@
+
 import os
 import wave
 import logging
@@ -129,15 +130,32 @@ class AudioExtractorService:
             output_path
         ]
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=180
+        # Tính timeout linh hoạt theo kích thước file: tối thiểu 300s (5 phút), 2s cho mỗi MB
+        file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
+        dynamic_timeout = max(300, int(file_size_mb * 2))
+
+        logger.info(
+            "Running FFmpeg normalize: input=%s (%.2f MB), dynamic_timeout=%ds",
+            os.path.basename(input_path),
+            file_size_mb,
+            dynamic_timeout,
         )
+
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=dynamic_timeout
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"FFmpeg vượt quá thời gian chờ ({dynamic_timeout}s) khi giải mã tệp {os.path.basename(input_path)}."
+            ) from exc
+
         if result.returncode != 0:
             ffmpeg_error = _short_error(result.stderr)
             if _is_deterministic_media_error(result.stderr):

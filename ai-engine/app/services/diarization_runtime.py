@@ -346,6 +346,10 @@ class DiarizationRuntimeManager:
                     start_sec = _get_field_value(best_seg, "start_seconds", _get_field_value(best_seg, "start", 0.0))
                     end_sec = _get_field_value(best_seg, "end_seconds", _get_field_value(best_seg, "end", 0.0))
 
+                    # Cắt tối đa theo max_duration_per_speaker (mặc định 30.0s) để tránh nạp tensor khổng lồ
+                    if max_duration_per_speaker and max_duration_per_speaker > 0:
+                        end_sec = min(end_sec, start_sec + max_duration_per_speaker)
+
                     start_frame = max(0, int(start_sec * sr))
                     end_frame = min(total_frames, int(end_sec * sr))
                     num_frames = end_frame - start_frame

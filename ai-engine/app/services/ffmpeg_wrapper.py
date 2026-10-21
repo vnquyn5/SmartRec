@@ -203,7 +203,7 @@ class FFmpegWrapper:
             "file_size_bytes": file_size,
             "processing_time_seconds": round(elapsed_time, 3)
         }
-        
+
     def slice_audio(
         self,
         input_path: str,
@@ -236,17 +236,29 @@ class FFmpegWrapper:
             output_path
         ]
 
+        dynamic_timeout = max(60, int(duration_seconds * 2))
+
         start_time = time.time()
-        process = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False
-        )
+        try:
+            process = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=dynamic_timeout,
+                check=False
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise FFmpegExecutionError(
+                cmd,
+                -1,
+                f"FFmpeg vượt quá thời gian chờ ({dynamic_timeout}s) khi cắt audio đoạn {start_seconds}s -> {start_seconds + duration_seconds}s."
+            ) from exc
+
         elapsed_time = time.time() - start_time
+
 
         if process.returncode != 0:
             if os.path.exists(output_path):
