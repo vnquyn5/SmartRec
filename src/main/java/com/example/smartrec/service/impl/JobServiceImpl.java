@@ -827,7 +827,8 @@ public class JobServiceImpl implements JobService {
     private boolean isNonRetryableProcessingError(String errorCode) {
         return switch (errorCode) {
             case "NO_SPEECH_DETECTED", "INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY",
-                    "AUDIO_CORRUPTED", "VALIDATION_ERROR", "WORKSPACE_LOST" -> true;
+                "AUDIO_CORRUPTED", "VALIDATION_ERROR", "WORKSPACE_LOST",
+                "STORAGE_ERROR" -> true;
             default -> false;
         };
     }

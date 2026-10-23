@@ -1,0 +1,16 @@
+# SmartRec AI Engine - AI Core Dependencies
+# Sprint 3 - AI Architecture Baseline
+# Python 3.11
+
+# PyTorch - CPU baseline
+torch==2.2.2
+torchaudio==2.2.2
+
+# Speaker Diarization - Sprint 2
+pyannote.audio==3.1.1
+huggingface-hub==0.20.3
+
+# Speech-to-Text - Sprint 3
+faster-whisper==1.1.1
+av==17.1.0
+ctranslate2==4.8.3

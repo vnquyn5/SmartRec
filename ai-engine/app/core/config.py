@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "smartrec-ai-engine"
+    log_level: str = "INFO"
     redis_host: str = "localhost"
     redis_port: int = 6379
     minio_endpoint: str = "http://localhost:9000"

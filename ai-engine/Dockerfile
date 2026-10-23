@@ -10,11 +10,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-ARG TORCH_VERSION=2.2.2
+COPY requirements_ai.txt .
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
-    "torch==${TORCH_VERSION}" "torchaudio==${TORCH_VERSION}" \
+    "torch==2.2.2" "torchaudio==2.2.2" \
     && python -c "import torch, torchaudio; assert torch.version.cuda is None, torch.version.cuda; print('CPU torch', torch.__version__, 'torchaudio', torchaudio.__version__, 'cuda', torch.version.cuda)"
-RUN pip install --no-cache-dir -r requirements.txt
+
+RUN pip install --no-cache-dir -r requirements.txt -r requirements_ai.txt
 
 COPY app ./app
 

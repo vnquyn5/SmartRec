@@ -1,4 +1,14 @@
+import logging
+
 from fastapi import FastAPI
+
+from app.core.logging_config import setup_logging
+from app.core.exceptions import register_exception_handlers
+
+setup_logging()
+logger = logging.getLogger("smartrec.api")
+logger.info("Initializing SmartRec AI Engine")
+
 from app.api.routes import router as audio_router, internal_router
 
 app = FastAPI(
@@ -6,6 +16,9 @@ app = FastAPI(
     version="1.0.0",
     description="Microservice tiền xử lý âm thanh: Trích xuất, chuẩn hóa 16kHz Mono và cắt phân đoạn cho pipeline AI."
 )
+
+register_exception_handlers(app)
+logger.info("Global exception handlers registered")
 
 # Đăng ký router tiền xử lý âm thanh
 app.include_router(audio_router, prefix="/api/v1")

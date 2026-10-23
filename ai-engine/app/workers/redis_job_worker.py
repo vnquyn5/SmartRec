@@ -7,6 +7,7 @@ import requests
 import threading
 import time
 import numpy as np
+from app.core.logging_config import setup_logging
 from uuid import uuid4
 from typing import Dict, Any, List, Optional
 # 1. Đảm bảo thư mục gốc ai-engine luôn nằm trong sys.path
@@ -14,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 from app.core.config import settings
-from app.services.minio_client import get_minio_client
+from app.services.storage_client import StorageClient
 from app.services.audio_extractor import AudioExtractorService, InvalidMediaError
 from app.schemas.audio_schemas import AudioPipelineRequest
 from app.schemas.diarization_schemas import DiarizationExportPayload
@@ -27,15 +28,14 @@ from app.workers.processing_errors import (
     NonRetryableProcessingError,
     RetryableProcessingError,
 )
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
-)
+
+setup_logging()
 logger = logging.getLogger("smartrec.worker")
+
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://host.docker.internal:8082/api/v1").rstrip("/")
 INTERNAL_TOKEN = settings.smartrec_internal_token or ""
 # Khởi tạo các client dùng chung cho processor.
-minio_client = get_minio_client()
+storage_client = StorageClient()
 callback_client = CallbackClient()
 audio_extractor = AudioExtractorService()
 pipeline_orchestrator = None
@@ -516,10 +516,9 @@ def process_job(job_id: str):
         file_ext = file_ext or ".media"
         raw_input_path = os.path.join(workspace_dir, f"raw_input{file_ext}")
         logger.info(f"[{job_id}] Đang tải '{object_key}' từ MinIO bucket '{settings.minio_bucket}'...")
-        minio_client.fget_object(
-            bucket_name=settings.minio_bucket,
-            object_name=object_key,
-            file_path=raw_input_path
+        storage_client.download_file(
+            object_key=object_key,
+            destination_path=raw_input_path,
         )
         # [GUARD 1]: Kiểm định an toàn đường dẫn file đầu vào
         validate_safe_read_path(raw_input_path)

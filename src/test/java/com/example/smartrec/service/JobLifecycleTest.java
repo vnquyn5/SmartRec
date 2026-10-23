@@ -365,4 +365,45 @@ class JobLifecycleTest {
         assertEquals(JobStageStatus.SKIPPED, output.getStatus());
         assertEquals(MeetingStatus.FAILED, meeting.getStatus());
     }
+
+    @Test
+    void storageErrorTerminatesJobWithoutRetry() {
+            UUID executionId = UUID.randomUUID();
+
+            job.setExecutionId(executionId);
+            job.setLeaseExpiresAt(Instant.now().plusSeconds(60));
+            job.setRetryCount(0);
+
+            JobStage ffmpeg = JobStage.builder()
+                            .jobId(jobId)
+                            .stage(PipelineStage.FFMPEG)
+                            .status(JobStageStatus.PROCESSING)
+                            .retryCount(0)
+                            .build();
+
+            when(jobStageRepository.findByJobIdAndStage(
+                            jobId, PipelineStage.FFMPEG)).thenReturn(Optional.of(ffmpeg));
+
+            when(jobStageRepository.findByJobIdOrderByStageAsc(jobId))
+                            .thenReturn(List.of(ffmpeg));
+
+            service.handleWorkerCallback(
+                            jobId,
+                            WorkerCallbackRequest.builder()
+                                            .executionId(executionId)
+                                            .stage(PipelineStage.FFMPEG)
+                                            .status(JobStageStatus.FAILED)
+                                            .errorCode("STORAGE_ERROR")
+                                            .errorMessage("Storage download failed: NoSuchKey")
+                                            .build());
+
+            assertEquals(JobStatus.FAILED, job.getStatus());
+            assertEquals(JobStageStatus.FAILED, ffmpeg.getStatus());
+            assertEquals("STORAGE_ERROR", job.getErrorCode());
+            assertEquals(0, job.getRetryCount());
+            assertEquals(0, ffmpeg.getRetryCount());
+
+            verify(outboxRepository, never())
+                            .save(any(JobDispatchOutbox.class));
+    }
 }

@@ -347,3 +347,39 @@ def run_all():
 if __name__ == "__main__":
     run_all()
     print("ALL_ENHANCED_MODEL_ADAPTER_TESTS_EXECUTED_SUCCESSFULLY")
+
+
+def test_load_model_alias_lifecycle():
+    """load_model() tương thích với lifecycle hiện tại và không nạp model trùng lặp."""
+    loader_calls = []
+
+    class FakePredictor:
+        def predict(self, data, **kwargs):
+            return f"processed_{data}"
+
+    def loader(device):
+        loader_calls.append(device)
+        return FakePredictor()
+
+    adapter = LocalModelAdapter(
+        model_name="whisper-test",
+        loader_fn=loader,
+        device="cpu",
+    )
+
+    assert adapter.status == ModelStatus.UNINITIALIZED
+
+    adapter.load_model()
+
+    assert adapter.is_ready
+    assert adapter.predict("audio") == "processed_audio"
+    assert loader_calls == ["cpu"]
+
+    adapter.load_model()
+
+    assert loader_calls == ["cpu"]
+
+    adapter.unload()
+
+    assert adapter.status == ModelStatus.UNINITIALIZED
+    assert not adapter.is_ready
