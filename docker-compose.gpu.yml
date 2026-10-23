@@ -1,0 +1,15 @@
+# SmartRec - NVIDIA GPU Override
+# Use with docker-compose.yml on an NVIDIA GPU host.
+# Requires a compatible GPU Docker image and NVIDIA Container Toolkit.
+
+services:
+  ai-worker:
+    build:
+      context: ./ai-engine
+      dockerfile: Dockerfile.gpu
+
+    gpus: all
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

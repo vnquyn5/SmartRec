@@ -13,6 +13,13 @@
       "runtime": "external_api",
       "device": "cpu",
       "status": "disabled"
+    },
+    {
+      "model_name": "faster-whisper-large-v3",
+      "version": "3.0",
+      "runtime": "local",
+      "device": "auto",
+      "status": "enabled"
     }
   ]
 }

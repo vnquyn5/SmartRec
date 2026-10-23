@@ -1,0 +1,45 @@
+# SmartRec AI Worker - NVIDIA GPU
+# Target: Linux x86_64, Windows + WSL2
+# CUDA 12.8 / PyTorch 2.7.1
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ffmpeg libsndfile1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements_ai.txt ./
+
+# Tách PyTorch khỏi danh sách dependencies chung.
+RUN grep -Ev '^[[:space:]]*(torch|torchaudio)[=<>!~]' \
+    requirements_ai.txt > /tmp/requirements_gpu_ai.txt
+
+# Cài đặt dependencies ứng dụng.
+RUN pip install --no-cache-dir \
+    -r requirements.txt \
+    -r /tmp/requirements_gpu_ai.txt
+
+# Cài đặt PyTorch CUDA 12.8 sau cùng.
+RUN pip install --no-cache-dir \
+    torch==2.7.1 torchaudio==2.7.1 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# Kiểm tra phiên bản và dependencies.
+RUN python -c "import torch, torchaudio, pyannote.audio; \
+    assert torch.version.cuda == '12.8'; \
+    assert torch.__version__.startswith('2.7.1'); \
+    assert torchaudio.__version__.startswith('2.7.1'); \
+    print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda)" \
+    && pip check
+
+COPY app ./app
+
+CMD ["celery", "-A", "app.celery_app.celery_app", \
+     "worker", "--loglevel=INFO", "--concurrency=1"]

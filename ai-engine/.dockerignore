@@ -1,0 +1,38 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Git and editor files
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+
+# Tests and local artifacts
+tests/
+htmlcov/
+.coverage
+*.log
+*.bak
+
+# Local AI data and model caches
+data/
+models/
+checkpoints/
+.cache/
+huggingface/
+outputs/
+tmp/

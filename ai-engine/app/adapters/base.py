@@ -136,6 +136,10 @@ class BaseModelAdapter(abc.ABC):
         """Khởi tạo tài nguyên của model."""
         pass
 
+    def load_model(self) -> None:
+        """Nạp model thông qua lifecycle load() hiện có."""
+        self.load()
+
     @abc.abstractmethod
     def unload(self) -> None:
         """Giải phóng tài nguyên của model."""

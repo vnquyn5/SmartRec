@@ -60,7 +60,7 @@ Nếu không chạy qua Docker, có thể chạy AI service trực tiếp:
 cd ai-engine
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements_ai.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 

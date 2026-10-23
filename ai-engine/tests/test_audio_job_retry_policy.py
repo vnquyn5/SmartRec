@@ -26,9 +26,11 @@ def _configure_no_speech_worker(tmp_path, monkeypatch, callback, object_key="aud
         def __exit__(self, *args):
             return False
 
-    class MinioStub:
-        def fget_object(self, bucket_name, object_name, file_path):
-            open(file_path, "wb").close()
+    class StorageClientStub:
+        def download_file(self, object_key, destination_path):
+            with open(destination_path, "wb"):
+                pass
+            return destination_path
 
     heartbeat_instances = []
 
@@ -60,7 +62,7 @@ def _configure_no_speech_worker(tmp_path, monkeypatch, callback, object_key="aud
     monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda job_id: {
         "objectKey": object_key, "meetingId": "meeting-1", "status": "QUEUED"
     })
-    monkeypatch.setattr(redis_job_worker, "minio_client", MinioStub())
+    monkeypatch.setattr(redis_job_worker, "storage_client", StorageClientStub())
     monkeypatch.setattr(redis_job_worker, "ResourceTracker", ResourceTrackerStub)
     monkeypatch.setattr(redis_job_worker, "WorkerHeartbeat", HeartbeatStub)
     monkeypatch.setattr(redis_job_worker, "require_stage_callback", callback)

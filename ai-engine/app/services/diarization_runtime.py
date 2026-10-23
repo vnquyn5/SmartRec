@@ -140,7 +140,22 @@ class DiarizationRuntimeManager:
             self._pipeline: Optional[Pipeline] = None
             self._init_lock = threading.Lock()
             self._inference_lock = threading.RLock()
-            self.device = self._resolve_target_device(prefer_device)
+            configured_device = (
+                prefer_device
+                if prefer_device is not None
+                else os.getenv("DIARIZATION_DEVICE", "auto")
+            )
+
+            configured_device = configured_device.strip().lower()
+
+            if configured_device not in {"auto", "cuda", "mps", "cpu"}:
+                raise ValueError(
+                    f"DIARIZATION_DEVICE không hợp lệ: {configured_device}"
+            )
+
+            self.device = self._resolve_target_device(
+                None if configured_device == "auto" else configured_device
+            )
             self._initialized = True
             logger.info(f"Đã khởi tạo DiarizationRuntimeManager (mô hình: {self.model_name}, thiết bị: {self.device})")
 
