@@ -64,6 +64,7 @@ public class SecurityConfig {
                 .requestMatchers("/jobs", "/jobs/**").authenticated()
                 .requestMatchers(HttpMethod.POST, "/ai/stt/transcribe").authenticated()
                 .requestMatchers("/api/user/me","/api/user/change-password").permitAll()
+                .requestMatchers("/slide-keyframes/**").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

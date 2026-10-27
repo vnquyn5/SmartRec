@@ -53,6 +53,7 @@ minio:
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket-name: ${MINIO_BUCKET:smartrec-media}
+  slide-bucket-name: ${MINIO_SLIDE_BUCKET:smartrec-slides}
   playback-url-expiry-seconds: ${MINIO_PLAYBACK_URL_EXPIRY_SECONDS:900}
 
 app:

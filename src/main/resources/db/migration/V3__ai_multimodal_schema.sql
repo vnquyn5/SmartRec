@@ -148,3 +148,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_usage_job_id
 
 CREATE INDEX IF NOT EXISTS idx_ai_usage_created_at
     ON ai_usage(created_at);
+
+    ALTER TABLE slide_keyframes
+    ADD COLUMN IF NOT EXISTS content_type VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS size_bytes BIGINT,
+    ADD COLUMN IF NOT EXISTS checksum_sha256 VARCHAR(64);

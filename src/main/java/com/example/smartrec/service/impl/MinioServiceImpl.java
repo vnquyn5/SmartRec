@@ -319,21 +319,131 @@ public class MinioServiceImpl implements MinioService {
         return (System.nanoTime() - startedAtNanos) / 1_000_000;
     }
 
-    @Override 
-    public InputStream downloadObject(String objectKey){
+    @Override
+    public InputStream downloadObject(String objectKey) {
         try {
             // goi mini cline de lay object/file tu mini
             return minioClient.getObject(GetObjectArgs.builder()
-                                                      .bucket(bucket)
-                                                      .object(objectKey)
-                                                      .build()
-        );
+                    .bucket(bucket)
+                    .object(objectKey)
+                    .build());
         } catch (Exception e) {
-           throw new BusinessException(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                "ERR_MINIO_UNAVAILABLE",
-                "Không thể đọc file từ MinIO"
-        );
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "ERR_MINIO_UNAVAILABLE",
+                    "Không thể đọc file từ MinIO");
         }
+    }
+
+    @Override
+    public void upLoadToBucket(MultipartFile file, String bucketName, String objectKey) {
+        boolean exist;
+
+        try {
+            exist = minioClient.bucketExists(
+                    BucketExistsArgs.builder()
+                            .bucket(bucketName)
+                            .build());
+
+        } catch (Exception e) {
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_UNAVAILABLE",
+                    "Không thể kiểm tra Bucket trên MinIO");
+        }
+
+        if (!exist) {
+            throw new BusinessException(
+                    HttpStatus.NOT_FOUND,
+                    "BUCKET_NOT_FOUND",
+                    "Bucket không tồn tại " + bucketName);
+        }
+
+        try {
+            minioClient.putObject(// thuc hien upload file len Mini
+                    PutObjectArgs.builder() // tao cau hinh yeu cau cho upload
+                            .bucket(bucketName)
+                            .object(objectKey)
+                            .stream(file.getInputStream(), file.getSize(), -1)// lay luong doc noi dung file
+                            .contentType(// thiet lap kieu noi dung file
+                                    file.getContentType() != null// kiem tra xem mime type co ton tai khong
+                                            ? file.getContentType()
+                                            : "application/octet-stream")// khong co thi dung kieu nhi phan mac dinh
+                            .build());
+
+        } catch (Exception e) {
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_UPLOAD_FAILED",
+                    "Không thể upload file lên MinIO");
+        }
+    }
+
+    @Override
+    public boolean objectExists(String bucketName, String objectKey) {
+        try {
+            minioClient.statObject(// Gửi yêu cầu lấy metadata của object từ MinIO
+                    StatObjectArgs.builder()// Tạo cấu hình cho yêu cầu kiểm tra object
+                            .bucket(bucketName)
+                            .object(objectKey)
+                            .build());
+            return true;
+        } catch (ErrorResponseException e) {
+            String code = e.errorResponse().code(); // lay ma tu mini tra ve
+            if ("NoSuchKey".equals(code) || "NoSuchObject".equals(code)) {// Kiểm tra lỗi không tìm thấy khóa object
+                                                                          // hoac loi khong tim thay object
+                return false;
+            }
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_CHECK_FAILED",
+                    "Không thể kiểm tra object trên MinIO");
+        } catch (Exception e) {
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_UNAVAILABLE",
+                    "Không thể kết nối hoặc kiểm tra object trên MinIO");
+        }
+    }
+
+    @Override
+    public InputStream getObject(String bucketName, String objectKey) {
+        try {
+            return minioClient.getObject(
+                    GetObjectArgs.builder() // tao cau hinh lay object
+                            .bucket(bucketName)
+                            .object(objectKey)
+                            .build());
+        } catch (ErrorResponseException e) {
+            String code = e.errorResponse().code(); // lay ma tu mini tra ve
+            if ("NoSuchKey".equals(code) || "NoSuchObject".equals(code)) {// Kiểm tra lỗi không tìm thấy khóa object
+                                                                          // hoac loi khong tim thay object
+                throw new BusinessException(
+                        HttpStatus.NOT_FOUND,
+                        "OBJECT_NOT_FOUND",
+                        "Object không tồn tại: " + objectKey);
+            }
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_GET_OBJECT_FAILED",
+                    "Không thể lấy object từ MinIO");
+        } catch (Exception e) {
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_UNAVAILABLE",
+                    "Không thể kết nối hoặc kiểm tra object trên MinIO");
+        }
+    }
+
+    @Override
+    public void delete(
+            String bucketName,
+            String objectKey) throws Exception {
+
+        minioClient.removeObject(
+                RemoveObjectArgs.builder()
+                        .bucket(bucketName)
+                        .object(objectKey)
+                        .build());
     }
 }
