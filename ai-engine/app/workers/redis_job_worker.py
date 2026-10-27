@@ -519,6 +519,7 @@ def process_job(job_id: str):
         storage_client.download_file(
             object_key=object_key,
             destination_path=raw_input_path,
+            allowed_root=workspace_dir,
         )
         # [GUARD 1]: Kiểm định an toàn đường dẫn file đầu vào
         validate_safe_read_path(raw_input_path)

@@ -87,3 +87,36 @@ def test_adapter_lifecycle(tmp_path):
         adapter.unload()
 
         assert adapter.status == ModelStatus.UNINITIALIZED
+
+
+@pytest.mark.parametrize(
+    ("requested_device", "expected_device"),
+    [
+        ("cpu", "cpu"),
+        ("mps", "cpu"),
+        ("cuda", "cuda"),
+    ],
+)
+def test_whisper_adapter_reports_actual_device(
+    tmp_path, requested_device, expected_device
+):
+    (tmp_path / "model.bin").write_bytes(b"mock")
+
+    adapter = create_whisper_adapter(
+        model_path=str(tmp_path),
+        device=requested_device,
+    )
+
+    assert adapter.device == expected_device
+
+
+def test_whisper_adapter_auto_device_without_cuda(tmp_path):
+    (tmp_path / "model.bin").write_bytes(b"mock")
+
+    with patch(
+        "app.adapters.whisper_adapter.torch.cuda.is_available",
+        return_value=False,
+    ):
+        adapter = create_whisper_adapter(model_path=str(tmp_path))
+
+    assert adapter.device == "cpu"

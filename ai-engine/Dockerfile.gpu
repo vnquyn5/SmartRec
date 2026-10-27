@@ -40,6 +40,7 @@ RUN python -c "import torch, torchaudio, pyannote.audio; \
     && pip check
 
 COPY app ./app
+COPY model_registry.json ./model_registry.json
 
 CMD ["celery", "-A", "app.celery_app.celery_app", \
      "worker", "--loglevel=INFO", "--concurrency=1"]

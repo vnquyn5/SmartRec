@@ -39,7 +39,7 @@ def test_invalid_seconds(value):
         seconds_to_ms(value)
 
 
-def test_parse_word_timestamps():
+def test_parse_preserves_segment_boundaries_with_word_timestamps():
     segment = make_segment(
         1.0,
         3.0,
@@ -53,8 +53,8 @@ def test_parse_word_timestamps():
     result = parse_whisper_segments([segment])
 
     assert len(result) == 1
-    assert result[0].startTimeMs == 1234
-    assert result[0].endTimeMs == 2750
+    assert result[0].startTimeMs == 1000
+    assert result[0].endTimeMs == 3000
     assert result[0].text == "Xin chào mọi người."
     assert result[0].speakerId is None
 

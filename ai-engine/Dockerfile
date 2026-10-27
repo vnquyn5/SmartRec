@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 RUN pip install --no-cache-dir -r requirements.txt -r requirements_ai.txt
 
 COPY app ./app
+COPY model_registry.json ./model_registry.json
 
 EXPOSE 8000
 

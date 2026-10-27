@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 from typing import Any, Optional
+import torch
 
 from faster_whisper import WhisperModel
 
@@ -63,9 +64,15 @@ def create_whisper_adapter(
 
         return WhisperPredictor(model)
 
+    # CTranslate2 không hỗ trợ MPS; tự động chọn CUDA hoặc CPU.
+    if device is None:
+        runtime_device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        runtime_device = "cpu" if device == "mps" else device
+
     return LocalModelAdapter(
         model_name="faster-whisper-large-v3",
         loader_fn=loader,
         version="3.0",
-        device=device,
+        device=runtime_device,
     )

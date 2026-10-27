@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 import subprocess
 import sys
@@ -27,9 +28,20 @@ def _configure_no_speech_worker(tmp_path, monkeypatch, callback, object_key="aud
             return False
 
     class StorageClientStub:
-        def download_file(self, object_key, destination_path):
+        def download_file(self, object_key, destination_path, *, allowed_root=None):
+            assert allowed_root is not None, "Worker must provide allowed_root"
+
+            root = Path(allowed_root).resolve()
+            destination = Path(destination_path).resolve()
+
+            assert root.is_dir(), "Workspace must exist"
+            assert destination != root and root in destination.parents, (
+                "Download destination must be inside workspace"
+            )
+
             with open(destination_path, "wb"):
                 pass
+
             return destination_path
 
     heartbeat_instances = []

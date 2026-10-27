@@ -36,24 +36,10 @@ def parse_whisper_segments(
         if not text:
             continue
 
-        words = getattr(segment, "words", None)
-
-        if words:
-            valid_words = [
-                word for word in words
-                if getattr(word, "start", None) is not None
-                and getattr(word, "end", None) is not None
-            ]
-
-            if valid_words:
-                start_seconds = valid_words[0].start
-                end_seconds = valid_words[-1].end
-            else:
-                start_seconds = segment.start
-                end_seconds = segment.end
-        else:
-            start_seconds = segment.start
-            end_seconds = segment.end
+        # Sử dụng cùng segment boundaries với Speaker Aligner.
+        # Word timestamps không quyết định khoảng thời gian của transcript.
+        start_seconds = segment.start
+        end_seconds = segment.end
 
         start_ms = seconds_to_ms(start_seconds)
         end_ms = seconds_to_ms(end_seconds)

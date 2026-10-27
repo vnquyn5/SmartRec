@@ -66,8 +66,10 @@ class StorageClient:
         self,
         object_key: str,
         destination_path: str,
+        *,
+        allowed_root: str | Path | None = None,
     ) -> str:
-        """Download an object from MinIO to a local file."""
+        """Download an object from MinIO to a validated local destination."""
 
         if not object_key or not object_key.strip():
             raise ValueError("object_key must not be empty")
@@ -76,6 +78,22 @@ class StorageClient:
 
         if not destination.name:
             raise ValueError("Invalid destination path")
+
+        if allowed_root is not None:
+            root = Path(allowed_root).resolve(strict=True)
+            resolved_destination = destination.resolve(strict=False)
+
+            if not root.is_dir():
+                raise ValueError("allowed_root must be an existing directory")
+
+            if resolved_destination == root or root not in resolved_destination.parents:
+                raise PermissionError("Download destination is outside allowed workspace")
+
+            if destination.is_symlink():
+                raise PermissionError("Download destination must not be a symlink")
+
+            if destination.exists() and not destination.is_file():
+                raise ValueError("Download destination is not a regular file")
 
         logger.info(
             "Downloading object from bucket=%s, key=%s",
