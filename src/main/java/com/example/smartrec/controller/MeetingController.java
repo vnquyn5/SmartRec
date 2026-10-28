@@ -27,11 +27,13 @@ import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.model.dto.RenameSpeakerRequest;
+import com.example.smartrec.model.dto.SlideOCRResponse;
 import com.example.smartrec.model.dto.SpeakerSegmentResponse;
 import com.example.smartrec.service.MeetingProcessingService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MeetingSpeakerService;
+import com.example.smartrec.service.SlideOCRService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -53,6 +55,7 @@ public class MeetingController {
     private final MeetingService meetingService;
     private final MeetingSpeakerService meetingSpeakerService;
     private final MeetingProcessingService meetingProcessingService;
+    private final SlideOCRService slideOCRService;
 
     @GetMapping
     @Operation(summary = "List meeting files", description = "Returns the authenticated user's meeting files with pagination, status filtering and keyword search.")
@@ -153,6 +156,15 @@ public class MeetingController {
         meetingSpeakerService.renameSpeaker(id, request); 
         return ResponseEntity.ok( Map.of("message", "Speaker đổi tên thành công") ); 
     }
+
+    @GetMapping("/{id}/slides")
+    public List<SlideOCRResponse> getMeetingSlides(
+            @PathVariable("id") UUID meetingId
+    ) {
+        return slideOCRService.getMeetingSlides(meetingId);
+    }
+
+
 
 
 

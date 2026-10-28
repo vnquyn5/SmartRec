@@ -17,6 +17,8 @@ public interface MinioService {
 
     void delete(String bucketName, String objectKey) throws Exception;
 
+    String presignGetObject(String bucketName, String objectKey);
+
     void upLoad(MultipartFile file, String object_key) throws Exception;
 
     String presignPutObject(String objectKey, int expirySeconds) throws Exception;

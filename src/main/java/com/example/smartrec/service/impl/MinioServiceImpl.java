@@ -446,4 +446,23 @@ public class MinioServiceImpl implements MinioService {
                         .object(objectKey)
                         .build());
     }
+
+    @Override
+    public String presignGetObject(String bucketName, String objectKey) {
+        try {
+            // Gọi MinIO SDK để tạo URL có chữ ký cho phép đọc object
+            return minioClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()// Bắt đầu xây dựng cấu hình tạo presigned URL
+                            .method(Method.GET)// Chỉ định HTTP GET: dùng để lấy nội dung ảnh
+                            .bucket(bucketName)
+                            .object(objectKey)
+                            .expiry(15 * 60)
+                            .build());
+        } catch (Exception e) {
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "MINIO_UNAVAILABLE",
+                    "Không thể tạo URL truy cập ảnh slide trên MinIO");
+        }
+    }
 }
