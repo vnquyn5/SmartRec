@@ -5,7 +5,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.example.smartrec.model.dto.FileUploadResponse;
+import com.example.smartrec.model.dto.PendingSimpleUploadResponse;
 import com.example.smartrec.service.FileService;
 
 import lombok.AllArgsConstructor;
@@ -25,7 +25,7 @@ public class FileController {
     private final FileService fileService;
 
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
-    public ResponseEntity<FileUploadResponse> upLoad(@RequestParam("file") MultipartFile file,
+    public ResponseEntity<PendingSimpleUploadResponse> upLoad(@RequestParam("file") MultipartFile file,
             @RequestParam(value = "title", required = false) String title) {
         long requestStartNanos = System.nanoTime();
         log.info(
@@ -34,13 +34,12 @@ public class FileController {
                 file != null ? file.getSize() : null,
                 file != null ? file.getContentType() : null,
                 title != null && !title.isBlank());
-        FileUploadResponse response = fileService.upLoadFile(file, title);
+        PendingSimpleUploadResponse response = fileService.upLoadFile(file, title);
         log.info(
-                "[simple-upload] response returned mediaFileId={}, meetingId={}, totalMs={}",
-                response.getId(),
-                response.getMeetingId(),
+                "[simple-upload] temporary upload response returned objectKey={}, totalMs={}",
+                response.getObjectKey(),
                 elapsedMs(requestStartNanos));
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }
 
     private long elapsedMs(long startedAtNanos) {

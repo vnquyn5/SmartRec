@@ -13,6 +13,7 @@ import com.example.smartrec.model.dto.MergeUploadRequest;
 import com.example.smartrec.model.dto.SimpleUploadCompleteRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignResponse;
+import com.example.smartrec.model.dto.PendingSimpleUploadResponse;
 import com.example.smartrec.model.dto.UploadDuplicateCheckRequest;
 import com.example.smartrec.model.dto.UploadDuplicateCheckResponse;
 import com.example.smartrec.model.dto.UploadInitRequest;
@@ -75,6 +76,18 @@ public class UploadController {
                 response.getMeetingId(),
                 elapsedMs(startedAtNanos));
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping(value = "/prepare", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<PendingSimpleUploadResponse> prepareSimpleUpload(
+            @Valid @RequestBody SimpleUploadCompleteRequest request) {
+        return ResponseEntity.ok(fileService.prepareSimpleUpload(request));
+    }
+
+    @PostMapping(value = "/discard", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Void> discardPendingSimpleUpload(@RequestBody java.util.Map<String, String> request) {
+        fileService.discardPendingSimpleUpload(request == null ? null : request.get("objectKey"));
+        return ResponseEntity.noContent().build();
     }
 
     private long elapsedMs(long startedAtNanos) {

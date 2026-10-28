@@ -3,19 +3,30 @@ import { toAppError } from "../../lib/http/errors.js";
 import { api, storageClient } from "../../lib/http/client.js";
 import { calculateFullSha256InWorker, calculateQuickFingerprint } from "../../utils/fileHash.ts";
 
-export async function presignSimpleUpload(file) {
+export async function presignSimpleUpload(file, title = "") {
   return api.post("/upload/presign", {
     fileName: file.name,
     fileSize: file.size,
     mimeType: file.type || "application/octet-stream",
+    title,
   });
 }
 
-export async function completeSimpleUpload(payload, signal) {
-  return api.post("/upload/complete", payload, {
+export async function prepareSimpleUpload(payload, signal) {
+  return api.post("/upload/prepare", payload, {
     signal,
     timeout: 0,
   });
+}
+
+export async function confirmSimpleUpload(payload) {
+  return api.post("/upload/complete", payload, {
+    timeout: 0,
+  });
+}
+
+export async function discardSimpleUpload(objectKey) {
+  return api.post("/upload/discard", { objectKey });
 }
 
 export async function uploadSingleFile(
@@ -25,6 +36,7 @@ export async function uploadSingleFile(
   signal,
   onUploadProgress,
   onFinalize,
+  onPendingUpload,
 ) {
   const startedAt = Date.now();
 
@@ -41,7 +53,17 @@ export async function uploadSingleFile(
       ? duplicateMetadata.fingerprintVersion ?? 2
       : 2;
     if (signal?.aborted) throw { kind: "canceled", message: "canceled" };
-    const presign = await presignSimpleUpload(file);
+    const presign = await presignSimpleUpload(file, meetingName);
+    const pendingUploadRequest = {
+      objectKey: presign.objectKey,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || "application/octet-stream",
+      title: meetingName,
+      quickFingerprint,
+      fingerprintVersion,
+    };
+    onPendingUpload?.(pendingUploadRequest);
     console.info("[simple-upload] presign received", {
       fileName: file?.name,
       objectKey: presign.objectKey,
@@ -68,20 +90,12 @@ export async function uploadSingleFile(
       withCredentials: false,
     });
 
-    const completePayload = {
-      objectKey: presign.objectKey,
-      fileName: file.name,
-      fileSize: file.size,
-      mimeType: file.type || "application/octet-stream",
-      title: meetingName,
-      quickFingerprint,
-      fingerprintVersion,
-    };
+    const completePayload = { ...pendingUploadRequest };
     const checksumSha256 = await checksumPromise;
     if (checksumSha256) completePayload.checksumSha256 = checksumSha256;
 
     onFinalize?.(completePayload);
-    const response = await completeSimpleUpload(completePayload, signal);
+    const response = await prepareSimpleUpload(completePayload, signal);
 
     console.info("[simple-upload] request finished", {
       fileName: file?.name,

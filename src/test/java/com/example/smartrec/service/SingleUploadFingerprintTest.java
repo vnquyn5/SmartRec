@@ -4,7 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import java.time.LocalDate;
+import java.io.ByteArrayInputStream;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,11 +26,13 @@ import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
+import com.example.smartrec.entity.PendingMediaUpload;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.model.dto.SimpleUploadCompleteRequest;
 import com.example.smartrec.model.dto.UploadDuplicateCheckRequest;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
+import com.example.smartrec.repository.PendingMediaUploadRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.impl.FileServiceImpl;
 
@@ -39,6 +42,7 @@ class SingleUploadFingerprintTest {
     private static final String CHECKSUM = "b".repeat(64);
     @Mock MediaFileRepository mediaFileRepository;
     @Mock MeetingRepository meetingRepository;
+    @Mock PendingMediaUploadRepository pendingUploadRepository;
     @Mock UserRepository userRepository;
     @Mock MinioService minioService;
     @Mock FileChecksumService fileChecksumService;
@@ -53,14 +57,17 @@ class SingleUploadFingerprintTest {
         SecurityContextHolder.getContext().setAuthentication(
                 new TestingAuthenticationToken(user.getEmail(), null, "ROLE_USER"));
         when(userRepository.findByEmail(user.getEmail())).thenReturn(Optional.of(user));
-        LocalDate today = LocalDate.now();
         request = new SimpleUploadCompleteRequest();
-        request.setObjectKey("Alice/" + String.format("%02d", today.getMonthValue()) + "-" + today.getYear()
-                + "/recording.mp4");
+        request.setObjectKey("tmp/pending/" + user.getId() + "/" + UUID.randomUUID() + "_recording.mp4");
         request.setFileName("recording.mp4");
         request.setFileSize(100L);
+        request.setMimeType("video/mp4");
         request.setQuickFingerprint(FINGERPRINT);
         request.setFingerprintVersion(2);
+        when(pendingUploadRepository.findByObjectKeyAndUserId(request.getObjectKey(), user.getId()))
+                .thenReturn(Optional.of(PendingMediaUpload.builder().userId(user.getId())
+                        .objectKey(request.getObjectKey()).fileName("recording.mp4").fileSizeBytes(100L)
+                        .mimeType("video/mp4").status("PENDING").expiresAt(Instant.now().plusSeconds(3600)).build()));
     }
 
     @AfterEach
@@ -75,7 +82,7 @@ class SingleUploadFingerprintTest {
     void savesFingerprintOnNewCompletionWithClientChecksum() throws Exception {
         request.setChecksumSha256(CHECKSUM);
         TransactionSynchronizationManager.initSynchronization();
-        when(minioService.getObjectSize(request.getObjectKey())).thenReturn(100L);
+        stubPendingObject();
         when(mediaFileRepository.saveAndFlush(any(MediaFile.class))).thenAnswer(invocation -> {
             MediaFile saved = invocation.getArgument(0);
             saved.setId(UUID.randomUUID());
@@ -90,6 +97,16 @@ class SingleUploadFingerprintTest {
 
         verify(mediaFileRepository).saveAndFlush(any(MediaFile.class));
         verifyNoInteractions(fileChecksumService);
+    }
+
+    @Test
+    void preparedUploadDoesNotCreateOfficialMeetingOrMediaRows() throws Exception {
+        stubPendingObject();
+
+        var pending = service.prepareSimpleUpload(request);
+
+        assertEquals(request.getObjectKey(), pending.getObjectKey());
+        verifyNoInteractions(mediaFileRepository, meetingRepository);
     }
 
     @Test
@@ -145,14 +162,27 @@ class SingleUploadFingerprintTest {
 
     private MediaFile existing(String fingerprint, Integer version) {
         return MediaFile.builder().id(UUID.randomUUID()).uploaded_by(user.getId()).workspace_id(user.getId())
-                .original_name(request.getFileName()).object_key(request.getObjectKey()).file_size_bytes(100L)
+                .original_name(request.getFileName()).object_key(confirmedObjectKey()).file_size_bytes(100L)
                 .quickFingerprint(fingerprint).fingerprintVersion(version).checksumSha256(CHECKSUM)
                 .status(MediaFileStatus.UPLOADED).build();
     }
 
     private void stubExisting(MediaFile existing) {
-        when(mediaFileRepository.findAllByObjectKey(request.getObjectKey())).thenReturn(List.of(existing));
+        when(mediaFileRepository.findAllByObjectKey(confirmedObjectKey())).thenReturn(List.of(existing));
         when(meetingRepository.findByMediaFileId(existing.getId())).thenReturn(Optional.of(meeting(existing.getId())));
+    }
+
+    private String confirmedObjectKey() {
+        String leafName = request.getObjectKey().substring(request.getObjectKey().lastIndexOf('/') + 1);
+        return user.getId() + "/meetings/" + leafName;
+    }
+
+    private void stubPendingObject() throws Exception {
+        when(minioService.objectExists(request.getObjectKey())).thenReturn(true);
+        when(minioService.getObjectSize(request.getObjectKey())).thenReturn(100L);
+        when(minioService.getObject(request.getObjectKey()))
+                .thenReturn(new ByteArrayInputStream("....ftypisom".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)));
+        when(minioService.getObjectSize(confirmedObjectKey())).thenReturn(100L);
     }
 
     private Meeting meeting(UUID mediaFileId) {
