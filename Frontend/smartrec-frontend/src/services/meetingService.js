@@ -26,6 +26,7 @@ export async function getMeetings({
   size = 10,
   status = "",
   keyword = "",
+  folderId,
 } = {}) {
   const response = await httpClient.get("/meetings", {
     params: {
@@ -33,6 +34,7 @@ export async function getMeetings({
       size,
       ...(status ? { status } : {}),
       ...(keyword ? { keyword } : {}),
+      ...(folderId ? { folderId } : {}),
     },
   });
   return normalizePageResponse(response);

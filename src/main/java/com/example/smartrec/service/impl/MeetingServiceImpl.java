@@ -36,6 +36,7 @@ import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
+import com.example.smartrec.repository.FolderRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MinioService;
@@ -45,11 +46,13 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class MeetingServiceImpl implements MeetingService {
+    private static final UUID NO_FOLDER_FILTER = new UUID(0L, 0L);
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 20;
     private static final int MAX_SIZE = 100;
 
     private final MeetingRepository meetingRepository;
+    private final FolderRepository folderRepository;
     private final MediaFileRepository mediaFileRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
@@ -79,8 +82,26 @@ public class MeetingServiceImpl implements MeetingService {
             }
         }
         Pageable pageable = PageRequest.of(page, size, parseSort(request.getSort()));
+        UUID folderId = NO_FOLDER_FILTER;
+        int folderMode = 0;
+        String requestedFolder = request.getFolderId();
+        if (requestedFolder != null && !requestedFolder.isBlank()) {
+            if ("root".equalsIgnoreCase(requestedFolder.trim())) {
+                folderMode = 1;
+            } else {
+                try {
+                    folderId = UUID.fromString(requestedFolder.trim());
+                } catch (IllegalArgumentException invalidFolderId) {
+                    throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FOLDER_ID", "Mã thư mục không hợp lệ");
+                }
+                if (folderRepository.findByIdAndUserId(folderId, currentUser.getId()).isEmpty()) {
+                    throw new BusinessException(HttpStatus.NOT_FOUND, "FOLDER_NOT_FOUND", "Không tìm thấy thư mục");
+                }
+                folderMode = 2;
+            }
+        }
         Page<MeetingResponseDTO> meetings = meetingRepository.searchMeetings(
-                currentUser.getId(), status, keyword, pageable);
+                currentUser.getId(), folderId, folderMode, status, keyword, pageable);
 
         return new PageResponse<>(
                 meetings.getContent(),

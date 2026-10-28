@@ -3,6 +3,7 @@ package com.example.smartrec.service;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -29,12 +30,14 @@ import com.example.smartrec.model.dto.MeetingFilterRequest;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
+import com.example.smartrec.repository.FolderRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.impl.MeetingServiceImpl;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingListProjectionTest {
     @Mock private MeetingRepository meetingRepository;
+    @Mock private FolderRepository folderRepository;
     @Mock private MediaFileRepository mediaFileRepository;
     @Mock private UserRepository userRepository;
     @Mock private MinioService minioService;
@@ -59,7 +62,7 @@ class MeetingListProjectionTest {
                 "audio/mpeg", 1024L, 60, null, null, null);
         when(userRepository.findByEmail("alice@example.com"))
                 .thenReturn(Optional.of(User.builder().id(userId).email("alice@example.com").build()));
-        when(meetingRepository.searchMeetings(eq(userId), eq(null), eq(null), any()))
+        when(meetingRepository.searchMeetings(eq(userId), eq(new UUID(0L, 0L)), eq(0), isNull(), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "created_at")), 1));
 
         var response = meetingService.findMeetings(new MeetingFilterRequest());
