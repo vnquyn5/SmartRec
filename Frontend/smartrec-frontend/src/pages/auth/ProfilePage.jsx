@@ -242,6 +242,25 @@ const initialUserData = {
 
 const emptyUserData = { ...initialUserData };
 
+function AvatarDisplay({ src, alt, className, fallback }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => setImageFailed(false), [src]);
+
+  if (src && !imageFailed) {
+    return (
+      <img
+        src={src}
+        alt={alt}
+        className={className}
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return fallback;
+}
+
 function formatJoinDate(createdAt) {
   if (!createdAt) return "";
 
@@ -323,6 +342,7 @@ const ProfilePage = () => {
           ...initialUserData,
           userCode: profile.userCode ?? "",
           name: profile.full_name ?? "",
+          avatar: profile.avatarUrl ?? null,
           email: profile.email ?? "",
           authProvider: profile.authProvider ?? "LOCAL",
           phone: profile.phone ?? "",
@@ -432,6 +452,7 @@ const ProfilePage = () => {
         department: updatedProfile.department ?? user?.department ?? "",
         position: updatedProfile.position ?? user?.position ?? "",
         role: updatedProfile.role ?? user?.role ?? "",
+        avatar: updatedProfile.avatarUrl ?? user?.avatar ?? null,
       };
 
       setUser(nextUser);
@@ -608,25 +629,18 @@ const ProfilePage = () => {
               <span>Về trang chủ</span>
             </button>
             <div className="topbar-avatar">
-              {displayUser.avatar ? (
-                <img
-                  src={displayUser.avatar}
-                  alt="Avatar"
-                  className="avatar-circle"
-                  style={{ padding: 0, objectFit: "cover" }}
-                />
-              ) : (
-                <div className="avatar-circle">
-                  {displayUser.name
-                    ? displayUser.name
-                        .split(" ")
-                        .map((w) => w[0])
-                        .join("")
-                        .slice(0, 2)
-                        .toUpperCase()
-                    : "--"}
-                </div>
-              )}
+              <AvatarDisplay
+                src={displayUser.avatar}
+                alt=""
+                className="avatar-circle"
+                fallback={(
+                  <div className="avatar-circle">
+                    {displayUser.name
+                      ? displayUser.name.split(" ").map((word) => word[0]).join("").slice(0, 2).toUpperCase()
+                      : "--"}
+                  </div>
+                )}
+              />
               <div className="avatar-info">
                 <span className="avatar-name">
                   {displayUser.name || "Đang tải..."}
@@ -674,36 +688,12 @@ const ProfilePage = () => {
                     {/* Avatar section */}
                     <div className="profile-edit-avatar-box">
                       <div className="profile-avatar-ring large">
-                        {editForm.avatar ? (
-                          <img
-                            src={editForm.avatar}
-                            alt="Avatar Preview"
-                            className="profile-avatar-img"
-                          />
-                        ) : (
-                          <div className="profile-avatar-placeholder">
-                            <svg
-                              width="48"
-                              height="48"
-                              viewBox="0 0 48 48"
-                              fill="none"
-                            >
-                              <circle
-                                cx="24"
-                                cy="18"
-                                r="9"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                              />
-                              <path
-                                d="M6 44c0-9.94 8.06-18 18-18s18 8.06 18 18"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                          </div>
-                        )}
+                        <AvatarDisplay
+                          src={editForm.avatar}
+                          alt=""
+                          className="profile-avatar-img"
+                          fallback={<div className="profile-avatar-placeholder">{icons.profile}</div>}
+                        />
                         <input
                           type="file"
                           id="avatar-upload"
@@ -783,6 +773,9 @@ const ProfilePage = () => {
                           }
                           className={`profile-input ${errors.phone ? "input-error" : ""}`}
                         />
+                        {isGoogleAccount && <small style={{ color: "var(--sr-muted)", fontSize: 12 }}>
+                          Google không cung cấp số điện thoại trong dữ liệu đăng nhập. Bạn có thể nhập số điện thoại tại đây.
+                        </small>}
                         {errors.phone && (
                           <span className="error-text">{errors.phone}</span>
                         )}
@@ -853,36 +846,12 @@ const ProfilePage = () => {
                   <div className="profile-info-card">
                     <div className="profile-avatar-col">
                       <div className="profile-avatar-ring">
-                        {displayUser.avatar ? (
-                          <img
-                            src={displayUser.avatar}
-                            alt="Avatar"
-                            className="profile-avatar-img"
-                          />
-                        ) : (
-                          <div className="profile-avatar-placeholder">
-                            <svg
-                              width="48"
-                              height="48"
-                              viewBox="0 0 48 48"
-                              fill="none"
-                            >
-                              <circle
-                                cx="24"
-                                cy="18"
-                                r="9"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                              />
-                              <path
-                                d="M6 44c0-9.94 8.06-18 18-18s18 8.06 18 18"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                              />
-                            </svg>
-                          </div>
-                        )}
+                        <AvatarDisplay
+                          src={displayUser.avatar}
+                          alt=""
+                          className="profile-avatar-img"
+                          fallback={<div className="profile-avatar-placeholder">{icons.profile}</div>}
+                        />
                       </div>
                       <h3 className="profile-avatar-name">
                         {displayUser.name}

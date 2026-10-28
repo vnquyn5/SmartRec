@@ -112,19 +112,25 @@ public class AuthServiceImpl implements AuthService {
         GoogleIdToken.Payload payload = googleTokenService.verify(request.getIdToken());
         String googleId = payload.getSubject();
         String email = payload.getEmail();
+        if (googleId == null || googleId.isBlank() || email == null || email.isBlank()
+                || !Boolean.TRUE.equals(payload.getEmailVerified())) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_GOOGLE_PROFILE",
+                    "Tài khoản Google không có email đã xác minh hợp lệ");
+        }
 
         String fullName = (String) payload.get("name");
         String avatarUrl = (String) payload.get("picture");
-         if (fullName == null || fullName.isBlank()) {
+        if (fullName == null || fullName.isBlank()) {
             fullName = email;
         }
 
-        User user = userRepository
-                .findByEmail(email)
-                .orElse(null);
+        User user = userRepository.findByProviderId(googleId).orElse(null);
 
         if (user == null) {
-
+            if (userRepository.findByEmail(email).isPresent()) {
+                throw new BusinessException(HttpStatus.CONFLICT, "GOOGLE_ACCOUNT_LINK_REQUIRED",
+                        "Email đã có tài khoản SmartRec. Đăng nhập tài khoản đó để liên kết Google.");
+            }
             user = User.builder()
                     .email(email)
                     .full_name(fullName)
@@ -137,30 +143,19 @@ public class AuthServiceImpl implements AuthService {
                     .build();
 
             user = userRepository.save(user);
-        }else{
-             if (!Boolean.TRUE.equals(user.getIs_active())) {
+        } else {
+            if (!Boolean.TRUE.equals(user.getIs_active())) {
                 throw new BusinessException(
                         HttpStatus.FORBIDDEN,
                         "ACCOUNT_LOCKED",
                         "Tài khoản đã bị khóa");
             }
-            if (user.getProvider_id() != null
-                    && !user.getProvider_id().equals(googleId)) {
-
-                throw new BusinessException(
-                        HttpStatus.CONFLICT,
-                        "GOOGLE_ACCOUNT_MISMATCH",
-                        "Tài khoản đã liên kết với Google account khác");
-            }
-            if (user.getProvider_id() == null) {
-                user.setProvider_id(googleId);
-            }
+            // Google profile refresh is limited to fields supplied by the verified token.
+            user.setFull_name(fullName);
             if (avatarUrl != null && !avatarUrl.isBlank()) {
                 user.setAvatar_url(avatarUrl);
             }
-
             user = userRepository.save(user);
-            
         }
          String accessToken = jwtService.generateToken(user);
          RefreshToken refreshToken = refreshTokenService.create(user);

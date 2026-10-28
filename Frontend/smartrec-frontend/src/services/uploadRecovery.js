@@ -130,7 +130,19 @@ export async function restoreAvailableChunkFiles(items, { attachFile, markPermis
 export async function pickFilesWithPersistentHandles() {
   if (typeof window.showOpenFilePicker !== "function") return null;
   try {
-    const handles = await window.showOpenFilePicker({ multiple: true });
+    const handles = await window.showOpenFilePicker({
+      multiple: true,
+      excludeAcceptAllOption: true,
+      types: [{
+        description: "Tệp video và âm thanh được SmartRec hỗ trợ",
+        accept: {
+          "video/mp4": [".mp4"],
+          "video/x-matroska": [".mkv"],
+          "audio/mpeg": [".mp3"],
+          "audio/mp4": [".m4a"],
+        },
+      }],
+    });
     return await Promise.all(handles.map(async (handle) => ({
       file: await handle.getFile(),
       handle,

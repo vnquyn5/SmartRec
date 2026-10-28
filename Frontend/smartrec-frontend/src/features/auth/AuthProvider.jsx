@@ -64,6 +64,7 @@ export function AuthProvider({ children }) {
             id: profile.id ?? storedUser.id,
             userCode: profile.userCode ?? storedUser.userCode,
             name: profile.full_name ?? storedUser.name,
+            avatarUrl: profile.avatarUrl ?? storedUser.avatarUrl ?? null,
             email: profile.email ?? storedUser.email,
             authProvider: profile.authProvider ?? storedUser.authProvider ?? "LOCAL",
             phone: profile.phone ?? storedUser.phone,
@@ -131,6 +132,7 @@ export function AuthProvider({ children }) {
           email: responseUser.email ?? "",
           avatarUrl: responseUser.avatarUrl ?? responseUser.avatar_url ?? null,
           roles: responseUser.roles ?? (responseUser.role ? [responseUser.role] : []),
+          authProvider: responseUser.authProvider ?? "GOOGLE",
         }
       : fallbackUser;
     if (!nextUser) throw new Error("Máy chủ không trả về thông tin người dùng.");

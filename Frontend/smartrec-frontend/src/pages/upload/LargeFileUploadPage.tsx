@@ -13,6 +13,7 @@ import {
   buildUploadDuplicateNotice,
   checkFilesForUploadDuplicates,
 } from "../../utils/uploadDuplicateNotice";
+import { getMediaUploadError, MEDIA_UPLOAD_ACCEPT } from "../../utils/mediaUploadPolicy.js";
 
 // Helper format bytes
 const formatBytes = (bytes: number): string => {
@@ -33,13 +34,7 @@ const formatTime = (seconds: number): string => {
   return `${pad(m)}:${pad(s)}`;
 };
 
-const ALLOWED_EXTENSIONS = ["mp4", "mkv", "mp3", "m4a"];
 const MAX_LARGE_FILES = 3;
-
-const isValidExtension = (fileName: string): boolean => {
-  const ext = fileName.split(".").pop()?.toLowerCase() || "";
-  return ALLOWED_EXTENSIONS.includes(ext);
-};
 
 const getLargeFileKey = (file: File) =>
   `${file.name}-${file.size}-${file.lastModified}`;
@@ -119,19 +114,29 @@ export default function LargeFileUploadPage() {
     setErrorMessage("");
     setDuplicateNotice(null);
 
-    const limitedFiles = files.slice(0, MAX_LARGE_FILES);
-    const validFiles: File[] = [];
-    for (const file of limitedFiles) {
-      if (!isValidExtension(file.name)) {
-        setErrorMessage("Chỉ chấp nhận định dạng .mp4, .mkv, .mp3, .m4a");
+    const validCandidates: File[] = [];
+    const rejectedFiles: string[] = [];
+    for (const file of files) {
+      const formatError = getMediaUploadError(file);
+      if (formatError) {
+        rejectedFiles.push(`${file.name}: ${formatError}`);
         continue;
       }
 
       if (file.size > LIMIT_5GB) {
-        setErrorMessage("Dung lượng vượt quá giới hạn 5GB!");
+        rejectedFiles.push(`${file.name}: dung lượng vượt quá giới hạn 5GB.`);
         continue;
       }
-      validFiles.push(file);
+      validCandidates.push(file);
+    }
+
+    const validFiles = validCandidates.slice(0, MAX_LARGE_FILES);
+    validCandidates.slice(MAX_LARGE_FILES).forEach((file) =>
+      rejectedFiles.push(`${file.name}: vượt quá giới hạn ${MAX_LARGE_FILES} tệp mỗi lần.`),
+    );
+
+    if (rejectedFiles.length > 0) {
+      setErrorMessage(`Đã bỏ qua tệp không hợp lệ: ${rejectedFiles.join("; ")}`);
     }
 
     if (validFiles.length === 0) return;
@@ -460,7 +465,7 @@ export default function LargeFileUploadPage() {
               </p>
               <input
                 type="file"
-                accept=".mp4,.mkv,.mp3,.m4a"
+                accept={MEDIA_UPLOAD_ACCEPT}
                 multiple
                 style={{ display: "none" }}
                 ref={fileInputRef}

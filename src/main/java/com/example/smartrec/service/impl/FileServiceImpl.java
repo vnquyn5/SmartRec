@@ -1,6 +1,7 @@
 package com.example.smartrec.service.impl;
 
 import java.time.LocalDate;
+import java.io.InputStream;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,6 +36,7 @@ import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.FileService;
 import com.example.smartrec.service.FileChecksumService;
 import com.example.smartrec.service.MinioService;
+import com.example.smartrec.util.MediaUploadPolicy;
 
 import lombok.RequiredArgsConstructor;
 
@@ -239,6 +241,16 @@ public class FileServiceImpl implements FileService {
                         "Kích thước object trên MinIO không khớp metadata upload");
             }
             timing.verifyObjectMs = elapsedMs(verifyStartNanos);
+
+            if (!isObjectSignatureValid(request.getObjectKey(), request.getFileName())) {
+                try {
+                    minioService.delete(request.getObjectKey());
+                } catch (Exception cleanupError) {
+                    log.warn("[simple-upload] rejected media object cleanup failed objectKey={}", request.getObjectKey(), cleanupError);
+                }
+                throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "ERR_INVALID_FILE_CONTENT",
+                        "Nội dung tệp không khớp với định dạng âm thanh hoặc video được hỗ trợ");
+            }
 
             String suppliedChecksum = normalizeHex(request.getChecksumSha256(), 64, "checksumSha256");
             String checksumSha256 = suppliedChecksum;
@@ -593,6 +605,17 @@ public class FileServiceImpl implements FileService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_FILE_EMPTY", "File không được để trống ");
         }
         validateSimpleUploadMetadata(file.getOriginalFilename(), file.getSize(), file.getContentType());
+        try (InputStream input = file.getInputStream()) {
+            if (!MediaUploadPolicy.hasSupportedSignature(file.getOriginalFilename(), input.readNBytes(16))) {
+                throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "ERR_INVALID_FILE_CONTENT",
+                        "Nội dung tệp không khớp với phần mở rộng được hỗ trợ");
+            }
+        } catch (BusinessException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILE_CONTENT",
+                    "Không thể xác minh định dạng tệp");
+        }
     }
 
     private void validateSimpleUploadMetadata(String fileName, Long fileSize, String mimeType) {
@@ -600,7 +623,10 @@ public class FileServiceImpl implements FileService {
         if (fileSize > MAX_FILE_SIZE) {
             throw new BusinessException(HttpStatus.PAYLOAD_TOO_LARGE, "ERR_FILE_TOO_LARGE", "File không vượt quá 2GB");
         }
-        normalizeMimeType(mimeType);
+        if (!MediaUploadPolicy.isMimeTypeCompatible(fileName, mimeType)) {
+            throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "ERR_INVALID_FILE_TYPE",
+                    "MIME type không khớp với định dạng tệp được hỗ trợ");
+        }
     }
 
     private UploadDuplicateCheckResponse toDuplicateResponse(MediaFile existing) {
@@ -632,13 +658,18 @@ public class FileServiceImpl implements FileService {
         if (fileName == null || fileName.isBlank()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILENAME", "Tên file không hợp lệ");
         }
-        String lowerName = fileName.toLowerCase();
-        boolean validExtension = lowerName.endsWith(".mp4") || lowerName.endsWith(".mkv") ||
-                lowerName.endsWith(".mp3") || lowerName.endsWith(".m4a");
-
-        if (!validExtension) {
+        if (!MediaUploadPolicy.isSupportedExtension(fileName)) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILE_TYPE",
-                    "Chỉ hổ trợ file .mp4, .mkv, .mp3, .m4a");
+                    "Chỉ hỗ trợ tệp .mp4, .mkv, .mp3, .m4a");
+        }
+    }
+
+    private boolean isObjectSignatureValid(String objectKey, String fileName) {
+        try (InputStream input = minioService.getObject(objectKey)) {
+            return MediaUploadPolicy.hasSupportedSignature(fileName, input.readNBytes(16));
+        } catch (Exception error) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILE_CONTENT",
+                    "Không thể xác minh định dạng tệp đã tải lên");
         }
     }
 

@@ -23,6 +23,8 @@ public class UserProfileReponse {
 
     private String full_name;
 
+    private String avatarUrl;
+
     private String department;
 
     private String position;

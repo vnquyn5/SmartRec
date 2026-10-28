@@ -15,6 +15,8 @@ public class UploadInitRequest {
     @Positive (message = "kích thước tệp phải lớn hơn 0 ")
     private Long fileSize;
 
+    private String mimeType;
+
     @NotNull (message = "Bắt buộc phải có tổng số phần ")
     @Positive (message = "Tổng số phần phải lớn hơn 0")
     private Integer totalChunks;

@@ -127,6 +127,7 @@ class UserServiceImplTest {
     @Test
     void googleAccountCanUpdateNameWithoutSendingEmail() {
         User user = googleUser();
+        user.setAvatar_url("https://lh3.googleusercontent.com/avatar");
         when(userRepository.findByEmailOrPhone("alice@gmail.com", "alice@gmail.com")).thenReturn(Optional.of(user));
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
         UpdateUserProfileRequest request = new UpdateUserProfileRequest();
@@ -138,6 +139,7 @@ class UserServiceImplTest {
         assertEquals("Nguyễn Văn B", user.getFull_name());
         assertEquals("alice@gmail.com", user.getEmail());
         assertEquals("GOOGLE", response.getAuthProvider());
+        assertEquals("https://lh3.googleusercontent.com/avatar", response.getAvatarUrl());
         verify(userRepository, never()).existsByEmailIgnoreCase(any());
     }
 
