@@ -100,6 +100,22 @@ public class ChunkMergeAsyncService {
         }
     }
 
+    public boolean cleanupCancelledSession(UUID uploadSessionId, int totalChunks) {
+        List<String> objects = new ArrayList<>(chunkKeys(uploadSessionId, 0, totalChunks));
+        objects.addAll(stagedObjectKeys(uploadSessionId, totalChunks));
+        boolean cleaned = true;
+        for (String objectKey : objects) {
+            try {
+                minioService.delete(objectKey);
+            } catch (Exception error) {
+                cleaned = false;
+                log.warn("[chunked-upload] cancelled temporary object cleanup failed session={}, objectKey={}",
+                        uploadSessionId, objectKey, error);
+            }
+        }
+        return cleaned;
+    }
+
     private void runMerge(MergeJob job) {
         long totalStartedAt = job.finalizationStartedAtNanos();
         long composeMs = 0;
@@ -154,35 +170,19 @@ public class ChunkMergeAsyncService {
                     finalObjectSize,
                     verifyMs);
 
-            String checksumSha256 = job.clientChecksumSha256();
-            if (checksumSha256 == null || checksumSha256.isBlank()) {
-                stageStartedAt = System.nanoTime();
-                checksumSha256 = fileChecksumService.calculateSha256(job.finalObjectKey());
-                sha256Ms = elapsedMs(stageStartedAt);
-                log.info("[chunked-merge] server checksum calculated uploadSessionId={}, finalObjectKey={}, elapsedMs={}",
-                        job.uploadSessionId(), job.finalObjectKey(), sha256Ms);
-            } else {
-                // The client digest was computed in a worker during chunk PUTs.
-                // It is checked asynchronously after the final object is saved.
-                log.info("[chunked-merge] client checksum available uploadSessionId={}, serverStreamDeferred=true",
-                        job.uploadSessionId());
+            stageStartedAt = System.nanoTime();
+            String checksumSha256 = fileChecksumService.calculateSha256(job.finalObjectKey());
+            sha256Ms = elapsedMs(stageStartedAt);
+            if (job.clientChecksumSha256() != null && !job.clientChecksumSha256().isBlank()
+                    && !job.clientChecksumSha256().equalsIgnoreCase(checksumSha256)) {
+                throw new IllegalStateException("Client checksum does not match merged object");
             }
-
-            stageStartedAt = System.nanoTime();
-            MediaFile mediaFile = findOrCreateMediaFile(job, finalObjectSize, checksumSha256, measurements);
-            // The duplicate lookup and persistence timings are measured inside
-            // findOrCreateMediaFile so they remain separate in the summary.
-            duplicateMs += measurements.duplicateMs;
-            mediaFileSaveMs = measurements.mediaFileSaveMs;
-            logMergeStage(job.uploadSessionId(), "MediaFile duplicate/save", stageStartedAt);
-
-            stageStartedAt = System.nanoTime();
-            findOrCreateMeeting(job, mediaFile);
-            meetingMs = elapsedMs(stageStartedAt);
-            logMergeStage(job.uploadSessionId(), "Meeting save/reuse", stageStartedAt);
+            log.info("[chunked-merge] server checksum verified uploadSessionId={}, finalObjectKey={}, elapsedMs={}",
+                    job.uploadSessionId(), job.finalObjectKey(), sha256Ms);
 
             stageStartedAt = System.nanoTime();
             UploadSession session = job.session();
+            session.setChecksumSha256(checksumSha256);
             session.setStatus(UploadSessionStatus.COMPLETED);
             session.setReceivedChunks(totalChunks);
             if (session.getFileSize() == null || session.getFileSize() <= 0) {
@@ -239,17 +239,6 @@ public class ChunkMergeAsyncService {
                     job.uploadSessionId(),
                     job.finalObjectKey(),
                     totalMergeMs);
-            if (job.clientChecksumSha256() != null && !job.clientChecksumSha256().isBlank()
-                    && job.finalObjectKey().equals(mediaFile.getObject_key())) {
-                String expectedChecksum = job.clientChecksumSha256();
-                try {
-                    applicationTaskExecutor.execute(() -> verifyClientChecksumAsync(
-                            job.uploadSessionId(), job.finalObjectKey(), expectedChecksum));
-                } catch (Exception schedulingError) {
-                    log.error("[chunked-merge] completed; checksum verification scheduling failed uploadSessionId={}",
-                            job.uploadSessionId(), schedulingError);
-                }
-            }
         } catch (Exception e) {
             logMergeFailure(job, e, totalStartedAt);
             markMergeFailed(job.uploadSessionId(), job.session());

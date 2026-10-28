@@ -2,6 +2,8 @@ package com.example.smartrec.repository;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Instant;
+import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -13,6 +15,9 @@ import com.example.smartrec.entity.UploadSession;
 import com.example.smartrec.enums.UploadSessionStatus;
 
 public interface UploadSessionRepository extends JpaRepository<UploadSession, UUID> {
+
+    List<UploadSession> findTop100ByStatusAndUpdatedAtBeforeOrderByUpdatedAtAsc(
+            UploadSessionStatus status, Instant updatedBefore);
 
     Optional<UploadSession> findByIdAndUserId(UUID id, UUID userId);
 

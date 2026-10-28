@@ -16,6 +16,7 @@ import {
 } from "../../services/uploadRecovery";
 import { getMediaDuration } from "../../utils/fileSlice";
 import { getMediaUploadError, MEDIA_UPLOAD_ACCEPT } from "../../utils/mediaUploadPolicy.js";
+import { confirmSimpleUpload, discardSimpleUpload } from "../../features/files/useSingleUpload.js";
 import {
   buildUploadDuplicateNotice,
   checkFilesForUploadDuplicates,
@@ -89,7 +90,6 @@ const UploadPage = () => {
   const [isSavingAll, setIsSavingAll] = useState(false);
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
-  const shownChunkedSuccessIdsRef = useRef(new Set());
   const queue = singleUploadState.items;
 
   useEffect(() => {
@@ -528,10 +528,19 @@ const UploadPage = () => {
     });
   };
 
-  const removeItemFromUI = useCallback((item) => {
+  const removeItemFromUI = useCallback(async (item) => {
     if (item.strategy === "chunk") {
+      largeUploadStore.selectItem(item.id);
+      largeUploadStore.cancel();
       largeUploadStore.remove(item.id);
       return;
+    }
+    if (item.phase === "success" && item.uploadResponse?.objectKey) {
+      try {
+        await discardSimpleUpload(item.uploadResponse.objectKey);
+      } catch {
+        setUploadNotice("Tệp đã được gỡ khỏi danh sách chờ nhưng chưa thể dọn khỏi vùng tạm.");
+      }
     }
     singleUploadStore.remove(item.id);
   }, []);
@@ -559,6 +568,19 @@ const UploadPage = () => {
     },
     [singleUploadState.items],
   );
+
+  const handleCancelAllUploads = useCallback(async () => {
+    for (const item of singleUploadStore.getSnapshot().items) {
+      if (item.phase !== "success") singleUploadStore.cancel(item.id);
+      await removeItemFromUI(item);
+    }
+    for (const item of largeUploadStore.getSnapshot().items) {
+      largeUploadStore.selectItem(item.id);
+      largeUploadStore.cancel();
+      largeUploadStore.remove(item.id);
+    }
+    navigate("/");
+  }, [navigate, removeItemFromUI]);
 
   const handleRetryFile = useCallback(
     async (item) => {
@@ -640,12 +662,14 @@ const UploadPage = () => {
     [meetingName, navigate],
   );
 
-  // The upload API already persists the file; saving here confirms it locally.
   const persistFile = useCallback(async (item) => {
     if (item.phase !== "success") {
       throw new Error("File chưa tải lên thành công");
     }
-    return true;
+    if (!item.uploadResponse?.objectKey) {
+      throw new Error("Không tìm thấy tệp tạm để xác nhận lưu. Vui lòng tải lại tệp.");
+    }
+    return confirmSimpleUpload(item.uploadResponse);
   }, []);
 
   const buildSavedSummary = useCallback(
@@ -672,40 +696,6 @@ const UploadPage = () => {
     [durationByFileId],
   );
 
-  useEffect(() => {
-    const completedChunkedItems = largeUploadState.items.filter((item) => {
-      const successKey = item.uploadSessionId || item.id;
-      return (
-        item.phase === "success" &&
-        item.saveRequested &&
-        !item.saved &&
-        !shownChunkedSuccessIdsRef.current.has(successKey)
-      );
-    });
-    if (completedChunkedItems.length === 0) return;
-
-    const summaries = completedChunkedItems.map((item) =>
-      buildSavedSummary(
-        {
-          ...item,
-          strategy: "chunk",
-          fileName: item.fileName || item.file?.name,
-          fileSize: item.fileSize || item.file?.size,
-          lastModified: item.lastModified || item.file?.lastModified,
-        },
-        item.completedAt || new Date().toISOString(),
-      ),
-    );
-
-    completedChunkedItems.forEach((item) => {
-      shownChunkedSuccessIdsRef.current.add(item.uploadSessionId || item.id);
-    });
-    setSavedFilesSummary((current) => [...current, ...summaries]);
-    completedChunkedItems.forEach((item) =>
-      largeUploadStore.markSaved(item.id),
-    );
-  }, [buildSavedSummary, largeUploadState.items]);
-
   const handleSaveFile = useCallback(
     async (id) => {
       if (isSavingAllRef.current || savingIdsRef.current.has(id)) return;
@@ -725,25 +715,29 @@ const UploadPage = () => {
       try {
         if (singleItem) {
           if (singleItem.phase !== "success") return;
-          await persistFile(singleItem);
-          const summary = buildSavedSummary(singleItem);
+          const confirmedUpload = await persistFile(singleItem);
+          const summary = buildSavedSummary({ ...singleItem, uploadResponse: confirmedUpload });
           setSavedFilesSummary([summary]);
           singleUploadStore.markSaved(id);
         } else {
           if (chunkItem.phase === "success") {
-            const summary = buildSavedSummary(
-              {
-                ...chunkItem,
-                strategy: "chunk",
-                fileName: chunkItem.fileName || chunkItem.file?.name,
-                fileSize: chunkItem.fileSize || chunkItem.file?.size,
-                lastModified:
-                  chunkItem.lastModified || chunkItem.file?.lastModified,
-              },
-              chunkItem.completedAt || new Date().toISOString(),
-            );
-            setSavedFilesSummary([summary]);
-            largeUploadStore.markSaved(id);
+            const savedItem = await largeUploadStore.merge(id);
+            if (savedItem?.phase === "success") {
+              setSavedFilesSummary([
+                buildSavedSummary(
+                  {
+                    ...savedItem,
+                    strategy: "chunk",
+                    fileName: savedItem.fileName || savedItem.file?.name,
+                    fileSize: savedItem.fileSize || savedItem.file?.size,
+                    lastModified:
+                      savedItem.lastModified || savedItem.file?.lastModified,
+                  },
+                  savedItem.completedAt || new Date().toISOString(),
+                ),
+              ]);
+              largeUploadStore.markSaved(id);
+            }
             return;
           }
 
@@ -820,9 +814,9 @@ const UploadPage = () => {
     try {
       for (const item of singleItemsToSave) {
         try {
-          await persistFile(item);
+          const confirmedUpload = await persistFile(item);
           savedSingleIds.push(item.id);
-          successfulSummaries.push(buildSavedSummary(item));
+          successfulSummaries.push(buildSavedSummary({ ...item, uploadResponse: confirmedUpload }));
         } catch (error) {
           failedNames.push(
             item.fileName || item.file?.name || "File không tên",
@@ -836,19 +830,24 @@ const UploadPage = () => {
 
       for (const item of chunkItemsToSave) {
         if (item.phase === "success") {
-          successfulSummaries.push(
-            buildSavedSummary(
-              {
-                ...item,
-                strategy: "chunk",
-                fileName: item.fileName || item.file?.name,
-                fileSize: item.fileSize || item.file?.size,
-                lastModified: item.lastModified || item.file?.lastModified,
-              },
-              item.completedAt || new Date().toISOString(),
-            ),
-          );
-          largeUploadStore.markSaved(item.id);
+          const savedItem = await largeUploadStore.merge(item.id);
+          if (savedItem?.phase === "success") {
+            successfulSummaries.push(
+              buildSavedSummary(
+                {
+                  ...savedItem,
+                  strategy: "chunk",
+                  fileName: savedItem.fileName || savedItem.file?.name,
+                  fileSize: savedItem.fileSize || savedItem.file?.size,
+                  lastModified: savedItem.lastModified || savedItem.file?.lastModified,
+                },
+                savedItem.completedAt || new Date().toISOString(),
+              ),
+            );
+            largeUploadStore.markSaved(item.id);
+          } else {
+            failedNames.push(item.fileName || item.file?.name || "File không tên");
+          }
           continue;
         }
 
@@ -1762,9 +1761,7 @@ const UploadPage = () => {
                 fontSize: "13px",
               }}
               disabled={!hasFiles}
-              onClick={() => {
-                navigate("/");
-              }}
+              onClick={handleCancelAllUploads}
             >
               Hủy
             </button>

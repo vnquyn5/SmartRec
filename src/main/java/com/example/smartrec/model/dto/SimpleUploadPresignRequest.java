@@ -17,4 +17,6 @@ public class SimpleUploadPresignRequest {
     private Long fileSize;
 
     private String mimeType;
+
+    private String title;
 }

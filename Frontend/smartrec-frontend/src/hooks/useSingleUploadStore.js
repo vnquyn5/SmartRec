@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { uploadSingleFile } from "../features/files/useSingleUpload";
+import { discardSimpleUpload, uploadSingleFile } from "../features/files/useSingleUpload";
 import { removeFileHandle } from "../services/fileHandleStorage";
 import {
   restoreAvailableFiles,
@@ -84,6 +84,8 @@ const setState = (updater) => {
         uploadedBytes: item.uploadedBytes,
         error: item.error,
         completedAt: item.phase === "success" ? new Date().toISOString() : null,
+        uploadResponse: item.uploadResponse || null,
+        pendingUploadRequest: item.pendingUploadRequest || null,
       })),
     ),
   );
@@ -139,6 +141,11 @@ const startUpload = async (itemId, meetingName = "") => {
     return;
   }
 
+  if (item.pendingUploadRequest?.objectKey) {
+    await discardSimpleUpload(item.pendingUploadRequest.objectKey).catch(() => {});
+    updateItem(item.id, { pendingUploadRequest: null });
+  }
+
   const controller = new AbortController();
   let lastLoaded = 0;
   let lastTime = Date.now();
@@ -187,14 +194,16 @@ const startUpload = async (itemId, meetingName = "") => {
 
         updateItem(item.id, updates);
       },
-      () => {
+      (pendingUploadRequest) => {
         updateItem(item.id, {
           phase: "finalizing",
           progress: 100,
           uploadedBytes: item.file.size,
           speedBps: 0,
+          pendingUploadRequest,
         });
       },
+      (pendingUploadRequest) => updateItem(item.id, { pendingUploadRequest }),
     );
 
     updateItem(item.id, {
@@ -261,6 +270,9 @@ export const singleUploadStore = {
     const item = state.items.find((currentItem) => currentItem.id === id);
     if (!item || item.phase === "success") return;
     item.abortController?.abort();
+    if (item.pendingUploadRequest?.objectKey) {
+      discardSimpleUpload(item.pendingUploadRequest.objectKey).catch(() => {});
+    }
     updateItem(id, {
       phase: "canceled",
       progress: 0,
@@ -301,6 +313,10 @@ export const singleUploadStore = {
     })();
   },
   remove(id) {
+    const item = state.items.find((candidate) => candidate.id === id);
+    if (item?.pendingUploadRequest?.objectKey) {
+      discardSimpleUpload(item.pendingUploadRequest.objectKey).catch(() => {});
+    }
     removeFileHandle(id).catch(() => {});
     setState((currentState) => ({
       ...currentState,

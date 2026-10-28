@@ -56,7 +56,6 @@ import lombok.RequiredArgsConstructor;
 public class UploadServiceImpl implements UploadService {
         private static final Logger log = LoggerFactory.getLogger(UploadServiceImpl.class);
         private static final Map<UUID, Object> UPLOAD_SESSION_LOCKS = new ConcurrentHashMap<>();
-        private static final Set<UUID> FINALIZATION_IN_FLIGHT = ConcurrentHashMap.newKeySet();
         private final UserRepository userRepository;
         private final UploadSessionRepository uploadSessionRepository;
         private final MediaFileRepository mediaFileRepository;
@@ -476,7 +475,7 @@ public class UploadServiceImpl implements UploadService {
                                 + "/chunk_"
                                 + chunkIndex;
                 timing.postAcceptance = () -> scheduleAcceptedChunkWork(
-                                uploadSessionId, timing.totalChunks, chunkIndex, crusUser, timing);
+                        uploadSessionId, timing.totalChunks, chunkIndex, timing);
 
                 // kiem tra chunk da upload chua truoc khi reject theo status de idempotent voi request in-flight
                 stageStartedAt = System.nanoTime();
@@ -715,7 +714,7 @@ public class UploadServiceImpl implements UploadService {
         }
 
         private void scheduleAcceptedChunkWork(UUID sessionId, int totalChunks, int chunkIndex,
-                        User user, ChunkRequestTiming timing) {
+                        ChunkRequestTiming timing) {
                 long startedAt = System.nanoTime();
                 try {
                         chunkMergeAsyncService.stageChunkGroupAsync(sessionId, totalChunks, chunkIndex);
@@ -725,46 +724,34 @@ public class UploadServiceImpl implements UploadService {
                 } finally {
                         timing.stageTriggerMs = elapsedMs(startedAt);
                 }
-                startedAt = System.nanoTime();
+                long mergeStartedAt = System.nanoTime();
                 try {
-                        if (timing.finalizationAllowed && timing.uploadedCount >= totalChunks) {
-                                scheduleAutoFinalization(sessionId, user, timing.startedAt);
+                        UploadSession session = uploadSessionRedisService.get(sessionId);
+                        if (session.getStatus() == UploadSessionStatus.READY_TO_MERGE
+                                        && session.getReceivedChunks() >= totalChunks
+                                        && uploadSessionRedisService.missingChunkIndexes(sessionId, totalChunks).isEmpty()) {
+                                UUID userId = session.getUserId();
+                                chunkMergeAsyncService.executeAsync(() -> {
+                                        try {
+                                                User user = userRepository.findById(userId).orElseThrow();
+                                                MergeUploadRequest automaticRequest = new MergeUploadRequest();
+                                                automaticRequest.setUploadSessionId(sessionId.toString());
+                                                automaticRequest.setFileName(session.getFileName());
+                                                startMergeIfReady(sessionId, user,
+                                                                automaticRequest,
+                                                                System.nanoTime(), "automatic-after-last-chunk");
+                                        } catch (Exception error) {
+                                                log.error("[chunked-finalization] background merge dispatch failed uploadSessionId={}",
+                                                                sessionId, error);
+                                                markAutoFinalizationFailed(sessionId, userId, true);
+                                        }
+                                });
                         }
                 } catch (Exception e) {
-                        safeChunkLog(() -> log.error("[chunk-upload] accepted; finalization scheduling failed session={} chunkIndex={}",
-                                        sessionId, chunkIndex, e));
+                        log.error("[chunked-finalization] could not schedule merge after accepted chunk uploadSessionId={}",
+                                        sessionId, e);
                 } finally {
-                        timing.mergeTriggerMs = elapsedMs(startedAt);
-                }
-        }
-
-        private void scheduleAutoFinalization(UUID uploadSessionId, User user, long requestStartedAt) {
-                if (!FINALIZATION_IN_FLIGHT.add(uploadSessionId)) {
-                        log.debug("[chunked-finalization] already scheduled uploadSessionId={}", uploadSessionId);
-                        return;
-                }
-                try {
-                        chunkMergeAsyncService.executeAsync(() -> {
-                                try {
-                                        log.info("[chunked-finalization] scheduled uploadSessionId={}", uploadSessionId);
-                                        startMergeIfReady(uploadSessionId, user, null, System.nanoTime(), "auto-background");
-                                } catch (BusinessException e) {
-                                        log.warn("[chunked-finalization] rejected uploadSessionId={}, code={}, message={}",
-                                                        uploadSessionId, e.getCode(), e.getMessage());
-                                        if ("MISSING_UPLOAD_CHUNKS".equals(e.getCode())) {
-                                                markAutoFinalizationFailed(uploadSessionId, user.getId());
-                                        }
-                                } catch (Exception e) {
-                                        log.error("[chunked-finalization] failed uploadSessionId={}", uploadSessionId, e);
-                                        markAutoFinalizationFailed(uploadSessionId, user.getId());
-                                } finally {
-                                        FINALIZATION_IN_FLIGHT.remove(uploadSessionId);
-                                }
-                        });
-                } catch (Exception e) {
-                        FINALIZATION_IN_FLIGHT.remove(uploadSessionId);
-                        log.error("[chunked-finalization] could not enqueue uploadSessionId={}, requestElapsedMs={}",
-                                        uploadSessionId, elapsedMs(requestStartedAt), e);
+                        timing.mergeTriggerMs = elapsedMs(mergeStartedAt);
                 }
         }
 
@@ -879,9 +866,26 @@ public class UploadServiceImpl implements UploadService {
 
         @Override
         public void cancelUpload(String uploadSessionId) {
-                updatePersistentStatus(uploadSessionId, UploadSessionStatus.CANCELLED);
+                UUID parsedUploadSessionId = parseUploadSessionId(uploadSessionId);
+                com.example.smartrec.entity.UploadSession persistentSession =
+                                getPersistentSessionForCurrentUser(parsedUploadSessionId);
+                if (persistentSession.getStatus() == UploadSessionStatus.COMPLETED) {
+                        User user = getCurrentUser();
+                        UploadSession mergedSession = uploadSessionRedisService.get(parsedUploadSessionId);
+                        String fileName = sanitizeFileName(mergedSession.getFileName());
+                        String mergedObjectKey = buildUserObjectKey(user, fileName, parsedUploadSessionId);
+                        if (mediaFileRepository.findByObjectKey(mergedObjectKey).isPresent()) {
+                                throw new BusinessException(HttpStatus.CONFLICT, "UPLOAD_ALREADY_SAVED",
+                                                "Tệp đã được lưu chính thức và không thể hủy upload");
+                        }
+                        if (minioService.objectExists(mergedObjectKey)) {
+                                minioService.delete(mergedObjectKey);
+                        }
+                }
+                persistentSession.setStatus(UploadSessionStatus.CANCELLED);
+                uploadSessionRepository.save(persistentSession);
                 try {
-                        UploadSession session = uploadSessionRedisService.get(UUID.fromString(uploadSessionId));
+                        UploadSession session = uploadSessionRedisService.get(parsedUploadSessionId);
                         session.setStatus(UploadSessionStatus.CANCELLED);
                         uploadSessionRedisService.save(session);
                 } catch (Exception ignored) {
@@ -960,6 +964,9 @@ public class UploadServiceImpl implements UploadService {
                                                                 .object_key(objectKey)
                                                                 .mime_type(detectMimeType(safeFileName))
                                                                 .file_size_bytes(finalFileSizeBytes)
+                                                                .checksumSha256(session.getChecksumSha256())
+                                                                .quickFingerprint(session.getQuickFingerprint())
+                                                                .fingerprintVersion(session.getQuickFingerprint() == null ? null : 2)
                                                                 .status(MediaFileStatus.UPLOADED)
                                                                 .build()));
         }
@@ -1408,13 +1415,6 @@ public class UploadServiceImpl implements UploadService {
                 boolean redisHasAllChunks = totalChunks != null
                                 && redisUploadedCount == totalChunks
                                 && missingChunks.isEmpty();
-                if (redisHasAllChunks
-                                && session != null
-                                && session.getStatus() != UploadSessionStatus.MERGING
-                                && session.getStatus() != UploadSessionStatus.COMPLETED
-                                && session.getStatus() != UploadSessionStatus.MERGE_FAILED) {
-                        scheduleAutoFinalization(uploadSessionId, user, statusStartedAt);
-                }
                 if (session != null
                                 && redisHasAllChunks
                                 && session.getStatus() != UploadSessionStatus.MERGING

@@ -86,26 +86,18 @@ class ChunkStageComposeTest {
             session.setStatus(UploadSessionStatus.MERGING);
             var persistent = com.example.smartrec.entity.UploadSession.builder().id(id).status(UploadSessionStatus.MERGING).build();
             when(sessions.findById(id)).thenReturn(Optional.of(persistent));
-            when(media.save(any())).thenAnswer(inv -> {
-                MediaFile row = inv.getArgument(0);
-                row.setId(UUID.randomUUID());
-                if (duplicateCandidate) assertNull(row.getChecksumSha256());
-                return row;
-            });
-            if (duplicateCandidate) {
-                when(media.findActiveByUserAndChecksumSha256(user, "a".repeat(64))).thenReturn(List.of(
-                        MediaFile.builder().id(UUID.randomUUID()).object_key("other-file.mp4").build()));
-            }
+            when(checksums.calculateSha256("final.mp4")).thenReturn("a".repeat(64));
             service.mergeAsync(new MergeJob(id, user, session, "large.mp4", "tmp/" + id + "/chunk_",
                     "final.mp4", 553, 553, 553, null, "a".repeat(64), System.nanoTime()));
-            queue.remove().run(); // Leave background SHA queued until after COMPLETED.
+            queue.remove().run();
             assertEquals(UploadSessionStatus.COMPLETED, session.getStatus());
-            verifyNoInteractions(checksums);
+            verify(checksums).calculateSha256("final.mp4");
+            verifyNoInteractions(media, meetings);
             verify(minio, never()).delete("final.mp4");
             verify(minio, times(7)).composeObjects(anyString(), anyList());
             assertTrue(logs.list.stream().anyMatch(event -> event.getFormattedMessage().contains(
                     "stagesAlreadyReady=5, stagesMissing=1, stagesBuiltDuringFinalization=1")));
-            assertEquals(1, queue.size());
+            assertEquals(0, queue.size());
         } finally {
             logger.detachAppender(logs);
             logs.stop();

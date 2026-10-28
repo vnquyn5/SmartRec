@@ -106,7 +106,7 @@ let lastSpeedTime = 0;
 let lastSpeedBytes = 0;
 let uploadRunId = 0;
 const resumeInFlightSessionIds = new Set<string>();
-const mergePollInFlightSessionIds = new Set<string>();
+const mergePollPromises = new Map<string, Promise<unknown>>();
 
 const getFileKey = (file: File) =>
   `${file.name}-${file.size}-${file.lastModified}`;
@@ -684,11 +684,23 @@ const mergeUpload = async (item: LargeUploadItem) => {
   const latestItem = state.items.find((currentItem) => currentItem.id === item.id);
   if (!latestItem) return null;
   if (latestItem.phase === "success") {
-    updateItem(latestItem.id, { saveRequested: true });
-    return {
-      ...latestItem,
-      saveRequested: true,
-    };
+    try {
+      const confirmation = await mergeChunkedUpload(
+        latestItem.uploadSessionId!,
+        latestItem.file.name,
+      );
+      if (confirmation.status !== "COMPLETED") {
+        throw new Error("Backend chưa xác nhận lưu file.");
+      }
+      updateItem(latestItem.id, { saveRequested: true, mergeResponse: confirmation });
+      return { ...latestItem, saveRequested: true, mergeResponse: confirmation };
+    } catch (error) {
+      updateItem(latestItem.id, {
+        phase: "merge_failed",
+        error: getErrorMessage(error) || "Không thể lưu file đã merge.",
+      });
+      return null;
+    }
   }
   if (latestItem.phase === "merging" || latestItem.mergeStarted) {
     updateItem(latestItem.id, { saveRequested: true });
@@ -696,7 +708,24 @@ const mergeUpload = async (item: LargeUploadItem) => {
       await pollMergeStatus(latestItem.id, latestItem.uploadSessionId).catch(() => null);
     }
     const currentItem = state.items.find((current) => current.id === latestItem.id);
-    return currentItem?.phase === "success" ? currentItem : null;
+    if (currentItem?.phase !== "success") return null;
+    try {
+      const confirmation = await mergeChunkedUpload(
+        latestItem.uploadSessionId,
+        latestItem.file.name,
+      );
+      if (confirmation.status !== "COMPLETED") {
+        throw new Error("Backend chưa xác nhận lưu file.");
+      }
+      updateItem(latestItem.id, { saveRequested: true, mergeResponse: confirmation });
+      return { ...currentItem, saveRequested: true, mergeResponse: confirmation };
+    } catch (error) {
+      updateItem(latestItem.id, {
+        phase: "merge_failed",
+        error: getErrorMessage(error) || "Không thể lưu file đã merge.",
+      });
+      return null;
+    }
   }
   if (
     !latestItem.uploadSessionId ||
@@ -721,6 +750,17 @@ const mergeUpload = async (item: LargeUploadItem) => {
     if (mergeResponse.status === "MERGING") {
       finalMergeResponse = (await pollMergeStatus(latestItem.id, latestItem.uploadSessionId)) ||
         mergeResponse;
+    }
+    if (finalMergeResponse.status === "COMPLETED") {
+      // The background worker only assembles and verifies the object. This
+      // second request is the user's explicit save and creates visible rows.
+      finalMergeResponse = await mergeChunkedUpload(
+        latestItem.uploadSessionId,
+        latestItem.file.name,
+      );
+    }
+    if (finalMergeResponse.status !== "COMPLETED") {
+      throw new Error("Backend chưa xác nhận lưu file.");
     }
     const completedAt = new Date().toISOString();
     const itemAfterPolling =
@@ -761,11 +801,12 @@ const mergeUpload = async (item: LargeUploadItem) => {
   }
 };
 
-const pollMergeStatus = async (itemId: string, uploadSessionId: string) => {
-  if (mergePollInFlightSessionIds.has(uploadSessionId)) return;
-  mergePollInFlightSessionIds.add(uploadSessionId);
-  const startedAt = Date.now();
-  try {
+const pollMergeStatus = (itemId: string, uploadSessionId: string) => {
+  const existing = mergePollPromises.get(uploadSessionId);
+  if (existing) return existing;
+  const pollPromise = (async () => {
+    const startedAt = Date.now();
+    try {
     while (Date.now() - startedAt < MERGE_POLL_TIMEOUT_MS) {
       const currentItem = state.items.find((item) => item.id === itemId);
       if (!currentItem || currentItem.phase !== "merging") return;
@@ -805,9 +846,12 @@ const pollMergeStatus = async (itemId: string, uploadSessionId: string) => {
     }
 
     throw new Error("Merge upload chưa hoàn tất sau thời gian chờ.");
-  } finally {
-    mergePollInFlightSessionIds.delete(uploadSessionId);
-  }
+    } finally {
+      mergePollPromises.delete(uploadSessionId);
+    }
+  })();
+  mergePollPromises.set(uploadSessionId, pollPromise);
+  return pollPromise;
 };
 
 const applyBackendStatus = (

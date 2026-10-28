@@ -1,9 +1,11 @@
 package com.example.smartrec.service.impl;
 
 import java.time.LocalDate;
+import java.time.Instant;
 import java.io.InputStream;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,9 +24,11 @@ import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
+import com.example.smartrec.entity.PendingMediaUpload;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.FileUploadResponse;
+import com.example.smartrec.model.dto.PendingSimpleUploadResponse;
 import com.example.smartrec.model.dto.SimpleUploadCompleteRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignRequest;
 import com.example.smartrec.model.dto.SimpleUploadPresignResponse;
@@ -32,6 +36,7 @@ import com.example.smartrec.model.dto.UploadDuplicateCheckRequest;
 import com.example.smartrec.model.dto.UploadDuplicateCheckResponse;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.MeetingRepository;
+import com.example.smartrec.repository.PendingMediaUploadRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.FileService;
 import com.example.smartrec.service.FileChecksumService;
@@ -45,36 +50,42 @@ import lombok.RequiredArgsConstructor;
 public class FileServiceImpl implements FileService {
     private static final int CURRENT_FINGERPRINT_VERSION = 2;
     private static final Logger log = LoggerFactory.getLogger(FileServiceImpl.class);
+    private static final ReentrantLock[] SIMPLE_CONFIRM_LOCKS = createConfirmationLocks();
 
     private static final long MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024;
     private static final int SIMPLE_UPLOAD_PRESIGN_EXPIRES_SECONDS = 20 * 60;
 
+    private static ReentrantLock[] createConfirmationLocks() {
+        ReentrantLock[] locks = new ReentrantLock[64];
+        for (int index = 0; index < locks.length; index++) locks[index] = new ReentrantLock();
+        return locks;
+    }
+
     private final MediaFileRepository mediaFileRepository;
     private final MeetingRepository meetingRepository;
+    private final PendingMediaUploadRepository pendingUploadRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
     private final FileChecksumService fileChecksumService;
     private final TaskExecutor applicationTaskExecutor;
     @Override
     @Transactional
-    public FileUploadResponse upLoadFile(MultipartFile file, String title) {
+    public PendingSimpleUploadResponse upLoadFile(MultipartFile file, String title) {
         long totalStartNanos = System.nanoTime();
         validateFile(file);
         String originalName = file.getOriginalFilename();
         String safeFileName = sanitizeFileName(originalName);
 
         User user = getCurrentUser();
-        UUID userId = user.getId();
-        UUID workspaceId = userId;
-        String objectKey = buildObjectKey(user, safeFileName);
+        String objectKey = buildUniquePendingObjectKey(user, safeFileName);
         log.info(
                 "[simple-upload] prepared fileName={}, safeFileName={}, sizeBytes={}, contentType={}, userId={}, workspaceId={}, objectKey={}",
                 originalName,
                 safeFileName,
                 file.getSize(),
                 file.getContentType(),
-                userId,
-                workspaceId,
+                user.getId(),
+                user.getId(),
                 objectKey);
 
         try {
@@ -89,18 +100,23 @@ public class FileServiceImpl implements FileService {
                     "Không thể kết nối hoặc upload file lên MinIO");
         }
 
-        FileUploadResponse response = createUploadRecords(
-                workspaceId,
-                userId,
-                safeFileName,
-                objectKey,
-                normalizeMimeType(file.getContentType()),
-                file.getSize(),
-                title,
-                null,
-                null);
-        log.info("[simple-upload] service finished mediaFileId={}, meetingId={}, totalMs={}",
-                response.getId(), response.getMeetingId(), elapsedMs(totalStartNanos));
+        String mimeType = normalizeMimeType(file.getContentType());
+        try {
+            pendingUploadRepository.save(PendingMediaUpload.builder()
+                    .userId(user.getId()).objectKey(objectKey).fileName(safeFileName).fileSizeBytes(file.getSize())
+                    .mimeType(mimeType).title(title).expiresAt(Instant.now().plusSeconds(24 * 60 * 60)).build());
+        } catch (RuntimeException databaseError) {
+            try {
+                minioService.delete(objectKey);
+            } catch (Exception cleanupError) {
+                log.warn("[simple-upload] pending record failure cleanup failed objectKey={}", objectKey, cleanupError);
+            }
+            throw databaseError;
+        }
+        PendingSimpleUploadResponse response = new PendingSimpleUploadResponse(
+                objectKey, safeFileName, file.getSize(), mimeType, title, null, null, null);
+        log.info("[simple-upload] temporary upload finished objectKey={}, totalMs={}",
+                objectKey, elapsedMs(totalStartNanos));
         return response;
     }
 
@@ -113,7 +129,11 @@ public class FileServiceImpl implements FileService {
 
         User user = getCurrentUser();
         String safeFileName = sanitizeFileName(request.getFileName());
-        String objectKey = buildUniqueObjectKey(user, safeFileName);
+        String objectKey = buildUniquePendingObjectKey(user, safeFileName);
+        pendingUploadRepository.saveAndFlush(PendingMediaUpload.builder()
+                .userId(user.getId()).objectKey(objectKey).fileName(safeFileName)
+                .fileSizeBytes(request.getFileSize()).mimeType(normalizeMimeType(request.getMimeType()))
+                .title(request.getTitle()).expiresAt(Instant.now().plusSeconds(24 * 60 * 60)).build());
 
         try {
             String uploadUrl = minioService.presignPutObject(objectKey, SIMPLE_UPLOAD_PRESIGN_EXPIRES_SECONDS);
@@ -124,6 +144,41 @@ public class FileServiceImpl implements FileService {
             log.error("[simple-upload] failed to presign PUT URL objectKey={}", objectKey, e);
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "ERR_MINIO_UNAVAILABLE",
                     "Không thể tạo URL upload lên MinIO");
+        }
+    }
+
+    @Override
+    public PendingSimpleUploadResponse prepareSimpleUpload(SimpleUploadCompleteRequest request) {
+        if (request == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Upload request không được null");
+        }
+        validateSimpleUploadMetadata(request.getFileName(), request.getFileSize(), request.getMimeType());
+        User user = getCurrentUser();
+        validatePendingObjectKey(request.getObjectKey(), user, request.getFileName());
+        PendingMediaUpload pending = getPendingUpload(request.getObjectKey(), user);
+        ensurePendingMetadataMatches(pending, request);
+        ensurePendingState(pending);
+        verifyPendingObject(request.getObjectKey(), request.getFileName(), request.getFileSize());
+        return new PendingSimpleUploadResponse(request.getObjectKey(), sanitizeFileName(request.getFileName()),
+                request.getFileSize(), normalizeMimeType(request.getMimeType()), request.getTitle(),
+                request.getQuickFingerprint(), request.getFingerprintVersion(), request.getChecksumSha256());
+    }
+
+    @Override
+    public void discardPendingSimpleUpload(String objectKey) {
+        User user = getCurrentUser();
+        validatePendingObjectKey(objectKey, user, null);
+        PendingMediaUpload pending = pendingUploadRepository.findByObjectKeyAndUserId(objectKey, user.getId())
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "PENDING_UPLOAD_NOT_FOUND",
+                        "Không tìm thấy tệp đang chờ lưu"));
+        if (!"PENDING".equals(pending.getStatus())) return;
+        try {
+            if (minioService.objectExists(objectKey)) minioService.delete(objectKey);
+            pending.setStatus("CANCELLED");
+            pendingUploadRepository.save(pending);
+        } catch (Exception error) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "ERR_PENDING_UPLOAD_CLEANUP",
+                    "Không thể xóa tệp đang chờ lưu. Vui lòng thử lại.");
         }
     }
 
@@ -179,6 +234,20 @@ public class FileServiceImpl implements FileService {
                 }
             });
         }
+        String lockKey = request == null ? "invalid-request" : String.valueOf(request.getObjectKey());
+        ReentrantLock confirmationLock = SIMPLE_CONFIRM_LOCKS[Math.floorMod(lockKey.hashCode(), SIMPLE_CONFIRM_LOCKS.length)];
+        confirmationLock.lock();
+        boolean unlockAfterTransaction = false;
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    confirmationLock.unlock();
+                }
+            });
+            unlockAfterTransaction = true;
+        }
         try {
             long validateStartNanos = System.nanoTime();
             if (request == null) {
@@ -190,18 +259,18 @@ public class FileServiceImpl implements FileService {
             UUID userId = user.getId();
             UUID workspaceId = userId;
             String safeFileName = sanitizeFileName(request.getFileName());
-            String expectedObjectPrefix = buildUserObjectPrefix(user);
+            String confirmedObjectKey = buildConfirmedObjectKey(user, request.getObjectKey(), safeFileName);
             log.info(
-                    "[simple-upload] complete received objectKey={}, expectedObjectPrefix={}, fileName={}, safeFileName={}, requestFileSize={}, mimeType={}, titlePresent={}, userId={}, workspaceId={}",
-                    request.getObjectKey(), expectedObjectPrefix, request.getFileName(), safeFileName,
+                    "[simple-upload] confirm received objectKey={}, fileName={}, safeFileName={}, requestFileSize={}, mimeType={}, titlePresent={}, userId={}, workspaceId={}",
+                    request.getObjectKey(), request.getFileName(), safeFileName,
                     request.getFileSize(), request.getMimeType(),
                     request.getTitle() != null && !request.getTitle().isBlank(), userId, workspaceId);
-            if (!isValidSimpleUploadObjectKey(request.getObjectKey(), expectedObjectPrefix, safeFileName)) {
-                log.warn("[simple-upload] complete rejected objectKey mismatch received={}, expectedPrefix={}, safeFileName={}, userId={}",
-                        request.getObjectKey(), expectedObjectPrefix, safeFileName, userId);
-                throw new BusinessException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY",
-                        "Object key không thuộc upload hiện tại");
-            }
+            validatePendingObjectKey(request.getObjectKey(), user, safeFileName);
+            PendingMediaUpload pending = pendingUploadRepository
+                    .findByObjectKeyAndUserIdForUpdate(request.getObjectKey(), userId)
+                    .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "PENDING_UPLOAD_NOT_FOUND",
+                            "Không tìm thấy tệp tải lên đang chờ lưu"));
+            ensurePendingMetadataMatches(pending, request);
             timing.validateObjectMs = elapsedMs(validateStartNanos);
 
             long quickFingerprintStartNanos = System.nanoTime();
@@ -216,48 +285,27 @@ public class FileServiceImpl implements FileService {
 
             long idempotencyStartNanos = System.nanoTime();
             FileUploadResponse existing = findExistingUploadResponse(
-                    request.getObjectKey(), userId, quickFingerprint, fingerprintVersion);
+                    confirmedObjectKey, userId, quickFingerprint, fingerprintVersion);
             timing.idempotencyLookupMs = elapsedMs(idempotencyStartNanos);
             timing.databaseMs += timing.idempotencyLookupMs;
             if (existing != null) {
                 return existing;
             }
+            ensurePendingState(pending);
 
             long statStartNanos = System.nanoTime();
-            long objectSize;
-            try {
-                objectSize = minioService.getObjectSize(request.getObjectKey());
-            } catch (Exception e) {
-                log.error("[simple-upload] complete statObject failed objectKey={}", request.getObjectKey(), e);
-                throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_NOT_FOUND",
-                        "Không tìm thấy object đã upload trên MinIO");
-            }
+            String verificationObjectKey = minioService.objectExists(request.getObjectKey())
+                    ? request.getObjectKey() : confirmedObjectKey;
+            verifyPendingObject(verificationObjectKey, request.getFileName(), request.getFileSize());
             timing.minioStatMs = elapsedMs(statStartNanos);
-            long verifyStartNanos = System.nanoTime();
-            if (objectSize != request.getFileSize()) {
-                log.warn("[simple-upload] complete rejected size mismatch objectKey={}, statSizeBytes={}, requestSizeBytes={}",
-                        request.getObjectKey(), objectSize, request.getFileSize());
-                throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_SIZE_MISMATCH",
-                        "Kích thước object trên MinIO không khớp metadata upload");
-            }
-            timing.verifyObjectMs = elapsedMs(verifyStartNanos);
-
-            if (!isObjectSignatureValid(request.getObjectKey(), request.getFileName())) {
-                try {
-                    minioService.delete(request.getObjectKey());
-                } catch (Exception cleanupError) {
-                    log.warn("[simple-upload] rejected media object cleanup failed objectKey={}", request.getObjectKey(), cleanupError);
-                }
-                throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "ERR_INVALID_FILE_CONTENT",
-                        "Nội dung tệp không khớp với định dạng âm thanh hoặc video được hỗ trợ");
-            }
+            timing.verifyObjectMs = elapsedMs(statStartNanos);
 
             String suppliedChecksum = normalizeHex(request.getChecksumSha256(), 64, "checksumSha256");
             String checksumSha256 = suppliedChecksum;
             if (checksumSha256 == null) {
                 long shaStartNanos = System.nanoTime();
                 timing.minioFullObjectStreams = 1;
-                checksumSha256 = fileChecksumService.calculateSha256(request.getObjectKey());
+                checksumSha256 = fileChecksumService.calculateSha256(verificationObjectKey);
                 timing.sha256Ms = elapsedMs(shaStartNanos);
             }
 
@@ -268,24 +316,43 @@ public class FileServiceImpl implements FileService {
             timing.databaseMs += timing.duplicateCheckMs;
             if (!checksumDuplicates.isEmpty()) {
                 MediaFile existingByChecksum = checksumDuplicates.get(0);
-                deleteUploadedDuplicateObject(request.getObjectKey(), existingByChecksum.getObject_key());
+                deleteUploadedDuplicateObject(verificationObjectKey, existingByChecksum.getObject_key());
                 throw new BusinessException(
                         HttpStatus.CONFLICT,
                         "FILE_ALREADY_EXISTS",
                         "File đã có trong hệ thống: " + existingByChecksum.getOriginal_name());
             }
 
+            if (!verificationObjectKey.equals(confirmedObjectKey)) {
+                try {
+                    minioService.composeObjects(confirmedObjectKey, List.of(verificationObjectKey));
+                    if (minioService.getObjectSize(confirmedObjectKey) != request.getFileSize()) {
+                        minioService.delete(confirmedObjectKey);
+                        throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_SIZE_MISMATCH",
+                                "Kích thước tệp sau khi xác nhận không khớp");
+                    }
+                    minioService.delete(verificationObjectKey);
+                } catch (BusinessException error) {
+                    throw error;
+                } catch (Exception error) {
+                    throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "ERR_PENDING_UPLOAD_CONFIRM",
+                            "Không thể chuyển tệp sang danh sách cuộc họp");
+                }
+            }
+
             FileUploadResponse response = createUploadRecords(
                     workspaceId,
                     userId,
                     safeFileName,
-                    request.getObjectKey(),
+                    confirmedObjectKey,
                     normalizeMimeType(request.getMimeType()),
                     request.getFileSize(),
                     request.getTitle(),
                     checksumSha256,
                     quickFingerprint,
                     timing);
+            pending.setStatus("CONFIRMED");
+            pendingUploadRepository.save(pending);
             if (suppliedChecksum != null) {
                 UUID mediaFileId = response.getId();
                 String finalChecksum = suppliedChecksum;
@@ -293,7 +360,7 @@ public class FileServiceImpl implements FileService {
                     @Override
                     public void afterCommit() {
                         applicationTaskExecutor.execute(() -> verifyClientChecksumAsync(
-                                mediaFileId, request.getObjectKey(), finalChecksum));
+                                mediaFileId, confirmedObjectKey, finalChecksum));
                     }
                 });
             }
@@ -304,6 +371,7 @@ public class FileServiceImpl implements FileService {
             } else {
                 timing.logSummary();
             }
+            if (!unlockAfterTransaction) confirmationLock.unlock();
         }
     }
 
@@ -673,12 +741,54 @@ public class FileServiceImpl implements FileService {
         }
     }
 
-    private String buildObjectKey(User user, String safeFileName) {
-        return buildUserObjectPrefix(user) + safeFileName;
+    private long verifyPendingObject(String objectKey, String fileName, Long expectedSize) {
+        if (!minioService.objectExists(objectKey)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_NOT_FOUND",
+                    "Không tìm thấy tệp tải lên đang chờ lưu");
+        }
+        long actualSize;
+        try {
+            actualSize = minioService.getObjectSize(objectKey);
+        } catch (Exception error) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_NOT_FOUND",
+                    "Không thể kiểm tra tệp tải lên đang chờ lưu");
+        }
+        if (expectedSize != null && actualSize != expectedSize) {
+            discardInvalidTemporaryObject(objectKey);
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "OBJECT_SIZE_MISMATCH",
+                    "Kích thước tệp không khớp metadata upload");
+        }
+        if (!isObjectSignatureValid(objectKey, fileName)) {
+            discardInvalidTemporaryObject(objectKey);
+            throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "ERR_INVALID_FILE_CONTENT",
+                    "Nội dung tệp không khớp với định dạng được hỗ trợ");
+        }
+        return actualSize;
     }
 
-    private String buildUniqueObjectKey(User user, String safeFileName) {
-        return buildUserObjectPrefix(user) + UUID.randomUUID() + "_" + safeFileName;
+    private void discardInvalidTemporaryObject(String objectKey) {
+        if (objectKey == null || !objectKey.startsWith("tmp/pending/")) return;
+        try {
+            minioService.delete(objectKey);
+        } catch (Exception cleanupError) {
+            log.warn("[simple-upload] rejected pending object cleanup failed objectKey={}", objectKey, cleanupError);
+        }
+    }
+
+    private String buildUniquePendingObjectKey(User user, String safeFileName) {
+        return "tmp/pending/" + user.getId() + "/" + UUID.randomUUID() + "_" + safeFileName;
+    }
+
+    private String buildConfirmedObjectKey(User user, String pendingObjectKey, String safeFileName) {
+        String leafName = pendingObjectKey.substring(pendingObjectKey.lastIndexOf('/') + 1);
+        int separator = leafName.indexOf('_');
+        try {
+            UUID uploadId = UUID.fromString(leafName.substring(0, separator));
+            return user.getId() + "/meetings/" + uploadId + "_" + safeFileName;
+        } catch (RuntimeException error) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_OBJECT_KEY",
+                    "Mã tệp tải lên không hợp lệ");
+        }
     }
 
     private String buildUserObjectPrefix(User user) {
@@ -691,12 +801,55 @@ public class FileServiceImpl implements FileService {
                 + "/";
     }
 
-    private boolean isValidSimpleUploadObjectKey(String objectKey, String expectedPrefix, String safeFileName) {
-        if (objectKey == null || objectKey.isBlank()) {
+    private void validatePendingObjectKey(String objectKey, User user, String fileName) {
+        if (!isValidPendingObjectKey(objectKey, user, fileName)) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "INVALID_OBJECT_KEY",
+                    "Tệp tải lên không thuộc người dùng hiện tại");
+        }
+    }
+
+    private PendingMediaUpload getPendingUpload(String objectKey, User user) {
+        return pendingUploadRepository.findByObjectKeyAndUserId(objectKey, user.getId())
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "PENDING_UPLOAD_NOT_FOUND",
+                        "Không tìm thấy tệp tải lên đang chờ lưu"));
+    }
+
+    private void ensurePendingMetadataMatches(PendingMediaUpload pending, SimpleUploadCompleteRequest request) {
+        boolean matches = pending.getFileSizeBytes().equals(request.getFileSize())
+                && pending.getFileName().equals(sanitizeFileName(request.getFileName()))
+                && pending.getMimeType().equalsIgnoreCase(normalizeMimeType(request.getMimeType()))
+                && java.util.Objects.equals(pending.getTitle(), request.getTitle());
+        if (!matches) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "PENDING_UPLOAD_METADATA_MISMATCH",
+                    "Thông tin tệp không khớp với upload tạm đã được cấp");
+        }
+    }
+
+    private void ensurePendingState(PendingMediaUpload pending) {
+        if ("CONFIRMED".equals(pending.getStatus())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "PENDING_UPLOAD_ALREADY_CONFIRMED",
+                    "Tệp này đã được xác nhận lưu");
+        }
+        if (!"PENDING".equals(pending.getStatus()) || pending.getExpiresAt().isBefore(Instant.now())) {
+            throw new BusinessException(HttpStatus.CONFLICT, "PENDING_UPLOAD_NOT_ACTIVE",
+                    "Tệp tải lên đã bị hủy hoặc hết hạn");
+        }
+    }
+
+    private boolean isValidPendingObjectKey(String objectKey, User user, String fileName) {
+        if (objectKey == null || objectKey.isBlank() || user == null || user.getId() == null) return false;
+        String prefix = "tmp/pending/" + user.getId() + "/";
+        if (!objectKey.startsWith(prefix)) return false;
+        String leafName = objectKey.substring(prefix.length());
+        if (leafName.isBlank() || leafName.contains("/")) return false;
+        int separator = leafName.indexOf('_');
+        if (separator <= 0) return false;
+        try {
+            UUID.fromString(leafName.substring(0, separator));
+        } catch (IllegalArgumentException error) {
             return false;
         }
-        return objectKey.startsWith(expectedPrefix)
-                && (objectKey.endsWith("/" + safeFileName) || objectKey.endsWith("_" + safeFileName));
+        return fileName == null || leafName.endsWith("_" + sanitizeFileName(fileName));
     }
 
     private String normalizeMimeType(String mimeType) {
