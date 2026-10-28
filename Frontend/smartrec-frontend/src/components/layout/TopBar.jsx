@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 
 const TopBar = ({ hideSearch = false }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  useEffect(() => setAvatarFailed(false), [user?.avatarUrl]);
   const displayName = user?.name || "Đang tải...";
   const role = user?.role || "";
 
@@ -55,7 +57,11 @@ const TopBar = ({ hideSearch = false }) => {
           tabIndex={0}
           aria-label="Mở thông tin cá nhân"
         >
-          <div className="avatar-circle">{initials}</div>
+          <div className="avatar-circle">
+            {user?.avatarUrl && !avatarFailed ? (
+              <img src={user.avatarUrl} alt="" onError={() => setAvatarFailed(true)} />
+            ) : initials}
+          </div>
           <div className="avatar-info">
             <span className="avatar-name">{displayName}</span>
             <span className="avatar-role">{role}</span>

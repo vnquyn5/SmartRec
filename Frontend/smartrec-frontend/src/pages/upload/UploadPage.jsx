@@ -15,6 +15,7 @@ import {
   restoreFileFromHandle,
 } from "../../services/uploadRecovery";
 import { getMediaDuration } from "../../utils/fileSlice";
+import { getMediaUploadError, MEDIA_UPLOAD_ACCEPT } from "../../utils/mediaUploadPolicy.js";
 import {
   buildUploadDuplicateNotice,
   checkFilesForUploadDuplicates,
@@ -47,18 +48,10 @@ const formatCompletedAt = (value) => {
   })} ${date.toLocaleDateString("vi-VN")}`;
 };
 
-// Allowed extensions
-const ALLOWED_EXTENSIONS = ["mp4", "mkv", "mp3", "m4a"];
 const MAX_SINGLE_FILES = 5;
 const MAX_CHUNKED_FILES = 3;
 const SINGLE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
 const CHUNKED_UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024;
-
-// Kiểm tra extension hợp lệ
-const isValidExtension = (fileName) => {
-  const ext = fileName.split(".").pop().toLowerCase();
-  return ALLOWED_EXTENSIONS.includes(ext);
-};
 
 const getFileIdentity = (file) =>
   `${file.name}-${file.size}-${file.lastModified}`;
@@ -111,17 +104,15 @@ const UploadPage = () => {
       const fileArray = Array.from(files);
 
       const validFiles = [];
+      const rejectedFiles = [];
       for (const file of fileArray) {
-        if (!isValidExtension(file.name)) {
-          setUploadNotice(
-            `File "${file.name}" không được hỗ trợ và đã được bỏ qua.`,
-          );
+        const formatError = getMediaUploadError(file);
+        if (formatError) {
+          rejectedFiles.push(`${file.name}: ${formatError}`);
           continue;
         }
         if (file.size > CHUNKED_UPLOAD_LIMIT) {
-          setUploadNotice(
-            `File "${file.name}" vượt quá giới hạn 5GB và đã được bỏ qua.`,
-          );
+          rejectedFiles.push(`${file.name}: vượt quá giới hạn 5GB.`);
           continue;
         }
         validFiles.push(file);
@@ -267,10 +258,14 @@ const UploadPage = () => {
         singleFiles.length < originalSingleCount ||
         chunkedFiles.length < originalChunkedCount ||
         existingFiles.length > 0 ||
+        rejectedFiles.length > 0 ||
         skippedSelectionDuplicates.length > 0 ||
         skippedQueueDuplicates.length > 0
       ) {
         const messageParts = [];
+        if (rejectedFiles.length > 0) {
+          messageParts.push(`Đã bỏ qua: ${rejectedFiles.join("; ")}`);
+        }
         if (skippedSelectionDuplicates.length > 0) {
           messageParts.push(
             `${skippedSelectionDuplicates.length} file trùng trong lựa chọn được bỏ qua`,
@@ -1133,7 +1128,7 @@ const UploadPage = () => {
               </p>
               <input
                 type="file"
-                accept=".mp4,.mkv,.mp3,.m4a"
+                accept={MEDIA_UPLOAD_ACCEPT}
                 multiple
                 style={{ display: "none" }}
                 ref={fileInputRef}

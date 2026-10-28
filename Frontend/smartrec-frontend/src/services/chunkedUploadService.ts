@@ -7,6 +7,7 @@ const MERGE_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 export interface InitUploadPayload {
   fileName: string;
   fileSize: number;
+  mimeType?: string;
   totalChunks: number;
   quickFingerprint?: string | null;
   fingerprintVersion?: number | null;

@@ -385,6 +385,7 @@ const ensureSession = async (item: LargeUploadItem) => {
   const initResponse = await initChunkedUpload({
     fileName: item.file.name,
     fileSize: item.file.size,
+    mimeType: item.file.type || "application/octet-stream",
     totalChunks: item.chunks.length,
     quickFingerprint: item.duplicateMetadata?.quickFingerprint || null,
     fingerprintVersion: item.duplicateMetadata?.quickFingerprint ? 2 : null,

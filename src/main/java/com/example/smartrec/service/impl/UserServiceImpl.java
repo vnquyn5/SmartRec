@@ -147,6 +147,7 @@ public class UserServiceImpl implements UserService {
             response = UserProfileReponse.builder()
                     .id(response.getId()).userCode(response.getUserCode()).email(response.getEmail())
                     .authProvider(response.getAuthProvider()).phone(response.getPhone()).full_name(response.getFull_name())
+                    .avatarUrl(response.getAvatarUrl())
                     .department(response.getDepartment()).position(response.getPosition()).role(response.getRole())
                     .createdAt(response.getCreatedAt()).accessToken(jwtService.generateToken(user))
                     .refreshToken(refreshTokenService.create(user).getToken()).build();
@@ -240,6 +241,7 @@ public class UserServiceImpl implements UserService {
                 .authProvider(isGoogleAccount(user) ? "GOOGLE" : "LOCAL")
                 .phone(user.getPhone())
                 .full_name(user.getFull_name())
+                .avatarUrl(user.getAvatar_url())
                 .department(user.getDepartment())
                 .position(user.getPosition())
                 .role("USER")

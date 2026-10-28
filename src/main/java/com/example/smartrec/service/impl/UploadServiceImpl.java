@@ -2,6 +2,7 @@ package com.example.smartrec.service.impl;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.time.LocalDate;
@@ -46,6 +47,7 @@ import com.example.smartrec.service.ChunkMergeAsyncService.MergeJob;
 import com.example.smartrec.service.MinioService;
 import com.example.smartrec.service.UploadService;
 import com.example.smartrec.service.UploadSessionRedisService;
+import com.example.smartrec.util.MediaUploadPolicy;
 
 import lombok.RequiredArgsConstructor;
 
@@ -84,9 +86,6 @@ public class UploadServiceImpl implements UploadService {
         // chunk =5 MB
         private static final long CHUNK_SIZE = 5l * 1024 * 1024;
 
-        private static final Set<String> ALLOWED_EXTENSIONS = Set.of("mp3", "mp4", "m4a", "mkv");
-
-
         @Override
         public UploadInitResponse initUpload(UploadInitRequest request) {
                 if (request == null) {
@@ -113,12 +112,15 @@ public class UploadServiceImpl implements UploadService {
                 fileName = fileName.trim();
                 String safeFileName = sanitizeFileName(fileName);
 
-                String extension = getExtension(fileName);
-                if (!ALLOWED_EXTENSIONS.contains(extension)) {
+                if (!MediaUploadPolicy.isSupportedExtension(fileName)) {
                         throw new BusinessException(
                                         HttpStatus.BAD_REQUEST,
                                         "ERR_INVALID_FILE_TYPE",
                                         "Chỉ hỗ trợ file .mp4, .mkv, .mp3, .m4a");
+                }
+                if (!MediaUploadPolicy.isMimeTypeCompatible(fileName, request.getMimeType())) {
+                        throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "ERR_INVALID_FILE_TYPE",
+                                        "MIME type không khớp với định dạng tệp được hỗ trợ");
                 }
 
                 Long fileSize = request.getFileSize();
@@ -443,6 +445,20 @@ public class UploadServiceImpl implements UploadService {
                                         HttpStatus.PAYLOAD_TOO_LARGE,
                                         "ERR_CHUNK_TOO_LARGE",
                                         "Chunk vượt quá kích thước cho phép ");
+                }
+                if (chunkIndex == 0) {
+                        try (InputStream input = file.getInputStream()) {
+                                if (!MediaUploadPolicy.hasSupportedSignature(session.getFileName(), input.readNBytes(16))) {
+                                        throw new BusinessException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                                                        "ERR_INVALID_FILE_CONTENT",
+                                                        "Nội dung tệp không khớp với định dạng được hỗ trợ");
+                                }
+                        } catch (BusinessException error) {
+                                throw error;
+                        } catch (Exception error) {
+                                throw new BusinessException(HttpStatus.BAD_REQUEST, "ERR_INVALID_FILE_CONTENT",
+                                                "Không thể xác minh định dạng tệp");
+                        }
                 }
                 log.info(
                                 "[chunk-upload] start session={} chunkIndex={} totalChunks={} chunkSize={} checksumClient={} status={} redisCountBefore={}",
