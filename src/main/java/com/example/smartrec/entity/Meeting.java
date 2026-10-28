@@ -39,6 +39,9 @@ public class Meeting {
     @Column(name = "media_file_id", unique = true, nullable = false)
     private UUID media_file_id;
 
+    @Column(name = "folder_id")
+    private UUID folder_id;
+
     @Column(name = "title", nullable = false, length = 500)
     private String title;
 

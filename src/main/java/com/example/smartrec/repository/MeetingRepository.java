@@ -2,6 +2,8 @@ package com.example.smartrec.repository;
 
 import java.util.UUID;
 import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -33,6 +35,9 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
             join MediaFile mf on mf.id = m.media_file_id
             where m.workspace_id = :workspaceId
               and (mf.status is null or mf.status <> 'TRASHED')
+              and (:folderMode = 0
+                   or (:folderMode = 1 and m.folder_id is null)
+                   or (:folderMode = 2 and m.folder_id = :folderId))
               and (:status is null or m.status = :status)
               and (
                     :keyword is null
@@ -48,6 +53,9 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
                     where mf.id = m.media_file_id
                       and (mf.status is null or mf.status <> 'TRASHED')
               )
+              and (:folderMode = 0
+                   or (:folderMode = 1 and m.folder_id is null)
+                   or (:folderMode = 2 and m.folder_id = :folderId))
               and (:status is null or m.status = :status)
               and (
                     :keyword is null
@@ -61,7 +69,14 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
             """)
     Page<MeetingResponseDTO> searchMeetings(
             @Param("workspaceId") UUID workspaceId,
+            @Param("folderId") UUID folderId,
+            @Param("folderMode") int folderMode,
             @Param("status") MeetingStatus status,
             @Param("keyword") String keyword,
             Pageable pageable);
+
+    @Query("select m from Meeting m where m.workspace_id = :userId and m.id in :meetingIds")
+    List<Meeting> findAllOwnedMeetingsByIds(
+            @Param("userId") UUID userId,
+            @Param("meetingIds") Collection<UUID> meetingIds);
 }

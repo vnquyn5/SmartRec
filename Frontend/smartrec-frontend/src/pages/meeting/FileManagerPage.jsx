@@ -33,6 +33,12 @@ import {
   startMeetingProcessing,
 } from "../../services/meetingService.js";
 import { softDeleteMediaFile } from "../../services/trashService.js";
+import {
+  createFolder,
+  getFolders,
+  moveMeetingsToFolder,
+  renameFolder as renameFolderApi,
+} from "../../services/folderService.js";
 
 const EMPTY_PAGE = {
   content: [],
@@ -131,6 +137,17 @@ export default function FileManagerPage() {
   const [processMeeting, setProcessMeeting] = useState(null);
   const [isStartingProcess, setIsStartingProcess] = useState(false);
   const [processError, setProcessError] = useState("");
+  const [folders, setFolders] = useState([]);
+  const [folderLoading, setFolderLoading] = useState(false);
+  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [folderDialog, setFolderDialog] = useState(null);
+  const [folderName, setFolderName] = useState("");
+  const [folderError, setFolderError] = useState("");
+  const [isSavingFolder, setIsSavingFolder] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [moveTargetId, setMoveTargetId] = useState("root");
+  const [expandedMoveFolderIds, setExpandedMoveFolderIds] = useState(new Set());
+  const [isMoving, setIsMoving] = useState(false);
   const [lifecycleJobId, setLifecycleJobId] = useState(null);
   const lifecycleActionInFlightRef = useRef(false);
   const selectAllRef = useRef(null);
@@ -138,13 +155,25 @@ export default function FileManagerPage() {
   const activeQueryKeyRef = useRef("");
   const terminalJobIdsRef = useRef(new Set());
   const navigate = useNavigate();
+  const currentFolder = folders.find((folder) => folder.id === currentFolderId) || null;
+  const childFolders = folders.filter((folder) => (folder.parentId || null) === currentFolderId)
+    .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  const folderPath = (() => {
+    const path = [];
+    let folder = currentFolder;
+    while (folder) {
+      path.unshift(folder);
+      folder = folders.find((item) => item.id === folder.parentId) || null;
+    }
+    return path;
+  })();
 
   const normalizedKeyword = keyword.trim();
-  const queryKey = JSON.stringify([page, status, normalizedKeyword]);
+  const queryKey = JSON.stringify([page, status, normalizedKeyword, currentFolderId]);
   activeQueryKeyRef.current = queryKey;
 
   const loadMeetings = useCallback(async ({ background = false } = {}) => {
-    const requestKey = JSON.stringify([page, status, keyword.trim()]);
+    const requestKey = JSON.stringify([page, status, keyword.trim(), currentFolderId]);
     const existingRequest = inFlightRequestsRef.current.get(requestKey);
     if (existingRequest) {
       if (!background) {
@@ -171,6 +200,7 @@ export default function FileManagerPage() {
           size: 10,
           status,
           keyword: keyword.trim(),
+          folderId: currentFolderId || "root",
         });
         if (activeQueryKeyRef.current === requestKey) setData(nextData);
         return nextData;
@@ -191,12 +221,27 @@ export default function FileManagerPage() {
 
     inFlightRequestsRef.current.set(requestKey, request);
     return request;
-  }, [inFlightRequestsRef, keyword, page, status]);
+  }, [currentFolderId, inFlightRequestsRef, keyword, page, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(loadMeetings, keyword ? 300 : 0);
     return () => window.clearTimeout(timer);
   }, [loadMeetings, keyword]);
+
+  const loadFolders = useCallback(async () => {
+    setFolderLoading(true);
+    try {
+      setFolders(await getFolders());
+    } catch (requestError) {
+      setError(requestError?.response?.data?.message || requestError?.message || "Không thể tải danh sách thư mục.");
+    } finally {
+      setFolderLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadFolders();
+  }, [loadFolders]);
 
   const activeJobs = data.content
     .filter((meeting) => isMeetingActive(meeting) && meeting.activeJobId
@@ -327,16 +372,96 @@ export default function FileManagerPage() {
     });
   };
 
-  const handleCreateFolder = () => {
-    setActionMessage(
-      "Tạo thư mục sẽ được kết nối khi backend cung cấp API thư mục.",
-    );
+  const openCreateFolder = () => {
+    setFolderName("");
+    setFolderError("");
+    setFolderDialog({ mode: "create", folderId: null, parentId: currentFolderId });
   };
 
-  const handleMoveSelected = () => {
-    setActionMessage(
-      `Đã chọn ${selectedIds.size} tệp. Chức năng di chuyển sẽ được kết nối khi có API thư mục.`,
-    );
+  const openRenameFolder = (folder) => {
+    setFolderName(folder.name);
+    setFolderError("");
+    setFolderDialog({ mode: "rename", folderId: folder.id });
+  };
+
+  const submitFolder = async (event) => {
+    event.preventDefault();
+    const name = folderName.trim();
+    if (!name) {
+      setFolderError("Vui lòng nhập tên thư mục.");
+      return;
+    }
+    if (name.length > 100) {
+      setFolderError("Tên thư mục tối đa 100 ký tự.");
+      return;
+    }
+    setIsSavingFolder(true);
+    setFolderError("");
+    try {
+      if (folderDialog.mode === "create") {
+        const created = await createFolder(name, folderDialog.parentId);
+        await loadFolders();
+        setActionMessage(`Đã tạo thư mục “${created.name}”.`);
+      } else {
+        const updated = await renameFolderApi(folderDialog.folderId, name);
+        await loadFolders();
+        setActionMessage(`Đã đổi tên thư mục thành “${updated.name}”.`);
+      }
+      setFolderDialog(null);
+    } catch (requestError) {
+      setFolderError(requestError?.response?.data?.message || requestError?.message || "Không thể lưu thư mục. Vui lòng thử lại.");
+    } finally {
+      setIsSavingFolder(false);
+    }
+  };
+
+  const openMoveSelected = () => {
+    setMoveTargetId("root");
+    setExpandedMoveFolderIds(new Set());
+    setMoveDialogOpen(true);
+  };
+
+  const folderPathLabel = (folderId) => {
+    const path = [];
+    let folder = folders.find((item) => item.id === folderId);
+    while (folder) {
+      path.unshift(folder.name);
+      folder = folders.find((item) => item.id === folder.parentId);
+    }
+    return path.length ? `Thư mục gốc / ${path.join(" / ")}` : "Thư mục gốc";
+  };
+
+  const renderMoveTree = (parentId = null, depth = 0) => folders
+    .filter((folder) => (folder.parentId || null) === parentId)
+    .sort((a, b) => a.name.localeCompare(b.name, "vi"))
+    .map((folder) => {
+      const children = folders.some((item) => item.parentId === folder.id);
+      const expanded = expandedMoveFolderIds.has(folder.id);
+      return <div key={folder.id}>
+        <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 16}px` }}>
+          {children ? <button type="button" aria-label={expanded ? `Thu gọn ${folder.name}` : `Mở ${folder.name}`} onClick={() => setExpandedMoveFolderIds((current) => { const next = new Set(current); if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id); return next; })} className="h-7 w-7 rounded text-slate-400 hover:bg-white/5">{expanded ? "▾" : "▸"}</button> : <span className="w-7" />}
+          <button type="button" onClick={() => setMoveTargetId(folder.id)} className={`min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm ${moveTargetId === folder.id ? "bg-blue-500/15 text-blue-200" : "text-slate-300 hover:bg-white/5"}`}>📁 {folder.name}</button>
+        </div>
+        {children && expanded && renderMoveTree(folder.id, depth + 1)}
+      </div>;
+    });
+
+  const confirmMoveSelected = async () => {
+    if (selectedIds.size === 0 || isMoving) return;
+    setIsMoving(true);
+    setError("");
+    try {
+      const folderId = moveTargetId === "root" ? null : moveTargetId;
+      const result = await moveMeetingsToFolder(Array.from(selectedIds), folderId);
+      setMoveDialogOpen(false);
+      setSelectedIds(new Set());
+      setActionMessage(`Đã di chuyển ${result.movedCount} tệp${folderId ? " vào thư mục" : " về thư mục gốc"}.`);
+      await loadMeetings();
+    } catch (requestError) {
+      setError(requestError?.response?.data?.message || requestError?.message || "Không thể di chuyển các tệp đã chọn.");
+    } finally {
+      setIsMoving(false);
+    }
   };
 
   const openRename = (meeting) => {
@@ -609,6 +734,32 @@ export default function FileManagerPage() {
             Tải lên
           </button>
         </header>
+        <section className="overflow-hidden rounded-xl border border-white/5 bg-[#101624] px-3 py-2.5">
+          <nav aria-label="Đường dẫn thư mục" className="flex min-w-0 flex-wrap items-center gap-1 text-[13px]">
+            <button type="button" onClick={() => { setCurrentFolderId(null); setPage(0); setSelectedIds(new Set()); }} className={`rounded px-2 py-1 ${currentFolderId ? "text-blue-300 hover:bg-white/5" : "font-semibold text-white"}`}>Thư mục gốc</button>
+            {folderPath.map((folder, index) => <span key={folder.id} className="flex min-w-0 items-center gap-1">
+              <span className="text-slate-600">/</span>
+              <button type="button" onClick={() => { setCurrentFolderId(folder.id); setPage(0); setSelectedIds(new Set()); }} className={`max-w-48 truncate rounded px-2 py-1 ${index === folderPath.length - 1 ? "font-semibold text-white" : "text-blue-300 hover:bg-white/5"}`}>{folder.name}</button>
+            </span>)}
+          </nav>
+          {folderLoading ? (
+            <p className="px-2 py-2 text-xs text-slate-500">Đang tải thư mục...</p>
+          ) : childFolders.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-slate-500">{currentFolderId ? "Thư mục này chưa có thư mục con." : "Chưa có thư mục. Tạo thư mục để sắp xếp các cuộc họp."}</p>
+          ) : (
+            <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {childFolders.map((folder) => (
+                <div key={folder.id} className="flex h-10 min-w-0 items-center gap-1 rounded-lg border border-white/5 bg-[#171d31] px-2.5 transition hover:border-white/10 hover:bg-[#1b2338]">
+                  <button type="button" onClick={() => { setCurrentFolderId(folder.id); setPage(0); setSelectedIds(new Set()); }} className="flex min-w-0 flex-1 items-center gap-2 text-left text-[13px] text-slate-200 hover:text-white">
+                    <span aria-hidden="true" className="shrink-0 text-[16px] text-amber-300">📁</span>
+                    <span className="truncate" title={folder.name}>{folder.name}</span>
+                  </button>
+                  <button type="button" title="Đổi tên thư mục" aria-label={`Đổi tên thư mục ${folder.name}`} onClick={() => openRenameFolder(folder)} className="shrink-0 rounded p-1 text-slate-500 hover:bg-white/5 hover:text-blue-300"><PencilIcon /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
         <section className="grid gap-3 md:grid-cols-3">
           <div className="flex min-h-[104px] items-center gap-4 rounded-xl border border-white/5 bg-[#101624] px-4 py-3.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
@@ -717,7 +868,7 @@ export default function FileManagerPage() {
               </button>
               <button
                 type="button"
-                onClick={handleCreateFolder}
+                onClick={openCreateFolder}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-[#171d31] px-2.5 py-2 text-[11px] font-medium text-slate-300 transition hover:border-blue-500/50 hover:text-white"
               >
                 <FolderPlusIcon />
@@ -726,7 +877,7 @@ export default function FileManagerPage() {
               <button
                 type="button"
                 disabled={selectedIds.size === 0}
-                onClick={handleMoveSelected}
+                onClick={openMoveSelected}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-800 bg-[#171d31] px-2.5 py-2 text-[11px] font-medium text-slate-300 transition hover:border-blue-500/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <MoveIcon />
@@ -1217,6 +1368,54 @@ export default function FileManagerPage() {
                 {renameError}
               </p>
             )}
+          </div>
+        </div>
+      )}
+      {folderDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={submitFolder}
+            className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="folder-dialog-title"
+          >
+            <h2 id="folder-dialog-title" className="text-lg font-bold text-white">
+              {folderDialog.mode === "create" ? "Tạo thư mục" : "Đổi tên thư mục"}
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">Tên tối đa 100 ký tự. Tên không được trùng trong cùng thư mục.</p>
+            {folderDialog.mode === "create" && <p className="mt-1 text-xs text-slate-400">Vị trí: {folderDialog.parentId ? folderPathLabel(folderDialog.parentId) : "Thư mục gốc"}</p>}
+            <input
+              autoFocus
+              value={folderName}
+              maxLength={100}
+              onChange={(event) => setFolderName(event.target.value)}
+              placeholder="Tên thư mục"
+              aria-label="Tên thư mục"
+              className="mt-5 w-full rounded-lg border border-slate-700 bg-[#171d31] px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500/60"
+            />
+            {folderError && <p role="alert" className="mt-3 text-xs text-red-300">{folderError}</p>}
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" disabled={isSavingFolder} onClick={() => setFolderDialog(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:border-slate-500 disabled:opacity-50">Hủy</button>
+              <button type="submit" disabled={isSavingFolder} className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400 disabled:opacity-50">{isSavingFolder ? "Đang lưu..." : folderDialog.mode === "create" ? "Tạo" : "Lưu"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {moveDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50" role="dialog" aria-modal="true" aria-labelledby="move-meetings-title">
+            <h2 id="move-meetings-title" className="text-lg font-bold text-white">Di chuyển {selectedIds.size} tệp</h2>
+            <p className="mt-1 text-xs text-slate-500">Chọn thư mục đích hoặc đưa tệp về thư mục gốc.</p>
+            <div className="mt-4 max-h-72 overflow-y-auto rounded-lg border border-slate-700 bg-[#171d31] p-2">
+              <button type="button" onClick={() => setMoveTargetId("root")} className={`mb-1 w-full rounded px-2 py-1.5 text-left text-sm ${moveTargetId === "root" ? "bg-blue-500/15 text-blue-200" : "text-slate-300 hover:bg-white/5"}`}>⌂ Thư mục gốc</button>
+              {renderMoveTree()}
+            </div>
+            <p className="mt-2 truncate text-xs text-slate-400">Đích: {moveTargetId === "root" ? "Thư mục gốc" : folderPathLabel(moveTargetId)}</p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" disabled={isMoving} onClick={() => setMoveDialogOpen(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:border-slate-500 disabled:opacity-50">Hủy</button>
+              <button type="button" disabled={isMoving || selectedIds.size === 0} onClick={confirmMoveSelected} className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400 disabled:opacity-50">{isMoving ? "Đang di chuyển..." : "Xác nhận"}</button>
+            </div>
           </div>
         </div>
       )}

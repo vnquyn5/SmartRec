@@ -51,6 +51,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/jobs/*").permitAll()
                 .requestMatchers("/meetings/upload").authenticated()
                 .requestMatchers("/meetings", "/meetings/**").authenticated()
+                .requestMatchers("/folders", "/folders/**").authenticated()
                 .requestMatchers("/upload/check-duplicate").authenticated()
                 .requestMatchers("/upload/presign").authenticated()
                 .requestMatchers("/upload/prepare").authenticated()

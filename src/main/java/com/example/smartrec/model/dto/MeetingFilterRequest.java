@@ -22,6 +22,9 @@ public class MeetingFilterRequest {
     @Schema(description = "Search by meeting title or original file name", example = "weekly sync")
     private String keyword;
 
+    @Schema(description = "Folder UUID, or 'root' to list unfiled meetings")
+    private String folderId;
+
     @Schema(description = "Sort expression: field,direction", example = "created_at,desc", defaultValue = "created_at,desc")
     private String sort = "created_at,desc";
 }

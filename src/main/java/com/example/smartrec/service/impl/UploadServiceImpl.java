@@ -878,8 +878,14 @@ public class UploadServiceImpl implements UploadService {
                                 throw new BusinessException(HttpStatus.CONFLICT, "UPLOAD_ALREADY_SAVED",
                                                 "Tệp đã được lưu chính thức và không thể hủy upload");
                         }
-                        if (minioService.objectExists(mergedObjectKey)) {
-                                minioService.delete(mergedObjectKey);
+                        try {
+                                if (minioService.objectExists(mergedObjectKey)) {
+                                        minioService.delete(mergedObjectKey);
+                                }
+                        } catch (Exception storageError) {
+                                throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
+                                                "MERGED_OBJECT_CLEANUP_FAILED",
+                                                "Không thể hủy file đã merge. Vui lòng thử lại.");
                         }
                 }
                 persistentSession.setStatus(UploadSessionStatus.CANCELLED);
