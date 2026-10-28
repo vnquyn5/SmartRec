@@ -1,0 +1,13 @@
+# Pyrefly configuration
+ignore-missing-imports = [
+    "torchaudio",
+    "torchaudio.*",
+    "torch",
+    "torch.*",
+    "webrtc_noise_gain",
+    "webrtc_noise_gain.*",
+    "pyannote",
+    "pyannote.*",
+    "faster_whisper",
+    "faster_whisper.*",
+]
