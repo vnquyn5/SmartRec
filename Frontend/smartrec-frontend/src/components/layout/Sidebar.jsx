@@ -1,6 +1,7 @@
 import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
+import BrandLink from "./BrandLink";
 
 const navItems = [
   { to: "/", icon: "dashboard", label: "Tổng quan" },
@@ -157,14 +158,7 @@ const Sidebar = () => {
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <div className="sidebar-brand">
-          <div className="auth-logo-mark">
-            <span />
-          </div>
-          <strong>
-            Smart<span>Rec</span>
-          </strong>
-        </div>
+        <BrandLink />
 
         <nav className="sidebar-nav">
           {navItems.map((item) => (

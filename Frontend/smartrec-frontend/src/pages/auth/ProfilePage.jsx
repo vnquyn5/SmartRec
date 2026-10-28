@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import BrandLink from "../../components/layout/BrandLink.jsx";
 import api from "../../api/axiosClient";
 import { useAuth } from "../../features/auth/AuthProvider.jsx";
 import { refreshTokenStore, tokenStore } from "../../lib/auth/tokenStore.js";
@@ -587,14 +588,7 @@ const ProfilePage = () => {
       <aside className="profile-sidebar">
         <div className="profile-sidebar-top">
           {/* Brand */}
-          <div className="sidebar-brand">
-            <div className="auth-logo-mark">
-              <span />
-            </div>
-            <strong>
-              Smart<span>Rec</span>
-            </strong>
-          </div>
+          <BrandLink className="profile-brand-link" />
 
           {/* Settings section label */}
           <div className="profile-sidebar-label">CÀI ĐẶT</div>
