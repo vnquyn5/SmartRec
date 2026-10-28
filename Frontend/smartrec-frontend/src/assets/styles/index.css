@@ -1128,6 +1128,24 @@ a {
   font-size: 17px;
 }
 
+.sidebar-brand-link {
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 150ms ease;
+}
+
+.sidebar-brand-link:hover {
+  color: inherit;
+  opacity: 0.88;
+}
+
+.sidebar-brand-link:focus-visible {
+  border-radius: 8px;
+  outline: 2px solid var(--sr-blue, #4b8dff);
+  outline-offset: 4px;
+}
+
 .sidebar-brand strong {
   font-weight: 800;
   color: var(--sr-text);
