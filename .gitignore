@@ -55,6 +55,7 @@ venv/
 __pycache__/
 *.py[cod]
 *$py.class
+.venv-ocr/
 *.pytest_cache/
 
 # Audio & Media Test Files

@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
 
+    # PaddleOCR Settings
+    # Recognition model fine-tuned for Vietnamese text.
+    # Configure the model path through OCR_RECOGNITION_MODEL_DIR.
+    ocr_recognition_model_dir: Optional[str] = None
+    ocr_device: str = "cpu"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

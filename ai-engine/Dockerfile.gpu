@@ -43,4 +43,4 @@ COPY app ./app
 COPY model_registry.json ./model_registry.json
 
 CMD ["celery", "-A", "app.celery_app.celery_app", \
-     "worker", "--loglevel=INFO", "--concurrency=1"]
+    "worker", "--loglevel=INFO", "--concurrency=1"]

@@ -8,6 +8,7 @@
 # Python virtual environments
 .venv/
 venv/
+.venv-ocr/
 __pycache__/
 *.py[cod]
 .pytest_cache/
