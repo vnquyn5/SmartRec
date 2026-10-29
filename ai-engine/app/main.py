@@ -1,9 +1,8 @@
 import logging
-
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from app.core.logging_config import setup_logging
-from app.core.exceptions import register_exception_handlers
 
 setup_logging()
 logger = logging.getLogger("smartrec.api")
@@ -18,9 +17,6 @@ app = FastAPI(
     description="Microservice xử lý Audio và NLP: Chuẩn hóa âm thanh, Diarization, LLM Local/Gemini fallback có bảo vệ PII."
 )
 
-register_exception_handlers(app)
-logger.info("Global exception handlers registered")
-
 @app.middleware("http")
 async def add_utf8_charset_header(request, call_next):
     response = await call_next(request)
@@ -34,6 +30,9 @@ app.include_router(audio_router, prefix="/api/v1")
 app.include_router(nlp_router, prefix="/api/v1")
 app.include_router(internal_router)
 
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse(url="/docs")
 
 @app.get("/health", tags=["Health Check"])
 async def health_check():

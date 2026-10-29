@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 import uvicorn
 from app.api.nlp_routes import nlp_router
 
@@ -17,7 +18,9 @@ async def add_utf8_charset_header(request, call_next):
 
 app.include_router(nlp_router, prefix="/api/v1")
 
-
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
 @app.get("/health")
 def health_check():
     return {"status": "HEALTHY", "service": "smartrec-nlp-service"}

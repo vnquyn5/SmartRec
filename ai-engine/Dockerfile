@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY run_nlp.py ./run_nlp.py
 
 EXPOSE 8000
 
