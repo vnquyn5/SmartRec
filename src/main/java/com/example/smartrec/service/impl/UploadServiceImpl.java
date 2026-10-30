@@ -492,6 +492,13 @@ public class UploadServiceImpl implements UploadService {
                                 timing.uploadedCount = getUploadedChunkCount(uploadSessionId);
                                 timing.finalizationAllowed = session.getStatus() != UploadSessionStatus.MERGING
                                                 && session.getStatus() != UploadSessionStatus.COMPLETED;
+                                if (timing.finalizationAllowed
+                                                && timing.uploadedCount >= session.getTotalChunks()
+                                                && uploadSessionRedisService.missingChunkIndexes(
+                                                                uploadSessionId, session.getTotalChunks()).isEmpty()) {
+                                        syncSessionStatus(uploadSessionId, session,
+                                                        UploadSessionStatus.READY_TO_MERGE, timing.uploadedCount);
+                                }
                                 return ChunkUploadResponse.builder()
                                                 .uploadSessionId(sessionIdString)
                                                 .chunkIndex(chunkIndex)

@@ -15,10 +15,24 @@
       "status": "disabled"
     },
     {
-      "model_name": "faster-whisper-large-v3",
+      "model_name": "whisper.cpp-small-q5_1",
       "version": "3.0",
       "runtime": "local",
-      "device": "auto",
+      "device": "metal-on-native-macos",
+      "status": "enabled"
+    },
+    {
+      "model_name": "faster-whisper-small-int8",
+      "version": "1.1.1",
+      "runtime": "local",
+      "device": "cpu",
+      "status": "disabled"
+    },
+    {
+      "model_name": "qwen2.5:1.5b",
+      "version": "2.5",
+      "runtime": "ollama",
+      "device": "metal-on-native-macos",
       "status": "enabled"
     }
   ]

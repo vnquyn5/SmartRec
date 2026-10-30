@@ -3,14 +3,13 @@
 import math
 from collections import defaultdict
 from typing import Any, Mapping, Optional, Sequence
-from uuid import UUID
 
 
 def align_speakers(
     whisper_segments: Sequence[Any],
     diarization_timeline: Sequence[Any],
-    speaker_uuid_mapping: Mapping[str, UUID],
-) -> dict[int, Optional[UUID]]:
+    speaker_uuid_mapping: Mapping[str, Any],
+) -> dict[int, Optional[Any]]:
     """
     Ghép speaker theo tổng thời gian giao nhau giữa các segments.
 
@@ -34,8 +33,8 @@ def align_speakers(
         overlap_by_speaker = defaultdict(float)
 
         for diarization_segment in diarization_timeline:
-            diar_start = float(diarization_segment.start_seconds)
-            diar_end = float(diarization_segment.end_seconds)
+            diar_start = float(getattr(diarization_segment, "start_seconds", getattr(diarization_segment, "start", 0)))
+            diar_end = float(getattr(diarization_segment, "end_seconds", getattr(diarization_segment, "end", 0)))
 
             if not (math.isfinite(diar_start) and math.isfinite(diar_end)):
                 raise ValueError("Diarization timeline có timestamp không hữu hạn.")

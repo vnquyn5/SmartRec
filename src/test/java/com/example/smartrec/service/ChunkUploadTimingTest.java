@@ -121,6 +121,7 @@ class ChunkUploadTimingTest {
         if (failure.equals("idempotent")) {
             when(redis.isChunkUploaded(sessionId, 552)).thenReturn(true);
             when(minio.objectExists("tmp/" + sessionId + "/chunk_552")).thenReturn(true);
+            when(redis.missingChunkIndexes(sessionId, 553)).thenReturn(java.util.List.of());
         }
         if (failure.equals("put")) doThrow(new IllegalStateException("MinIO unavailable"))
                 .when(minio).upLoad(any(), any());

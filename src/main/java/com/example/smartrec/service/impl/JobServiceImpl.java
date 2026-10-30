@@ -10,6 +10,7 @@ import com.example.smartrec.entity.JobStage;
 import com.example.smartrec.entity.JobDispatchOutbox;
 import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.SpeakerSegment;
+import com.example.smartrec.entity.MeetingAiResult;
 import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.enums.PipelineStage;
@@ -24,6 +25,8 @@ import com.example.smartrec.repository.JobDispatchOutboxRepository;
 import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
+import com.example.smartrec.repository.MeetingAiResultRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
 
@@ -49,6 +52,8 @@ public class JobServiceImpl implements JobService {
     private final MediaFileRepository mediaFileRepository;
     private final SpeakerSegmentRepository speakerSegmentRepository;
     private final MeetingRepository meetingRepository;
+    private final MeetingAiResultRepository meetingAiResultRepository;
+    private final ObjectMapper objectMapper;
     private final MeetingService meetingService;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
@@ -634,6 +639,25 @@ public class JobServiceImpl implements JobService {
                         .toList();
                 if (!segmentsToSave.isEmpty()) {
                     speakerSegmentRepository.saveAll(segmentsToSave);
+                }
+                if (request.getAiResults() != null) {
+                    Set<String> requiredAiArtifacts = Set.of("transcript", "ocr", "context", "meetingAnalysis");
+                    if (!request.getAiResults().keySet().containsAll(requiredAiArtifacts)
+                            || requiredAiArtifacts.stream().anyMatch(key -> !(request.getAiResults().get(key) instanceof java.util.Map))) {
+                        throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_AI_RESULTS",
+                                "AI results phải chứa transcript, ocr, context và meetingAnalysis dạng object");
+                    }
+                    try {
+                        MeetingAiResult result = meetingAiResultRepository.findByMeetingId(job.getMeetingId())
+                                .orElseGet(MeetingAiResult::new);
+                        result.setMeetingId(job.getMeetingId());
+                        result.setProcessingJobId(job.getId());
+                        result.setResultsJson(objectMapper.writeValueAsString(request.getAiResults()));
+                        meetingAiResultRepository.save(result);
+                    } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+                        throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_AI_RESULTS",
+                                "Không thể xác thực dữ liệu AI result dạng JSON");
+                    }
                 }
             }
 

@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
 
-export default function TranscriptPanel({ onSeek }) {
+export default function TranscriptPanel({ onSeek, transcripts = [] }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeSegmentId, setActiveSegmentId] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [selectedSpeaker, setSelectedSpeaker] = useState('All');
 
-  const transcripts = [];
-
   const handleCopyAll = () => {
     const fullText = transcripts
-      .map((t) => `[${t.time}] ${t.speaker}:\n${t.text}`)
+      .map((t) => `[${t.timeLabel}] ${t.speaker}:\n${t.text}`)
       .join('\n\n');
     navigator.clipboard.writeText(fullText);
     setCopyFeedback(true);
@@ -127,7 +125,7 @@ export default function TranscriptPanel({ onSeek }) {
             >
               <div className="flex items-center gap-2 mb-1.5">
                 <span className="font-mono font-semibold text-[#38bdf8] text-[11px]">
-                  {item.time}
+                  {item.timeLabel}
                 </span>
                 <span className="font-bold text-slate-200 text-xs">
                   {item.speaker}

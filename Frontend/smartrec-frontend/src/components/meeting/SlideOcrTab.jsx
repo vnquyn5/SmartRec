@@ -1,64 +1,20 @@
 import React from 'react';
 
-export default function SlideOcrTab() {
-  const slides = [
-    {
-      id: 1,
-      time: '05:12',
-      title: 'Q4 Product Roadmap',
-      desc: 'Backend Refactor: Sprint 3-4 | New API: Sprint 5 | Launch: Dec 15',
-      iconType: 'play',
-      badges: [
-        { label: 'MILESTONES', value: '3' },
-        { label: 'TARGET', value: 'Dec 15' },
-      ],
-    },
-    {
-      id: 2,
-      time: '08:47',
-      title: 'Q4 Revenue Breakdown',
-      desc: 'Total Revenue: $2.4M | YoY Growth: +18% | Churn: 3.1%',
-      iconType: 'chart',
-      badges: [
-        { label: 'REVENUE', value: '$2.4M' },
-        { label: 'YOY', value: '+18%' },
-        { label: 'CHURN', value: '3.1%' },
-      ],
-    },
-    {
-      id: 3,
-      time: '12:30',
-      title: 'Project Timeline Overview',
-      desc: 'Kickoff: Nov 1 | Beta: Jan 15 | GA Release: Feb 28',
-      iconType: 'calendar',
-      badges: [
-        { label: 'DURATION', value: '16 wks' },
-        { label: 'GA DATE', value: 'Feb 28' },
-      ],
-    },
-    {
-      id: 4,
-      time: '17:04',
-      title: 'Key Risks & Mitigations',
-      desc: 'Latency Risk: High | Vendor Delay: Medium | Budget Overrun: 6%',
-      iconType: 'alert',
-      badges: [
-        { label: 'HIGH RISKS', value: '2' },
-        { label: 'OVERRUN', value: '6%' },
-      ],
-    },
-    {
-      id: 5,
-      time: '21:56',
-      title: 'Team Capacity Plan',
-      desc: 'Available: 12 devs | Allocated: 9 devs | Utilization: 75%',
-      iconType: 'users',
-      badges: [
-        { label: 'HEADCOUNT', value: '12' },
-        { label: 'UTILIZATION', value: '75%' },
-      ],
-    },
-  ];
+export default function SlideOcrTab({ frames = [], onSeek }) {
+  const formatTime = (ms) => {
+    const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    return [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60]
+      .map((part) => String(part).padStart(2, '0')).join(':');
+  };
+  const slides = frames.map((frame, index) => ({
+    id: `${index}-${frame.timestampMs}`,
+    timestampMs: frame.timestampMs,
+    time: formatTime(frame.timestampMs),
+    title: `Keyframe ${index + 1}`,
+    desc: frame.text || '',
+    iconType: 'play',
+    badges: [],
+  }));
 
   const renderIcon = (type) => {
     switch (type) {
@@ -116,12 +72,12 @@ export default function SlideOcrTab() {
           </h2>
         </div>
         <p className="text-[11px] text-slate-400 mt-1 pl-3.5">
-          8 slides detected · OCR confidence 96%
+          {slides.length} keyframes · OCR Tesseract vie+eng
         </p>
       </div>
 
       {/* Cards List */}
-      <div className="flex flex-col gap-3">
+      {!slides.length ? <p className="text-sm text-slate-400">Chưa có kết quả OCR cho video này.</p> : <div className="flex flex-col gap-3">
         {slides.map((slide) => (
           <div
             key={slide.id}
@@ -130,9 +86,9 @@ export default function SlideOcrTab() {
             {/* Thumbnail Preview with Timestamp */}
             <div className="relative w-28 h-20 rounded-xl bg-[#080d19] border border-[#1a253d] shrink-0 flex items-center justify-center overflow-hidden">
               {renderIcon(slide.iconType)}
-              <div className="absolute bottom-1 left-1.5 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-200">
+              <button type="button" onClick={() => onSeek?.((Number(slide.timestampMs) || 0) / 1000)} className="absolute bottom-1 left-1.5 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-200">
                 {slide.time}
-              </div>
+              </button>
             </div>
 
             {/* Info and OCR text */}
@@ -163,7 +119,7 @@ export default function SlideOcrTab() {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
     </div>
   );
 }

@@ -36,13 +36,22 @@ from app.services.audio_aec import (
     AudioSignalLostError as AECSignalLostError
 )
 from app.services.audio_pipeline import AudioPipelineOrchestrator
-from app.services.speaker_labeling_service import speaker_labeling_service
 from app.core.config import settings
 from app.tasks.audio_job_task import process_audio_job
 
 logger = logging.getLogger("api_routes")
 router = APIRouter(prefix="/audio", tags=["Audio Preprocessing"])
 internal_router = APIRouter(prefix="/internal/jobs", tags=["Internal jobs"])
+
+speaker_labeling_service = None
+
+
+def _get_speaker_labeling_service():
+    global speaker_labeling_service
+    if speaker_labeling_service is None:
+        from app.services.speaker_labeling_service import speaker_labeling_service as service
+        speaker_labeling_service = service
+    return speaker_labeling_service
 
 
 @internal_router.post("/{job_id}/enqueue")
@@ -232,7 +241,7 @@ async def diarize_audio_endpoint(request: AudioDiarizationRequest):
         safe_output = validate_safe_write_path(request.output_json_path) if request.output_json_path else None
 
         payload, _ = await asyncio.to_thread(
-            speaker_labeling_service.process_and_export,
+            _get_speaker_labeling_service().process_and_export,
             audio_path=safe_input,
             output_json_path=safe_output,
             job_id=request.job_id

@@ -64,6 +64,7 @@ export default function MeetingDetail({
       {/* CỘT PHẢI: Hệ thống Tabs (AI Summary, Task, Speaker, Slide Keyframes) */}
       <div className="w-full min-w-0 xl:w-[52%] flex flex-col min-h-[500px]">
         <MeetingTabs 
+          meetingId={meeting?.id}
           fileType={fileType} 
           speakers={speakers}
           onSeekSegment={seekToSegment}

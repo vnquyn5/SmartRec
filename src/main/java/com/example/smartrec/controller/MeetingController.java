@@ -2,7 +2,15 @@ package com.example.smartrec.controller;
 
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
+import java.util.Map;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
+import com.example.smartrec.repository.MeetingAiResultRepository;
 
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
@@ -53,6 +61,8 @@ public class MeetingController {
     private final MeetingService meetingService;
     private final MeetingSpeakerService meetingSpeakerService;
     private final MeetingProcessingService meetingProcessingService;
+    private final MeetingAiResultRepository meetingAiResultRepository;
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     @Operation(summary = "List meeting files", description = "Returns the authenticated user's meeting files with pagination, status filtering and keyword search.")
@@ -69,6 +79,24 @@ public class MeetingController {
     @GetMapping("/{id}")
     public ResponseEntity<MeetingResponseDTO> getMeeting(@PathVariable UUID id) {
         return ResponseEntity.ok(meetingService.getMeeting(id));
+    }
+
+    @GetMapping("/{id}/ai-results")
+    public ResponseEntity<Map<String, Object>> getAiResults(@PathVariable UUID id) {
+        meetingService.getMeeting(id); // enforces authenticated workspace ownership
+        var result = meetingAiResultRepository.findByMeetingId(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "AI results not available"));
+        try {
+            JsonNode payload = objectMapper.readTree(result.getResultsJson());
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("meetingId", id);
+            response.put("processingJobId", result.getProcessingJobId());
+            response.put("results", payload);
+            response.put("updatedAt", result.getUpdatedAt());
+            return ResponseEntity.ok(response);
+        } catch (JsonProcessingException ex) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Stored AI results are invalid", ex);
+        }
     }
 
     @GetMapping("/{id}/playback-url")

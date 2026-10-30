@@ -58,7 +58,7 @@ public class Job {
     @Column(name = "error_code")
     private String errorCode;
 
-    @Column(name = "error_message")
+    @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
     @Column(name = "failed_at")

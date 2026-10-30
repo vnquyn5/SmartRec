@@ -394,4 +394,12 @@ class DiarizationRuntimeManager:
                 logger.info("Đã giải phóng tài nguyên Diarization pipeline.")
 
 
-diarization_runtime = DiarizationRuntimeManager()
+backend = os.getenv("DIARIZATION_BACKEND", "local").strip().lower()
+
+if backend == "http":
+    from app.services.diarization_http_adapter import DiarizationHTTPAdapter
+    diarization_runtime = DiarizationHTTPAdapter()
+elif backend == "local":
+    diarization_runtime = DiarizationRuntimeManager()
+else:
+    raise ValueError(f"Invalid DIARIZATION_BACKEND: {backend}")

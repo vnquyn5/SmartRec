@@ -11,8 +11,6 @@ from app.adapters.base import (
     LocalPredictor,
     ApiClient,
 )
-from app.adapters.local_adapter import LocalModelAdapter
-from app.adapters.api_adapter import ExternalApiModelAdapter
 
 __all__ = [
     "BaseModelAdapter",
@@ -29,3 +27,15 @@ __all__ = [
     "LocalModelAdapter",
     "ExternalApiModelAdapter",
 ]
+
+
+def __getattr__(name):
+    # Keep package imports lightweight for native inference providers. The
+    # LocalModelAdapter imports PyTorch, which whisper.cpp does not need.
+    if name == "LocalModelAdapter":
+        from app.adapters.local_adapter import LocalModelAdapter
+        return LocalModelAdapter
+    if name == "ExternalApiModelAdapter":
+        from app.adapters.api_adapter import ExternalApiModelAdapter
+        return ExternalApiModelAdapter
+    raise AttributeError(name)

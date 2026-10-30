@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
 
+    # STT can run in a local whisper.cpp server (recommended on Apple Silicon)
+    # or in the existing faster-whisper CPU adapter.
+    stt_provider: str = "whisper_cpp"
+    stt_model_path: Optional[str] = None
+    stt_service_url: str = "http://127.0.0.1:8081/inference"
+    stt_timeout_seconds: int = 3600
+    stt_cpu_threads: int = 4
+    diarization_enabled: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

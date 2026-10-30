@@ -2,6 +2,7 @@ package com.example.smartrec.model.dto;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.Map;
 
 import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.PipelineStage;
@@ -22,4 +23,5 @@ public class WorkerCallbackRequest {
     private String errorCode;
     private String errorMessage;
     private List<SpeakerSegmentResponse> segments;
+    private Map<String, Object> aiResults;
 }

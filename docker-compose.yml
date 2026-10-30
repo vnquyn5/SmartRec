@@ -3,7 +3,7 @@ services:
     image: postgres:15-alpine
     container_name: smartrec-postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-smartrec_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -18,7 +18,7 @@ services:
     image: redis:7-alpine
     container_name: smartrec-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -29,8 +29,8 @@ services:
     image: ghcr.io/coollabsio/minio:latest
     container_name: smartrec-minio
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
@@ -54,7 +54,7 @@ services:
       /usr/bin/mc mb myminio/${MINIO_BUCKET:-smartrec-media} --ignore-existing;
       printf '%s\n' '[{\"AllowedOrigins\":[\"http://localhost:5173\",\"http://127.0.0.1:5173\"],\"AllowedMethods\":[\"GET\",\"PUT\",\"HEAD\"],\"AllowedHeaders\":[\"Content-Type\",\"Authorization\",\"x-amz-date\",\"x-amz-content-sha256\"],\"ExposeHeaders\":[\"ETag\"],\"MaxAgeSeconds\":3000}]' > /tmp/minio-cors.json;
       /usr/bin/mc cors set myminio/${MINIO_BUCKET:-smartrec-media} /tmp/minio-cors.json;
-      /usr/bin/mc anonymous set public myminio/${MINIO_BUCKET:-smartrec-media};
+      /usr/bin/mc anonymous set none myminio/${MINIO_BUCKET:-smartrec-media};
       exit 0;
       "
     networks:
@@ -64,8 +64,9 @@ services:
   chromadb:
     image: chromadb/chroma:latest
     container_name: smartrec-chromadb
+    profiles: ["vector"]
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     volumes:
       - chroma_data:/chroma/chroma
     restart: unless-stopped
@@ -77,7 +78,7 @@ services:
       context: ./ai-engine
     container_name: smartrec-ai-engine
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -87,20 +88,23 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-smartrec-media}
-      CHROMA_HOST: chromadb
-      CHROMA_PORT: 8000
       SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
       SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
       DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-auto}
-      WHISPER_MODEL_PATH: /models/faster-whisper-large-v3
+      STT_PROVIDER: ${STT_PROVIDER:-whisper_cpp}
+      STT_MODEL_PATH: ${STT_MODEL_PATH:-}
+      WHISPER_CPP_URL: ${WHISPER_CPP_URL:-http://host.docker.internal:8081/inference}
+      STT_TIMEOUT_SECONDS: ${STT_TIMEOUT_SECONDS:-3600}
+      STT_CPU_THREADS: ${STT_CPU_THREADS:-4}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-3072}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-900}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:8082/api/v1}
       HF_TOKEN: ${HF_TOKEN:-}
     depends_on:
       - redis
       - minio
-      - chromadb
-    volumes:
-      - ${SMARTREC_MODELS_DIR:?Set SMARTREC_MODELS_DIR to an absolute host path}:/models:ro
     restart: unless-stopped
     networks:
       - smartrec-net
@@ -127,21 +131,30 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-smartrec-media}
-      CHROMA_HOST: chromadb
-      CHROMA_PORT: 8000
       SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
       SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
       DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-auto}
-      WHISPER_MODEL_PATH: /models/faster-whisper-large-v3
+      DIARIZATION_BACKEND: ${DIARIZATION_BACKEND:-local}
+      PYANNOTE_NATIVE_URL: ${PYANNOTE_NATIVE_URL:-http://host.docker.internal:8086}
+      PYANNOTE_NATIVE_TOKEN: ${PYANNOTE_NATIVE_TOKEN:-}
+      STT_PROVIDER: ${STT_PROVIDER:-whisper_cpp}
+      STT_MODEL_PATH: ${STT_MODEL_PATH:-}
+      WHISPER_CPP_URL: ${WHISPER_CPP_URL:-http://host.docker.internal:8081/inference}
+      STT_TIMEOUT_SECONDS: ${STT_TIMEOUT_SECONDS:-3600}
+      STT_CPU_THREADS: ${STT_CPU_THREADS:-4}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-3072}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-900}
       SMARTREC_HEARTBEAT_INTERVAL_SECONDS: ${SMARTREC_HEARTBEAT_INTERVAL_SECONDS:-12}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:8082/api/v1}
       HF_TOKEN: ${HF_TOKEN:-}
       CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
+      PYTORCH_NUM_THREADS: "2"
+      PYTORCH_INTEROP_THREADS: "2"
     depends_on:
       - redis
       - minio
-    volumes:
-      - ${SMARTREC_MODELS_DIR:?Set SMARTREC_MODELS_DIR to an absolute host path}:/models:ro
     restart: unless-stopped
     networks:
       - smartrec-net

@@ -1,6 +1,8 @@
 import os
 import sys
 import shutil
+import json
+import gc
 import logging
 from pathlib import Path
 import requests
@@ -150,7 +152,7 @@ def fetch_job_details(job_id: str) -> dict:
 
 
 def send_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
-    execution_id=None) -> bool:
+    execution_id=None, ai_results=None) -> bool:
     """Gửi payload chuẩn hóa về endpoint POST /jobs/{jobId}/callback của Backend."""
     url = f"{BACKEND_BASE_URL}/jobs/{job_id}/callback"
     payload = {
@@ -160,15 +162,27 @@ def send_stage_callback(job_id: str, stage: str, status: str, segments=None, err
         "errorMessage": error_msg,
         "segments": segments
     }
+    if ai_results is not None:
+        payload["aiResults"] = ai_results
     return callback_client.send_callback(url, payload, job_id=job_id, internal_token=INTERNAL_TOKEN,
         execution_id=execution_id)
 
 
 def require_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
-    execution_id=None):
-    if not send_stage_callback(job_id, stage, status, segments=segments, error_msg=error_msg, error_code=error_code,
-        execution_id=execution_id):
-        raise RetryableProcessingError(f"Backend callback failed for {job_id} {stage} {status}")
+    execution_id=None, ai_results=None):
+    if not send_stage_callback(
+        job_id,
+        stage,
+        status,
+        segments=segments,
+        error_msg=error_msg,
+        error_code=error_code,
+        execution_id=execution_id,
+        ai_results=ai_results
+    ):
+        raise RetryableProcessingError(
+            f"Backend callback failed for {job_id} {stage} {status}"
+        )
 
 
 def parse_timestamp_to_seconds(val) -> float:
@@ -526,6 +540,9 @@ def process_job(job_id: str):
             "FFMPEG": os.path.join(workspace_dir, "01_normalized_16k.wav"),
             "WEBRTC": os.path.join(workspace_dir, "02_cleaned.wav"),
             "PYANNOTE": os.path.join(workspace_dir, "03_diarization.json"),
+            "STT": os.path.join(workspace_dir, "04_transcript.json"),
+            "CONTEXT": os.path.join(workspace_dir, "06_context.json"),
+            "LLM": os.path.join(workspace_dir, "07_ai_results.json"),
         }
         missing_artifact = next((stage for stage in successful_stages
                                 if stage in required_resume_artifacts
@@ -632,12 +649,96 @@ def process_job(job_id: str):
                     raise RetryableProcessingError(error_message)
                 heartbeat.checkpoint()
                 require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
+
+            # Release pyannote weights before native STT/Ollama work so the
+            # container does not retain the diarization model alongside them.
+            try:
+                from app.services.diarization_runtime import diarization_runtime
+                diarization_runtime.reset()
+            except Exception:
+                logger.exception("[%s] Could not explicitly release diarization runtime", job_id)
+            gc.collect()
+
             # -------------------------------------------------------------
-            # STAGE 4: OUTPUT (Chuẩn hóa segments và gửi về Backend)
+            # STAGE 4: STT + OCR + context + local LLM, checkpointed per artifact
             # -------------------------------------------------------------
             current_stage = "OUTPUT"
             heartbeat.checkpoint()
             require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
+            transcript_path = os.path.join(workspace_dir, "04_transcript.json")
+            ocr_path = os.path.join(workspace_dir, "05_ocr.json")
+            context_path = os.path.join(workspace_dir, "06_context.json")
+            ai_result_path = os.path.join(workspace_dir, "07_ai_results.json")
+            if os.path.isfile(transcript_path):
+                transcript_data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+            else:
+                heartbeat.checkpoint()
+                logger.info("[%s] STT via configured provider=%s", job_id, settings.stt_provider)
+                from app.services.whisper_asr_service import WhisperASRService
+                from app.services.speaker_transcript_aligner import align_speakers
+                from types import SimpleNamespace
+
+                with WhisperASRService(language="vi", beam_size=1) as asr:
+                    stt = asr.transcribe(clean_wav)
+                speaker_map = {}
+                diar_timeline = diar_payload.timeline or []
+                for diar_segment in diar_timeline:
+                    label = diar_segment.speaker
+                    if diar_segment.raw_speaker_id:
+                        speaker_map[diar_segment.raw_speaker_id] = label
+                    speaker_map[label] = label
+                aligned = align_speakers(stt["segments"], diar_timeline, speaker_map)
+                transcript_data = {
+                    "meetingId": str(meeting_id), "processingJobId": job_id,
+                    "success": True, "language": stt.get("detected_language") or "vi",
+                    "modelName": "whisper", "segments": [
+                        {"speakerId": None, "speakerLabel": aligned.get(index),
+                         "startTimeMs": round(float(segment.start) * 1000),
+                         "endTimeMs": round(float(segment.end) * 1000),
+                         "text": str(segment.text).strip()}
+                        for index, segment in enumerate(stt["segments"])
+                        if str(getattr(segment, "text", "")).strip()
+                    ]
+                }
+                _atomic_write_json(transcript_path, json.dumps(transcript_data, ensure_ascii=False))
+
+            ocr_data = json.loads(Path(ocr_path).read_text(encoding="utf-8")) if os.path.isfile(ocr_path) else None
+            if ocr_data is None:
+                ocr_data = {"status": "SKIPPED", "frames": [], "error": None}
+                if file_ext in {".mp4", ".mkv"}:
+                    try:
+                        from app.services.video_ocr import extract_video_ocr
+                        ocr_data = {"status": "SUCCESS", "frames": extract_video_ocr(raw_input_path, workspace_dir), "error": None}
+                    except Exception as exc:
+                        logger.exception("[%s] OCR stage failed; retaining transcript and continuing", job_id)
+                        ocr_data = {"status": "FAILED", "frames": [], "error": str(exc)[:1200]}
+                _atomic_write_json(ocr_path, json.dumps(ocr_data, ensure_ascii=False))
+
+            if os.path.isfile(context_path):
+                context_data = json.loads(Path(context_path).read_text(encoding="utf-8"))
+            else:
+                from app.services.context_llm import build_context_chunks
+                context_data = {"chunks": build_context_chunks(transcript_data["segments"], ocr_data["frames"])}
+                _atomic_write_json(context_path, json.dumps(context_data, ensure_ascii=False))
+
+            if os.path.isfile(ai_result_path):
+                ai_results = json.loads(Path(ai_result_path).read_text(encoding="utf-8"))
+            else:
+                from app.services.context_llm import OllamaMeetingClient
+                extraction = OllamaMeetingClient().analyze(context_data["chunks"])
+                ai_results = {
+                    "status": "SUCCESS", "provider": "ollama", "model": os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b"),
+                    "summary": extraction.summary,
+                    "keyDecisions": extraction.key_decisions,
+                    "tasks": [task.model_dump(by_alias=True) for task in extraction.tasks],
+                    "contextChunks": context_data["chunks"],
+                }
+                _atomic_write_json(ai_result_path, json.dumps(ai_results, ensure_ascii=False))
+            # -------------------------------------------------------------
+            # STAGE 5: OUTPUT (speaker timeline + persisted AI artifacts)
+            # -------------------------------------------------------------
+            current_stage = "OUTPUT"
+            heartbeat.checkpoint()
             logger.info(f"[{job_id}] >>> Hoàn tất Stage 4: OUTPUT...")
             diar_dict = diar_payload.model_dump()
             raw_segments = diar_dict.get("timeline") or diar_dict.get("segments") or []
@@ -678,7 +779,12 @@ def process_job(job_id: str):
                     })
             heartbeat.checkpoint()
             require_stage_callback(job_id, current_stage, "SUCCESS", segments=formatted_segments,
-                execution_id=execution_id)
+                execution_id=execution_id, ai_results={
+                    "transcript": transcript_data,
+                    "ocr": ocr_data,
+                    "context": context_data,
+                    "meetingAnalysis": ai_results,
+                })
             logger.info(f"[{job_id}] ========== [HOÀN TẤT THÀNH CÔNG JOB: {job_id}] ==========")
     except _ExecutionLost:
         preserve_workspace = True
@@ -719,6 +825,7 @@ def process_job(job_id: str):
             logger.info("[%s] Bỏ qua exception vì execution lease đã mất", job_id)
             return {"status": "SKIPPED", "reason": "EXECUTION_LEASE_LOST"}
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
+        preserve_workspace = True
         try:
             require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e),
                 error_code="RETRYABLE_PROCESSING_ERROR", execution_id=execution_id)

@@ -67,6 +67,10 @@ export async function getMeetingPlaybackUrl(id, signal) {
   return httpClient.get(`/meetings/${id}/playback-url`, { signal });
 }
 
+export async function getMeetingAiResults(id, signal) {
+  return httpClient.get(`/meetings/${id}/ai-results`, { signal });
+}
+
 export async function downloadMeeting(id) {
   return httpClient.get(`/meetings/${id}/download`, {
     responseType: "blob",

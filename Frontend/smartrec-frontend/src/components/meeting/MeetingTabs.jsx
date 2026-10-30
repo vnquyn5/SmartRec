@@ -1,13 +1,47 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import SlideOcrTab from './SlideOcrTab';
 import MeetingTasksTab from './MeetingTasksTab';
 import MeetingSummaryTab from './MeetingSummaryTab';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 import TranscriptPanel from './TranscriptPanel';
+import { getMeetingAiResults } from '../../services/meetingService';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({ meetingId, fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('speaker');
+  const [aiResults, setAiResults] = useState(null);
+  const [resultsError, setResultsError] = useState('');
+
+  useEffect(() => {
+    if (!meetingId) return;
+    const controller = new AbortController();
+    let timer;
+    setAiResults(null);
+    const load = () => getMeetingAiResults(meetingId, controller.signal)
+      .then((response) => { setAiResults(response?.results || null); setResultsError(''); })
+      .catch((error) => {
+        if (error?.name === 'CanceledError' || error?.name === 'AbortError') return;
+        if (error?.response?.status === 404 && ['queued', 'processing'].includes(aiStatus)) {
+          timer = setTimeout(load, 5000);
+          return;
+        }
+        setAiResults(null);
+        setResultsError(error?.response?.status === 404 ? '' : 'Không thể tải kết quả AI.');
+      });
+    load();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [meetingId, aiStatus]);
+
+  const formatTime = (ms) => {
+    const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    return [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60]
+      .map((part) => String(part).padStart(2, '0')).join(':');
+  };
+  const transcript = (aiResults?.transcript?.segments || []).map((item, index) => {
+    const seconds = (Number(item.startTimeMs) || 0) / 1000;
+    return { id: index, time: seconds, timeLabel: formatTime(item.startTimeMs),
+      speaker: item.speakerLabel || 'Chưa xác định', text: item.text || '' };
+  });
 
   // Khai báo các tab theo yêu cầu 
   const tabs = [
@@ -25,7 +59,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     {
       id: 'task',
       label: 'Task',
-      count: 3,
+      count: aiResults?.meetingAnalysis?.tasks?.length || 0,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4" />
@@ -59,7 +93,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     tabs.push({
       id: 'slide',
       label: 'Slide Keyframes & OCR',
-      count: 6,
+      count: aiResults?.ocr?.frames?.length || 0,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="8" y1="6" x2="21" y2="6" />
@@ -110,9 +144,10 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
 
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
-        {activeTab === 'summary' && <MeetingSummaryTab />}
-        {activeTab === 'task' && <MeetingTasksTab />}
-        {activeTab === 'transcript' && <TranscriptPanel onSeek={onSeek} />}
+        {resultsError && <p role="alert" className="mb-3 text-xs text-amber-300">{resultsError}</p>}
+        {activeTab === 'summary' && <MeetingSummaryTab analysis={aiResults?.meetingAnalysis} />}
+        {activeTab === 'task' && <MeetingTasksTab tasks={aiResults?.meetingAnalysis?.tasks || []} onSeek={onSeekSegment} />}
+        {activeTab === 'transcript' && <TranscriptPanel transcripts={transcript} onSeek={onSeekSegment} />}
         {activeTab === 'speaker' && (
           <div className="h-full flex flex-col gap-4">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
@@ -165,7 +200,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
             )}
           </div>
         )}
-        {activeTab === 'slide' && <SlideOcrTab />}
+        {activeTab === 'slide' && <SlideOcrTab frames={aiResults?.ocr?.frames || []} onSeek={onSeekSegment} />}
       </div>
     </div>
   );

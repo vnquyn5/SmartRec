@@ -31,6 +31,9 @@ import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
+import com.example.smartrec.repository.MeetingAiResultRepository;
+import com.example.smartrec.entity.MeetingAiResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.smartrec.service.impl.JobServiceImpl;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,6 +45,8 @@ class JobServiceImplSpeakerCallbackTest {
     @Mock private SpeakerSegmentRepository speakerSegmentRepository;
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
+    @Mock private MeetingAiResultRepository meetingAiResultRepository;
+    @Mock private ObjectMapper objectMapper;
     @InjectMocks private JobServiceImpl jobService;
 
     private UUID jobId;
@@ -82,6 +87,26 @@ class JobServiceImplSpeakerCallbackTest {
         verify(jobRepository).save(job);
         assertEquals(JobStatus.COMPLETED, job.getStatus());
         assertEquals(com.example.smartrec.entity.MeetingStatus.COMPLETED, meeting.getStatus());
+    }
+
+    @Test
+    void outputCallbackPersistsAiArtifactsIdempotentlyByMeeting() throws Exception {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT)).thenReturn(Optional.of(outputStage));
+        when(meetingAiResultRepository.findByMeetingId(meetingId)).thenReturn(Optional.empty());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{\"transcript\":{}}");
+        var artifacts = java.util.Map.<String, Object>of(
+                "transcript", java.util.Map.of(), "ocr", java.util.Map.of(),
+                "context", java.util.Map.of(), "meetingAnalysis", java.util.Map.of());
+
+        jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId).stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
+                .segments(java.util.List.of()).aiResults(artifacts).build());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(MeetingAiResult.class);
+        verify(meetingAiResultRepository).save(captor.capture());
+        assertEquals(meetingId, captor.getValue().getMeetingId());
+        assertEquals(jobId, captor.getValue().getProcessingJobId());
+        assertEquals("{\"transcript\":{}}", captor.getValue().getResultsJson());
     }
 
     @Test

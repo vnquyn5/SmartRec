@@ -64,10 +64,9 @@ class SingleUploadFingerprintTest {
         request.setMimeType("video/mp4");
         request.setQuickFingerprint(FINGERPRINT);
         request.setFingerprintVersion(2);
-        when(pendingUploadRepository.findByObjectKeyAndUserId(request.getObjectKey(), user.getId()))
-                .thenReturn(Optional.of(PendingMediaUpload.builder().userId(user.getId())
-                        .objectKey(request.getObjectKey()).fileName("recording.mp4").fileSizeBytes(100L)
-                        .mimeType("video/mp4").status("PENDING").expiresAt(Instant.now().plusSeconds(3600)).build()));
+        PendingMediaUpload pending = PendingMediaUpload.builder().userId(user.getId())
+                .objectKey(request.getObjectKey()).fileName("recording.mp4").fileSizeBytes(100L)
+                .mimeType("video/mp4").status("PENDING").expiresAt(Instant.now().plusSeconds(3600)).build();
     }
 
     @AfterEach
@@ -82,7 +81,9 @@ class SingleUploadFingerprintTest {
     void savesFingerprintOnNewCompletionWithClientChecksum() throws Exception {
         request.setChecksumSha256(CHECKSUM);
         TransactionSynchronizationManager.initSynchronization();
+        stubPendingForUpdate();
         stubPendingObject();
+        when(minioService.getObjectSize(confirmedObjectKey())).thenReturn(100L);
         when(mediaFileRepository.saveAndFlush(any(MediaFile.class))).thenAnswer(invocation -> {
             MediaFile saved = invocation.getArgument(0);
             saved.setId(UUID.randomUUID());
@@ -101,8 +102,14 @@ class SingleUploadFingerprintTest {
 
     @Test
     void preparedUploadDoesNotCreateOfficialMeetingOrMediaRows() throws Exception {
-        stubPendingObject();
-
+        when(pendingUploadRepository.findByObjectKeyAndUserId(request.getObjectKey(), user.getId()))
+                .thenReturn(Optional.of(PendingMediaUpload.builder().userId(user.getId())
+                        .objectKey(request.getObjectKey()).fileName("recording.mp4").fileSizeBytes(100L)
+                        .mimeType("video/mp4").status("PENDING").expiresAt(Instant.now().plusSeconds(3600)).build()));
+        when(minioService.objectExists(request.getObjectKey())).thenReturn(true);
+        when(minioService.getObjectSize(request.getObjectKey())).thenReturn(100L);
+        when(minioService.getObject(request.getObjectKey()))
+                .thenReturn(new ByteArrayInputStream("....ftypisom".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)));
         var pending = service.prepareSimpleUpload(request);
 
         assertEquals(request.getObjectKey(), pending.getObjectKey());
@@ -113,6 +120,7 @@ class SingleUploadFingerprintTest {
     void fillsMissingMetadataOnIdempotentCompletionAndEnablesQuickDuplicateLookup() {
         MediaFile existing = existing(null, null);
         stubExisting(existing);
+        stubPendingForUpdate();
         service.completeSimpleUpload(request);
         assertEquals(FINGERPRINT, existing.getQuickFingerprint());
         assertEquals(2, existing.getFingerprintVersion());
@@ -133,6 +141,7 @@ class SingleUploadFingerprintTest {
     void doesNotEraseExistingMetadataWhenOldClientOmitsIt() {
         MediaFile existing = existing(FINGERPRINT, 2);
         stubExisting(existing);
+        stubPendingForUpdate();
         request.setQuickFingerprint(null);
         request.setFingerprintVersion(null);
         service.completeSimpleUpload(request);
@@ -145,6 +154,7 @@ class SingleUploadFingerprintTest {
     void preservesExistingFingerprintWhenRetrySuppliesAnotherValue() {
         MediaFile existing = existing("c".repeat(64), 1);
         stubExisting(existing);
+        stubPendingForUpdate();
         service.completeSimpleUpload(request);
         assertEquals("c".repeat(64), existing.getQuickFingerprint());
         assertEquals(1, existing.getFingerprintVersion());
@@ -155,6 +165,7 @@ class SingleUploadFingerprintTest {
     void fillsMissingVersionForMatchingFingerprint() {
         MediaFile existing = existing(FINGERPRINT, null);
         stubExisting(existing);
+        stubPendingForUpdate();
         service.completeSimpleUpload(request);
         assertEquals(2, existing.getFingerprintVersion());
         verify(mediaFileRepository).save(existing);
@@ -172,6 +183,14 @@ class SingleUploadFingerprintTest {
         when(meetingRepository.findByMediaFileId(existing.getId())).thenReturn(Optional.of(meeting(existing.getId())));
     }
 
+    private void stubPendingForUpdate() {
+        PendingMediaUpload pending = PendingMediaUpload.builder().userId(user.getId())
+                .objectKey(request.getObjectKey()).fileName("recording.mp4").fileSizeBytes(100L)
+                .mimeType("video/mp4").status("PENDING").expiresAt(Instant.now().plusSeconds(3600)).build();
+        when(pendingUploadRepository.findByObjectKeyAndUserIdForUpdate(request.getObjectKey(), user.getId()))
+                .thenReturn(Optional.of(pending));
+    }
+
     private String confirmedObjectKey() {
         String leafName = request.getObjectKey().substring(request.getObjectKey().lastIndexOf('/') + 1);
         return user.getId() + "/meetings/" + leafName;
@@ -182,7 +201,6 @@ class SingleUploadFingerprintTest {
         when(minioService.getObjectSize(request.getObjectKey())).thenReturn(100L);
         when(minioService.getObject(request.getObjectKey()))
                 .thenReturn(new ByteArrayInputStream("....ftypisom".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)));
-        when(minioService.getObjectSize(confirmedObjectKey())).thenReturn(100L);
     }
 
     private Meeting meeting(UUID mediaFileId) {
