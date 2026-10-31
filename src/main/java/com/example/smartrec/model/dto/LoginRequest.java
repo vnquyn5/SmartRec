@@ -10,7 +10,8 @@ public class LoginRequest {
     @Pattern( regexp = "(^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.com$)|(^0(3|5|7|8|9)[0-9]{8}$)",message = "Email hoặc phone không đúng định dạng" )
     private String email;
 
-    @NotBlank (message = "mật khẩu không đúng  ")
+    @NotBlank (message = "Mật khẩu không được để trống")
+    @com.fasterxml.jackson.annotation.JsonAlias({"password", "passWord"})
     private String passWord;
     
 }
