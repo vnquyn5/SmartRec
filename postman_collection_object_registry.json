@@ -1,0 +1,346 @@
+{
+	"info": {
+		"_postman_id": "smartrec-object-registry-fsm-v1",
+		"name": "SmartRec - Object Registry & State Machine",
+		"description": "Bộ API kiểm thử toàn diện Object Registry, State Machine, Audit Log và Lineage cho SmartRec.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8082/api/v1",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "userId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "objectId",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{token}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "00. Đăng ký tài khoản (Nếu chưa có)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"admin@example.com\",\n  \"phone\": \"0912345678\",\n  \"passWord\": \"Password123@\",\n  \"full_name\": \"Admin User\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/register",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"register"
+					]
+				},
+				"description": "Đăng ký tài khoản mới nếu trong database chưa có sẵn tài khoản admin@example.com."
+			},
+			"response": []
+		},
+		{
+			"name": "01. Login (Lấy Token & UserId)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = pm.response.json();",
+							"if (jsonData.accessToken) {",
+							"    pm.collectionVariables.set('token', jsonData.accessToken);",
+							"}",
+							"if (jsonData.userId) {",
+							"    pm.collectionVariables.set('userId', jsonData.userId);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"admin@example.com\",\n  \"passWord\": \"Password123@\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/login",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"login"
+					]
+				},
+				"description": "Đăng nhập hệ thống để tự động lưu accessToken và userId vào biến môi trường."
+			},
+			"response": []
+		},
+		{
+			"name": "02. Đăng ký Object Mới (PENDING)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = pm.response.json();",
+							"if (jsonData.id) {",
+							"    pm.collectionVariables.set('objectId', jsonData.id);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"bucket\": \"smartrec-media\",\n  \"objectKey\": \"meetings/meeting-demo-01/raw_audio.wav\",\n  \"artifactType\": \"ORIGINAL_MEDIA\",\n  \"ownerId\": \"{{userId}}\",\n  \"mimeType\": \"audio/wav\",\n  \"metadata\": \"{\\\"sample_rate\\\": 16000, \\\"channels\\\": 1}\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/objects/register",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"register"
+					]
+				},
+				"description": "Tạo bản ghi đặt chỗ metadata khi chưa có file vật lý (trạng thái ban đầu PENDING)."
+			},
+			"response": []
+		},
+		{
+			"name": "03. Chuyển sang UPLOADING",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"targetState\": \"UPLOADING\",\n  \"performedBy\": \"{{userId}}\",\n  \"reason\": \"Client bắt đầu upload chunk multipart\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/objects/{{objectId}}/transition",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"{{objectId}}",
+						"transition"
+					]
+				},
+				"description": "Chuyển trạng thái từ PENDING -> UPLOADING khi bắt đầu tải stream dữ liệu."
+			},
+			"response": []
+		},
+		{
+			"name": "04. Hoàn tất Upload sang READY (kèm Checksum & Size)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"targetState\": \"READY\",\n  \"sizeBytes\": 15728640,\n  \"checksum\": \"sha256:4a5b6c7d8e9f1a2b3c4d5e6f7a8b9c0d\",\n  \"performedBy\": \"{{userId}}\",\n  \"reason\": \"File đã ghi xong vào MinIO và kiểm tra checksum khớp\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/objects/{{objectId}}/transition",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"{{objectId}}",
+						"transition"
+					]
+				},
+				"description": "Chuyển sang READY khi file vật lý hoàn tất, bắt buộc kèm sizeBytes >= 0 và checksum."
+			},
+			"response": []
+		},
+		{
+			"name": "05. Test Chặn Transition Sai Trái (Expect 422)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"targetState\": \"UPLOADING\",\n  \"reason\": \"Cố tình chuyển lùi từ READY sang UPLOADING\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/objects/{{objectId}}/transition",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"{{objectId}}",
+						"transition"
+					]
+				},
+				"description": "Negative Test: Kiểm tra State Machine có chặn bước nhảy sai trái và trả về mã HTTP 422 không."
+			},
+			"response": []
+		},
+		{
+			"name": "06. Test Chặn Ghi Trùng Khóa (Expect 409)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"bucket\": \"smartrec-media\",\n  \"objectKey\": \"meetings/meeting-demo-01/raw_audio.wav\",\n  \"artifactType\": \"ORIGINAL_MEDIA\",\n  \"ownerId\": \"{{userId}}\",\n  \"checksum\": \"sha256:DIFFERENT_HASH\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/objects/register",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"register"
+					]
+				},
+				"description": "Negative Test: Kiểm tra khóa chống ghi trùng (Anti-collision UNIQUE constraint) trả về HTTP 409."
+			},
+			"response": []
+		},
+		{
+			"name": "07. Đăng ký Artifact Con (Transcript JSON)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"bucket\": \"smartrec-media\",\n  \"objectKey\": \"meetings/meeting-demo-01/transcript.json\",\n  \"artifactType\": \"TRANSCRIPT_JSON\",\n  \"ownerId\": \"{{userId}}\",\n  \"parentObjectId\": \"{{objectId}}\",\n  \"sizeBytes\": 4096,\n  \"checksum\": \"sha256:transcript_valid_hash\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/objects/register",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"register"
+					]
+				},
+				"description": "Đăng ký một artifact phái sinh liên kết với artifact cha qua parentObjectId."
+			},
+			"response": []
+		},
+		{
+			"name": "08. Xem Cây Phả Hệ (Lineage)",
+			"request": {
+				"method": "GET",
+				"url": {
+					"raw": "{{baseUrl}}/objects/{{objectId}}/lineage",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"{{objectId}}",
+						"lineage"
+					]
+				},
+				"description": "Lấy cây phả hệ đầy đủ: artifact cha, artifact hiện tại và danh sách artifact con."
+			},
+			"response": []
+		},
+		{
+			"name": "09. Xem Lịch Sử Biến Động (Audit Logs)",
+			"request": {
+				"method": "GET",
+				"url": {
+					"raw": "{{baseUrl}}/objects/{{objectId}}/audit-logs",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"objects",
+						"{{objectId}}",
+						"audit-logs"
+					]
+				},
+				"description": "Xem toàn bộ lịch sử chuyển đổi trạng thái từ PENDING -> UPLOADING -> READY kèm lý do và thời gian."
+			},
+			"response": []
+		}
+	]
+}

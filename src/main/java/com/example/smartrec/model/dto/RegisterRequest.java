@@ -18,6 +18,7 @@ public class RegisterRequest {
     @NotBlank(message = "password không được để trống ")
     @Size(min = 8, max = 16, message = "Password phải từ 8 đến 16 ký tự")
     @Pattern(regexp = "^(?=.*[A-Z])(?=.*[^a-zA-Z0-9]).*$", message = "Password phải có ít nhất 1 chữ hoa và 1 ký tự đặc biệt")
+    @com.fasterxml.jackson.annotation.JsonAlias({"password", "passWord"})
     private String passWord;
 
     @NotBlank(message = " họ và tên không được để trống ")
