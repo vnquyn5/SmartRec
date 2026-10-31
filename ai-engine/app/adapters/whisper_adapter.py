@@ -24,35 +24,91 @@ class WhisperPredictor:
         return list(segments), info
 
 
+
 def create_whisper_adapter(
     model_path: Optional[str] = None,
     device: Optional[str] = None,
     compute_type: Optional[str] = None,
 ) -> LocalModelAdapter:
-    """Tạo LocalModelAdapter cho faster-whisper large-v3."""
+    """Tạo LocalModelAdapter cho Faster-Whisper model được chọn."""
 
     configured_path = model_path or os.getenv("WHISPER_MODEL_PATH")
 
     if not configured_path:
         raise ValueError(
             "Thiếu WHISPER_MODEL_PATH. "
-            "Hãy cấu hình đường dẫn local tới faster-whisper-large-v3."
+            "Hãy cấu hình đường dẫn tới model Faster-Whisper."
         )
 
     weights_path = Path(configured_path).expanduser().resolve()
 
     if not weights_path.is_dir():
-        raise FileNotFoundError(f"Không tìm thấy thư mục model: {weights_path}")
+        raise FileNotFoundError(
+            f"Không tìm thấy thư mục model: {weights_path}"
+        )
 
     if not (weights_path / "model.bin").is_file():
-        raise FileNotFoundError(f"Thiếu model.bin trong: {weights_path}")
+        raise FileNotFoundError(
+            f"Thiếu model.bin trong: {weights_path}"
+        )
 
-    def loader(runtime_device: str) -> WhisperPredictor:
+    # Các model STT được hỗ trợ.
+    supported_models = {
+        "faster-whisper-small": "1.0",
+        "faster-whisper-medium": "1.0",
+        "faster-whisper-large-v3": "3.0",
+    }
+
+    # Tham số cấu hình có thể chọn model thông qua .env.
+    configured_model_id = os.getenv("STT_MODEL_ID")
+
+    model_id = configured_model_id or weights_path.name
+
+    if model_id not in supported_models:
+        raise ValueError(
+            f"Model STT không được hỗ trợ: {model_id}"
+        )
+
+    # Ngăn việc cấu hình Small nhưng vô tình nạp weights Large.
+    if weights_path.name in supported_models:
+        if weights_path.name != model_id:
+            raise ValueError(
+                f"STT_MODEL_ID={model_id} không khớp "
+                f"với thư mục model {weights_path.name}"
+            )
+
+    # Ưu tiên tham số truyền trực tiếp, sau đó đến môi trường.
+    requested_device = (
+        device or os.getenv("WHISPER_DEVICE", "auto")
+    ).strip().lower()
+
+    if requested_device == "auto":
+        runtime_device = (
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+    elif requested_device == "mps":
         # CTranslate2 không hỗ trợ MPS.
-        ct2_device = "cpu" if runtime_device == "mps" else runtime_device
+        runtime_device = "cpu"
+    elif requested_device in {"cpu", "cuda"}:
+        runtime_device = requested_device
+    else:
+        raise ValueError(
+            f"WHISPER_DEVICE không hợp lệ: {requested_device}"
+        )
 
-        runtime_compute_type = compute_type or (
-            "float16" if ct2_device == "cuda" else "int8"
+    def loader(selected_device: str) -> WhisperPredictor:
+        ct2_device = (
+            "cpu" if selected_device == "mps" else selected_device
+        )
+
+        runtime_compute_type = (
+            compute_type
+            or os.getenv("WHISPER_COMPUTE_TYPE")
+            or (
+                "int8_float16"
+                if ct2_device == "cuda"
+                else "int8"
+            )
         )
 
         model = WhisperModel(
@@ -64,15 +120,9 @@ def create_whisper_adapter(
 
         return WhisperPredictor(model)
 
-    # CTranslate2 không hỗ trợ MPS; tự động chọn CUDA hoặc CPU.
-    if device is None:
-        runtime_device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        runtime_device = "cpu" if device == "mps" else device
-
     return LocalModelAdapter(
-        model_name="faster-whisper-large-v3",
+        model_name=model_id,
         loader_fn=loader,
-        version="3.0",
+        version=supported_models[model_id],
         device=runtime_device,
     )

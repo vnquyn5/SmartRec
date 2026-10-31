@@ -8,11 +8,11 @@ pydantic-settings>=2.2.0
 ffmpeg-python>=0.2.0
 
 # Core Audio Processing & Visualization
-numpy==1.26.4
+numpy>=2.0,<3
 scipy>=1.10.0
 soundfile>=0.12.1
 noisereduce>=3.0.0
-matplotlib>=3.7.0
+matplotlib>=3.11.0
 
 # Sprint 2: Audio Processing Utilities
 # AI model dependencies are managed in requirements_ai.txt
@@ -24,7 +24,6 @@ opencv-python-headless==4.10.0.84
 scikit-image==0.24.0
 
 # Sprint 3: OCR & LLM (planned)
-# paddleocr
 # google-generativeai
 # langchain
 
