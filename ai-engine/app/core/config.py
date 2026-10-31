@@ -24,10 +24,15 @@ class Settings(BaseSettings):
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
 
     # PaddleOCR Settings
-    # Recognition model fine-tuned for Vietnamese text.
-    # Configure the model path through OCR_RECOGNITION_MODEL_DIR.
+    # Model paths can be mounted from Docker host storage.
+    ocr_detection_model_dir: Optional[str] = None
     ocr_recognition_model_dir: Optional[str] = None
     ocr_device: str = "cpu"
+
+    # CPU inference configuration
+    # Defaults validated on Linux ARM64 Docker.
+    ocr_enable_mkldnn: bool = False
+    ocr_cpu_threads: int = 1
 
     model_config = SettingsConfigDict(
         env_file=".env",

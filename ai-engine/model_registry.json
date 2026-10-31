@@ -20,6 +20,20 @@
       "runtime": "local",
       "device": "auto",
       "status": "enabled"
+    },
+    {
+      "model_name": "PP-OCRv6_medium_det",
+      "version": "6",
+      "runtime": "local",
+      "device": "cpu",
+      "status": "enabled"
+    },
+    {
+      "model_name": "PP-OCRv6_medium_rec",
+      "version": "6",
+      "runtime": "local",
+      "device": "cpu",
+      "status": "enabled"
     }
   ]
 }

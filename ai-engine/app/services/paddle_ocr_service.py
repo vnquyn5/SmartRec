@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from app.core.config import settings
 from app.core.path_security import get_workspace_root
 
 
@@ -17,6 +18,7 @@ class PaddleOCRService:
         self,
         recognition_model_dir: str | Path,
         device: str = "cpu",
+        detection_model_dir: str | Path | None = None,
     ) -> None:
         model_dir = Path(recognition_model_dir).resolve()
 
@@ -35,19 +37,62 @@ class PaddleOCRService:
                     f"Missing OCR model artifact: {filename}"
                 )
 
+
+        # Resolve an optional local detection model directory.
+        # Explicit constructor arguments take precedence over settings.
+        configured_detection_dir = (
+            detection_model_dir
+            if detection_model_dir is not None
+            else settings.ocr_detection_model_dir
+        )
+
+        resolved_detection_dir = None
+
+        if configured_detection_dir is not None:
+            resolved_detection_dir = (
+                Path(configured_detection_dir)
+                .expanduser()
+                .resolve()
+            )
+
+            if not resolved_detection_dir.is_dir():
+                raise FileNotFoundError(
+                    "OCR detection model directory not found: "
+                    f"{resolved_detection_dir}"
+                )
+
+
         # Lazy import to avoid initializing OCR dependencies
         # when unrelated AI Engine services are imported.
         from paddleocr import PaddleOCR
 
-        self._ocr = PaddleOCR(
-            device=device,
-            text_detection_model_name="PP-OCRv6_medium_det",
-            text_recognition_model_name="PP-OCRv6_medium_rec",
-            text_recognition_model_dir=str(model_dir),
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-        )
+        paddle_options = {
+            "device": device,
+            "text_detection_model_name": "PP-OCRv6_medium_det",
+            "text_recognition_model_name": "PP-OCRv6_medium_rec",
+            "text_recognition_model_dir": str(model_dir),
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+        }
+
+        # Apply CPU-specific settings only for CPU inference.
+        # Do not impose CPU backend options on CUDA inference.
+        if device.strip().lower() == "cpu":
+            paddle_options.update(
+                enable_mkldnn=settings.ocr_enable_mkldnn,
+                cpu_threads=settings.ocr_cpu_threads,
+            )
+
+        # Use local detection weights when configured.
+        # This avoids downloading the detection model at runtime.
+        if resolved_detection_dir is not None:
+            paddle_options["text_detection_model_dir"] = str(
+                resolved_detection_dir
+            )
+
+        self._ocr = PaddleOCR(**paddle_options)
+
 
     @staticmethod
     def _validate_keyframe_path(image_path: str | Path) -> Path:
