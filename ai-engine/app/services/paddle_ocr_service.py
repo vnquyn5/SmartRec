@@ -9,6 +9,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.path_security import get_workspace_root
+from app.services.artifact_provenance import capture_local_source, verify_local_source
 
 
 class PaddleOCRService:
@@ -481,8 +482,13 @@ class PaddleOCRService:
     def process_keyframes(
         self,
         output_dir: str | Path,
+        *,
+        meeting_id: str | None = None,
+        job_id: str | None = None,
     ) -> dict[str, Any]:
         """Process all keyframes from one published manifest."""
+        if (meeting_id is None) != (job_id is None):
+            raise ValueError("Local provenance requires both meeting_id and job_id")
         manifest, image_paths = self.load_keyframe_manifest(
             output_dir
         )
@@ -496,6 +502,7 @@ class PaddleOCRService:
             slide_result: dict[str, Any] = {
                 "slide_id": item["slide_id"],
                 "timestamp_ms": item["timestamp_ms"],
+                "timestamp_basis": item.get("timestamp_basis", "sample_target"),
                 "occurrences_ms": list(
                     item["occurrences_ms"]
                 ),
@@ -503,12 +510,21 @@ class PaddleOCRService:
                 "text": "",
                 "detections": [],
                 "error": None,
+                "image_source": None,
             }
 
             try:
+                image_source = None
+                if meeting_id is not None:
+                    image_source = capture_local_source(
+                        get_workspace_root(), image_path, str(meeting_id), str(job_id)
+                    )
                 detections = self.recognize_image(
                     image_path
                 )
+                if image_source is not None:
+                    verify_local_source(get_workspace_root(), image_source, str(meeting_id), str(job_id))
+                    slide_result["image_source"] = image_source.to_dict()
 
                 slide_result["detections"] = detections
                 slide_result["text"] = "\n".join(

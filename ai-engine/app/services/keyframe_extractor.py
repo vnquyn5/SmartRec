@@ -529,6 +529,8 @@ class KeyframeExtractor:
                     {
                         "slide_id": slide_id,
                         "timestamp_ms": timestamp_ms,
+                        # Requested seek position, not a measured decoder PTS.
+                        "timestamp_basis": "sample_target",
                         "occurrences_ms": [timestamp_ms],
                         "image_path": image_filename,
                         "sharpness_score": round(

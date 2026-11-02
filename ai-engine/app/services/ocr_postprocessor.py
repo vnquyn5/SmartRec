@@ -6,6 +6,7 @@ import unicodedata
 import json
 import os
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from app.core.path_security import get_workspace_root
 
@@ -619,6 +620,8 @@ class OCRPostProcessor:
             processed_slides.append({
                 "slide_id": slide.get("slide_id"),
                 "timestamp_ms": slide.get("timestamp_ms"),
+                "timestamp_basis": slide.get("timestamp_basis", "sample_target"),
+                "image_source": deepcopy(slide.get("image_source")),
                 "occurrences_ms": list(
                     slide.get("occurrences_ms", [])
                 ),
