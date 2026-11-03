@@ -46,7 +46,7 @@ public class AiUsage {
     @Column(name = "total_tokens")
     private Long totalTokens;
 
-    @Column(name = "processing_time")
+    @Column(name = "processing_time_ms")
     private Long processingTime;
 
     @Column(name = "cpu_usage")

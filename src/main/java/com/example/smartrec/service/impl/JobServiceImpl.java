@@ -26,6 +26,7 @@ import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
+import com.example.smartrec.service.AIResultService;
 
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +51,7 @@ public class JobServiceImpl implements JobService {
     private final SpeakerSegmentRepository speakerSegmentRepository;
     private final MeetingRepository meetingRepository;
     private final MeetingService meetingService;
+    private final AIResultService aiResultService;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
     @Value("${job.heartbeat-timeout-seconds:90}")
@@ -547,6 +549,32 @@ public class JobServiceImpl implements JobService {
                     "INVALID_CALLBACK",
                     "Stage không được để trống");
         }
+        if (request.getAiResult() != null) {
+            var aiResult = request.getAiResult();
+            if (request.getStage() != PipelineStage.OUTPUT
+                    || !jobId.equals(aiResult.getJobId())
+                    || !job.getMeetingId().equals(aiResult.getMeetingId())) {
+                throw new BusinessException(HttpStatus.CONFLICT, "AI_CALLBACK_ID_MISMATCH",
+                        "jobId, meetingId hoặc stage trong AI result không khớp callback");
+            }
+            if ("FAILED".equalsIgnoreCase(aiResult.getStatus())) {
+                if (request.getStatus() != JobStageStatus.FAILED
+                        && request.getStatus() != JobStageStatus.SUCCESS) {
+                    throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_AI_CALLBACK_STATUS",
+                            "AI result thất bại phải kết thúc stage");
+                }
+                request.setStatus(JobStageStatus.FAILED);
+                request.setErrorCode("AI_PROCESSING_FAILED");
+                request.setErrorMessage(aiResult.getResult() != null
+                        && aiResult.getResult().hasNonNull("errorMessage")
+                                ? aiResult.getResult().get("errorMessage").asText()
+                                : "AI Engine xử lý thất bại");
+            } else if (!"SUCCESS".equalsIgnoreCase(aiResult.getStatus())
+                    || request.getStatus() != JobStageStatus.SUCCESS) {
+                throw new BusinessException(HttpStatus.BAD_GATEWAY, "AI_RESPONSE_INVALID",
+                        "Trạng thái AI result không hợp lệ");
+            }
+        }
         if (request.getExecutionId() == null || !request.getExecutionId().equals(job.getExecutionId())) {
             throw new BusinessException(HttpStatus.CONFLICT, "STALE_EXECUTION_CALLBACK",
                     "Callback thiếu execution ID hợp lệ hoặc không thuộc execution hiện tại của Job");
@@ -613,6 +641,10 @@ public class JobServiceImpl implements JobService {
             if (job.getStatus() == JobStatus.PAUSE_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
             if (job.getStatus() == JobStatus.CANCEL_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
         } else if (request.getStatus() == JobStageStatus.SUCCESS) {
+
+            if (request.getStage() == PipelineStage.OUTPUT && request.getAiResult() != null) {
+                aiResultService.saveAIResult(request.getAiResult());
+            }
 
             jobStage.setStatus(JobStageStatus.SUCCESS);
             jobStage.setCompletedAt(Instant.now());

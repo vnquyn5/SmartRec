@@ -32,6 +32,8 @@ import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.impl.JobServiceImpl;
+import com.example.smartrec.service.AIResultService;
+import com.example.smartrec.model.dto.AIResponse;
 
 @ExtendWith(MockitoExtension.class)
 class JobServiceImplSpeakerCallbackTest {
@@ -42,6 +44,7 @@ class JobServiceImplSpeakerCallbackTest {
     @Mock private SpeakerSegmentRepository speakerSegmentRepository;
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
+    @Mock private AIResultService aiResultService;
     @InjectMocks private JobServiceImpl jobService;
 
     private UUID jobId;
@@ -82,6 +85,42 @@ class JobServiceImplSpeakerCallbackTest {
         verify(jobRepository).save(job);
         assertEquals(JobStatus.COMPLETED, job.getStatus());
         assertEquals(com.example.smartrec.entity.MeetingStatus.COMPLETED, meeting.getStatus());
+    }
+
+    @Test
+    void outputCallbackPassesAIResultToResultService() {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        AIResponse aiResult = AIResponse.builder()
+                .jobId(jobId)
+                .meetingId(meetingId)
+                .taskType("SUMMARY")
+                .status("SUCCESS")
+                .build();
+
+        jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId).stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
+                .segments(java.util.List.of()).aiResult(aiResult).build());
+
+        verify(aiResultService).saveAIResult(aiResult);
+    }
+
+    @Test
+    void outputCallbackRejectsAIResultWithDifferentJobId() {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        AIResponse aiResult = AIResponse.builder()
+                .jobId(UUID.randomUUID())
+                .meetingId(meetingId)
+                .taskType("SUMMARY")
+                .status("SUCCESS")
+                .build();
+
+        assertThrows(BusinessException.class, () -> jobService.handleWorkerCallback(jobId,
+                WorkerCallbackRequest.builder().executionId(executionId).stage(PipelineStage.OUTPUT)
+                        .status(JobStageStatus.SUCCESS).segments(java.util.List.of()).aiResult(aiResult).build()));
+
+        org.mockito.Mockito.verifyNoInteractions(aiResultService);
     }
 
     @Test

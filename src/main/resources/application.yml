@@ -80,6 +80,10 @@ job:
 smartrec:
   ai-engine:
     base-url: ${AI_ENGINE_BASE_URL:http://localhost:8000}
+    generate-path: ${AI_ENGINE_GENERATE_PATH:/api/v1/ai/generate}
+    internal-token: ${SMARTREC_INTERNAL_TOKEN:}
+    connect-timeout: ${AI_ENGINE_CONNECT_TIMEOUT:5000}
+    read-timeout: ${AI_ENGINE_READ_TIMEOUT:120000}
   internal-token: ${SMARTREC_INTERNAL_TOKEN:my-token-123}
 
   stt:
