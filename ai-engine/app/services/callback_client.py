@@ -58,3 +58,34 @@ class CallbackClient:
 
         logger.error(f"{tag} Không thể gửi callback sau {self.max_retries} lần thử.")
         return False
+
+    def send_ai_usage(
+        self,
+        backend_base_url: str,
+        payload: Dict[str, Any],
+        internal_token: Optional[str] = None,
+    ) -> bool:
+        """Send one inference usage event; callers should reuse requestId on retries."""
+        headers = {
+            "Content-Type": "application/json",
+            "X-Internal-Token": internal_token or "",
+        }
+        tag = f"[AI usage {payload.get('requestId', '<unknown>')}]"
+        for attempt in range(self.max_retries):
+            try:
+                response = requests.post(
+                    f"{backend_base_url.rstrip('/')}/internal/ai-usage",
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout_sec,
+                )
+                if 200 <= response.status_code < 300:
+                    return True
+                logger.warning("%s Backend rejected usage event (HTTP %s)", tag, response.status_code)
+            except requests.RequestException as exc:
+                # Do not log exception text: HTTP libraries can include sensitive request details.
+                logger.warning("%s Could not deliver usage event (%s)", tag, type(exc).__name__)
+            if attempt < self.max_retries - 1:
+                time.sleep([2, 5, 10][min(attempt, 2)])
+        logger.error("%s Usage event delivery failed after retries", tag)
+        return False

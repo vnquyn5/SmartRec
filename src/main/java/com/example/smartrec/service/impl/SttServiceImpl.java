@@ -12,7 +12,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.server.ResponseStatusException;
 
 import com.example.smartrec.config.SttProperties;
 import com.example.smartrec.entity.Job;
@@ -28,10 +27,7 @@ import com.example.smartrec.repository.TranscriptRepository;
 import com.example.smartrec.service.SttService;
 
 import jakarta.transaction.Transactional;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import lombok.Setter;
-import lombok.experimental.var;
 
 @Service
 @RequiredArgsConstructor

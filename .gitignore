@@ -72,3 +72,5 @@ __pycache__/
 # Local backups and Python test environments
 backups/
 .venv-test/
+
+/models/whisper/ggml-small-q5_1.bin
