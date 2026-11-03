@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pyannote.core import Annotation, Segment
 from app.services.speaker_diarizer import (
     SpeakerDiarizationService,
+    consolidate_speaker_turns,
     format_timestamp,
     speaker_diarization_service
 )
@@ -77,10 +78,9 @@ def test_silent_audio_no_speech():
             shutil.rmtree(test_dir)
 
 
-def test_collar_merging_before_filtering():
+def test_short_same_speaker_turns_merge_across_brief_pause():
     """
-    Hai turn liên tiếp cùng SPEAKER_00 mỗi turn 0.15s (< 0.2s), ngắt nghỉ 0.1s (<= 0.5s).
-    Gộp trước khi lọc giúp bảo toàn thành segment 0.4s hợp lệ.
+    Hai turn liên tiếp cùng SPEAKER_00 được gộp qua khoảng nghỉ 0.1s.
     """
     test_dir = tempfile.mkdtemp(prefix="test_diar_merge_first_")
     try:
@@ -106,6 +106,26 @@ def test_collar_merging_before_filtering():
     finally:
         if os.path.exists(test_dir):
             shutil.rmtree(test_dir)
+
+
+def test_turn_consolidation_does_not_bridge_intervening_speaker():
+    turns = [
+        (1.0, 2.0, "SPEAKER_A"),
+        (2.1, 2.4, "SPEAKER_B"),
+        (2.5, 3.5, "SPEAKER_A"),
+    ]
+    assert consolidate_speaker_turns(turns, max_gap=0.6, audio_duration=4.0) == [
+        (1.0, 2.0, "SPEAKER_A"),
+        (2.1, 2.4, "SPEAKER_B"),
+        (2.5, 3.5, "SPEAKER_A"),
+    ]
+
+
+def test_turn_consolidation_clamps_invalid_bounds_and_preserves_short_turns():
+    turns = [(-0.1, 0.1, "SPEAKER_A"), (1.0, 1.0, "SPEAKER_A"),
+             (3.9, 4.2, "SPEAKER_B")]
+    assert consolidate_speaker_turns(turns, max_gap=0.2, audio_duration=4.0) == [
+        (0.0, 0.1, "SPEAKER_A"), (3.9, 4.0, "SPEAKER_B")]
 
 
 def test_overlapping_speech_collar_merging():
@@ -153,9 +173,9 @@ def test_overlapping_speech_collar_merging():
             shutil.rmtree(test_dir)
 
 
-def test_vad_independence_when_segments_filtered_out():
+def test_short_speaker_turns_are_preserved_and_vad_remains_independent():
     """
-    VAD Timeline độc lập: dù các phân đoạn ngắn bị lọc hết, VAD intervals vẫn tồn tại.
+    Các đoạn speaker ngắn vẫn được giữ và VAD timeline vẫn phản ánh speech.
     """
     test_dir = tempfile.mkdtemp(prefix="test_diar_vad_indep_")
     try:
@@ -172,8 +192,8 @@ def test_vad_independence_when_segments_filtered_out():
                 min_speech_duration=0.2,
                 collar_merge_gap=0.5
             )
-            assert res.total_segments == 0
-            assert len(res.segments) == 0
+            assert res.total_segments == 2
+            assert [segment.duration_seconds for segment in res.segments] == [0.1, 0.1]
             assert len(res.vad_intervals) == 2
             assert res.speech_duration_seconds == 0.2
             assert res.speech_ratio > 0.0
@@ -253,9 +273,11 @@ def run_all_segmentation_tests():
     test_file_not_found_handling()
     test_invalid_audio_format()
     test_silent_audio_no_speech()
-    test_collar_merging_before_filtering()
+    test_short_same_speaker_turns_merge_across_brief_pause()
     test_overlapping_speech_collar_merging()
-    test_vad_independence_when_segments_filtered_out()
+    test_turn_consolidation_does_not_bridge_intervening_speaker()
+    test_turn_consolidation_clamps_invalid_bounds_and_preserves_short_turns()
+    test_short_speaker_turns_are_preserved_and_vad_remains_independent()
     test_multi_speaker_alternation()
     test_deterministic_audio_pipeline_end_to_end()
 

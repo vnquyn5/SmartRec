@@ -1,10 +1,11 @@
 import logging
 import wave
 from pathlib import Path
-from typing import Union, Optional, List, Tuple, Dict
+from typing import Union, Optional, List
 from pyannote.core import Annotation, Timeline
 
 from app.services.diarization_runtime import diarization_runtime
+from app.services.speaker_turn_postprocessor import consolidate_speaker_turns
 from app.schemas.diarization_schemas import (
     SpeakerSegment,
     SpeechActivityInterval,
@@ -33,7 +34,7 @@ class SpeakerDiarizationService:
 
     def __init__(self, min_speech_duration: float = 0.2, collar_merge_gap: float = 0.5):
         """
-        :param min_speech_duration: Thời lượng tối thiểu (giây) để tính là một segment hợp lệ (bỏ nhiễu).
+        :param min_speech_duration: Tham số tương thích API cũ; hiện không dùng để xóa các đoạn nói ngắn.
         :param collar_merge_gap: Khoảng ngắt giữa 2 lượt phát biểu của CÙNG 1 người để gộp phân đoạn.
         """
         self.min_speech_duration = min_speech_duration
@@ -57,9 +58,8 @@ class SpeakerDiarizationService:
     ) -> SpeakerSegmentationResponse:
         """
         Thực thi Diarization, trích xuất VAD và chuẩn hóa các Speaker Segments theo timestamp.
-        Xử lý đầy đủ trường hợp nói chồng lấn (Overlapping Speech) và chen ngang.
+        Giữ overlap riêng biệt và chỉ gộp lượt cùng speaker khi khoảng nghỉ an toàn.
         """
-        effective_min_duration = min_speech_duration if min_speech_duration is not None else self.min_speech_duration
         effective_collar_gap = collar_merge_gap if collar_merge_gap is not None else self.collar_merge_gap
 
         audio_path_obj = Path(audio_path)
@@ -102,11 +102,15 @@ class SpeakerDiarizationService:
             total_speech_sec = 0.0
 
             for segment in speech_timeline:
-                s_dur = round(segment.duration, 3)
+                start = round(max(0.0, min(segment.start, audio_duration)), 3)
+                end = round(max(0.0, min(segment.end, audio_duration)), 3)
+                if end <= start:
+                    continue
+                s_dur = round(end - start, 3)
                 total_speech_sec += s_dur
                 vad_intervals.append(SpeechActivityInterval(
-                    start_seconds=round(segment.start, 3),
-                    end_seconds=round(segment.end, 3),
+                    start_seconds=start,
+                    end_seconds=end,
                     duration_seconds=s_dur
                 ))
 
@@ -130,50 +134,32 @@ class SpeakerDiarizationService:
                     vad_intervals=[]
                 )
 
-            # 3. GỘP PHÂN ĐOẠN ĐỘC LẬP THEO TỪNG DIỄN GIẢ (PER-SPEAKER COLLAR MERGING)
-            # Khắc phục hoàn toàn lỗi phân đoạn sai khi các diễn giả nói chen ngang hoặc chồng lấn (Overlapping Speech)
-            speaker_turns_map: Dict[str, List[Tuple[float, float]]] = {}
-            for turn, _, speaker in raw_turns:
-                t_start = round(turn.start, 3)
-                t_end = round(turn.end, 3)
-                if speaker not in speaker_turns_map:
-                    speaker_turns_map[speaker] = []
-                speaker_turns_map[speaker].append((t_start, t_end))
+            # 3. Merge nearby same-speaker turns only if another speaker did not
+            # occupy the gap. Different-speaker overlaps remain separate entries.
+            turns = [
+                (turn.start, turn.end, speaker)
+                for turn, _, speaker in raw_turns
+                if isinstance(speaker, str) and speaker
+            ]
+            merged_turns = consolidate_speaker_turns(turns, effective_collar_gap, audio_duration)
 
-            merged_turns: List[Tuple[float, float, str]] = []
-            for speaker, turns in speaker_turns_map.items():
-                turns.sort(key=lambda x: x[0])
-                cur_start, cur_end = turns[0]
-
-                for next_start, next_end in turns[1:]:
-                    # Nếu lượt tiếp theo bị chồng lấn (overlapping) hoặc khoảng cách ngắt nghỉ <= effective_collar_gap
-                    if next_start <= cur_end or (next_start - cur_end) <= effective_collar_gap:
-                        cur_end = max(cur_end, next_end)
-                    else:
-                        merged_turns.append((cur_start, cur_end, speaker))
-                        cur_start, cur_end = next_start, next_end
-                merged_turns.append((cur_start, cur_end, speaker))
-
-            # 4. SẮP XẾP LẠI TOÀN BỘ PHÂN ĐOẠN THEO MỐC THỜI GIAN BẮT ĐẦU
-            merged_turns.sort(key=lambda x: (x[0], x[1], x[2]))
-
-            # 5. LỌC NHIỄU THEO THỜI LƯỢNG TỐI THIỂU (MIN DURATION FILTER)
+            # 4. Preserve short valid replies: diarization provides no confidence
+            # signal that safely distinguishes them from noise.
             valid_segments: List[SpeakerSegment] = []
             segment_counter = 1
 
             for s_start, s_end, speaker in merged_turns:
                 dur = round(s_end - s_start, 3)
-                if dur >= effective_min_duration:
-                    valid_segments.append(SpeakerSegment(
-                        segment_id=segment_counter,
-                        speaker=speaker,
-                        start_seconds=s_start,
-                        end_seconds=s_end,
-                        duration_seconds=dur,
-                        start_time=format_timestamp(s_start),
-                        end_time=format_timestamp(s_end)
-                    ))
-                    segment_counter += 1
+                valid_segments.append(SpeakerSegment(
+                    segment_id=segment_counter,
+                    speaker=speaker,
+                    start_seconds=s_start,
+                    end_seconds=s_end,
+                    duration_seconds=dur,
+                    start_time=format_timestamp(s_start),
+                    end_time=format_timestamp(s_end)
+                ))
+                segment_counter += 1
 
             unique_speakers = sorted(list(set(s.speaker for s in valid_segments)))
             status = "SUCCESS" if (valid_segments or vad_intervals) else "NO_SPEECH_DETECTED"

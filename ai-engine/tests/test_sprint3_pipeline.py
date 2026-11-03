@@ -70,6 +70,60 @@ def test_ollama_json_schema_response_is_validated():
     assert post.call_args.kwargs["json"]["options"]["temperature"] == 0
 
 
+def test_ollama_prompt_requests_summary_confirmed_decisions_and_grounded_tasks():
+    response = MagicMock()
+    response.json.return_value = {"message": {"content": json.dumps({
+        "summary": "Nhóm thống nhất dùng PostgreSQL và giao Nam chuẩn bị báo cáo.",
+        "key_decisions": ["Sử dụng PostgreSQL cho dự án."],
+        "tasks": [{"description": "Chuẩn bị báo cáo doanh thu", "assignee": "Nam",
+                   "deadline": "thứ Sáu", "source_start_ms": 1000,
+                   "source_text": "Anh Nam chuẩn bị báo cáo doanh thu trước thứ Sáu."}],
+    }, ensure_ascii=False)}}
+    events = [{"kind": "speech", "startTimeMs": 1000,
+               "text": "Anh Nam chuẩn bị báo cáo doanh thu trước thứ Sáu."},
+              {"kind": "speech", "startTimeMs": 2000,
+               "text": "Nhóm thống nhất sử dụng PostgreSQL cho dự án."}]
+    with patch("app.services.context_llm.requests.post", return_value=response) as post:
+        result = OllamaMeetingClient().analyze([{"events": events}])
+
+    assert result.summary.startswith("Nhóm thống nhất")
+    assert result.key_decisions == ["Sử dụng PostgreSQL cho dự án."]
+    assert len(result.tasks) == 1
+    request = post.call_args.kwargs["json"]
+    assert request["messages"][0]["role"] == "system"
+    assert "key_decisions" in request["messages"][0]["content"]
+    assert request["messages"][1]["role"] == "user"
+
+
+def test_empty_or_ocr_only_transcript_does_not_call_ollama():
+    with patch("app.services.context_llm.requests.post") as post:
+        result = OllamaMeetingClient().analyze([{"events": [
+            {"kind": "slide", "startTimeMs": 1000, "text": "Quarterly results"},
+            {"kind": "speech", "startTimeMs": 2000, "text": "  "},
+        ]}])
+    assert result.summary == ""
+    assert result.key_decisions == []
+    assert result.tasks == []
+    post.assert_not_called()
+
+
+def test_concrete_vietnamese_action_without_modal_is_kept_as_task():
+    source = "Anh Nam chuẩn bị báo cáo doanh thu trước thứ Sáu."
+    response = MagicMock()
+    response.json.return_value = {"message": {"content": json.dumps({
+        "tasks": [{"description": "Chuẩn bị báo cáo doanh thu", "assignee": "Nam",
+                   "deadline": "thứ Sáu", "source_start_ms": 2500,
+                   "source_text": source}],
+    }, ensure_ascii=False)}}
+    with patch("app.services.context_llm.requests.post", return_value=response):
+        result = OllamaMeetingClient().analyze([{"events": [{
+            "kind": "speech", "startTimeMs": 2500, "text": source,
+        }]}])
+    assert len(result.tasks) == 1
+    assert result.tasks[0].assignee == "Nam"
+    assert result.tasks[0].deadline == "thứ Sáu"
+
+
 def test_ollama_drops_tasks_without_explicit_source_signal():
     response = MagicMock()
     response.json.return_value = {"message": {"content": json.dumps({

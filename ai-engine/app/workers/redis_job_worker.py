@@ -726,8 +726,11 @@ def process_job(job_id: str):
             else:
                 from app.services.context_llm import OllamaMeetingClient
                 extraction = OllamaMeetingClient().analyze(context_data["chunks"])
+                has_transcript = any(str(segment.get("text", "")).strip()
+                                     for segment in transcript_data.get("segments", []))
                 ai_results = {
-                    "status": "SUCCESS", "provider": "ollama", "model": os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b"),
+                    "status": "SUCCESS" if has_transcript else "NO_USABLE_TRANSCRIPT",
+                    "provider": "ollama", "model": os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b"),
                     "summary": extraction.summary,
                     "keyDecisions": extraction.key_decisions,
                     "tasks": [task.model_dump(by_alias=True) for task in extraction.tasks],

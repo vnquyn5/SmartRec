@@ -37,6 +37,7 @@ DECISION_TASK = re.compile(
     r"task|deadline|by\s+(?:monday|tuesday|wednesday|thursday|friday|\d)|"
     r"quyết định|thống nhất|giao (?:cho|việc)|phụ trách|chịu trách nhiệm|"
     r"sẽ (?:làm|gửi|chuẩn bị|hoàn thành|nộp)|hãy (?:làm|gửi|chuẩn bị|hoàn thành)|"
+    r"(?:chuẩn bị|kiểm tra|gửi|hoàn thành|nộp)\b|trước\s+(?:thứ|chủ nhật|\d)|"
     r"nhiệm vụ|hạn chót|hạn hoàn thành)\b", re.I
 )
 RAW_DEADLINE = re.compile(
@@ -80,11 +81,18 @@ class OllamaMeetingClient:
         self.num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "3072"))
 
     def _extract(self, events: list[dict[str, Any]]) -> ChunkExtraction:
-        prompt = (
-            "Extract only supported facts from this meeting chunk. Never infer an assignee or deadline. "
-            "Write task descriptions in Vietnamese. Do not turn project goals into tasks unless a concrete action is assigned or committed. "
-            "For every task include exact sourceText and sourceStartTimeMs from the same speech event, plus speakerLabel when present. "
-            "Copy deadline wording verbatim from sourceText; never invent or normalize a date. Use confidence='verify' when evidence is incomplete. Return JSON only.\n" + json.dumps(events, ensure_ascii=False)
+        system_prompt = (
+            "Bạn là trợ lý phân tích biên bản cuộc họp. Chỉ dùng bằng chứng trong các sự kiện được cung cấp; "
+            "ưu tiên lời nói (kind=speech), OCR (kind=slide) chỉ bổ trợ khi rõ ràng liên quan. "
+            "Trả lời cùng ngôn ngữ với cuộc họp, ưu tiên tiếng Việt.\n"
+            "summary: viết 1-3 câu ngắn, nêu chủ đề và kết quả quan trọng của đoạn; không chép lại transcript. "
+            "Nếu đoạn không có thông tin hữu ích thì để summary rỗng.\n"
+            "key_decisions: chỉ liệt kê quyết định đã được xác nhận/thống nhất rõ ràng. "
+            "Câu hỏi, ý kiến, đề xuất chưa được chấp thuận không phải quyết định. Không có thì dùng [].\n"
+            "tasks: chỉ trích xuất hành động cụ thể đã được giao hoặc cam kết. Mục tiêu chung, đề xuất và dự định mơ hồ không phải task. "
+            "Không suy đoán người phụ trách hoặc hạn chót. Mỗi task phải trỏ sourceStartTimeMs tới đúng sự kiện speech và cung cấp sourceText nguyên văn từ sự kiện đó; "
+            "speakerLabel nếu có. Deadline phải giữ nguyên cách diễn đạt trong bằng chứng. Dùng confidence='verify' nếu bằng chứng không đầy đủ. "
+            "Không có task thì dùng []. Tuân thủ chính xác JSON schema; không thêm văn bản ngoài JSON."
         )
         last_error: Exception | None = None
         for attempt in range(2):
@@ -92,7 +100,10 @@ class OllamaMeetingClient:
                 response = requests.post(
                     f"{self.base_url}/api/chat",
                     json={"model": self.model, "stream": False, "format": ChunkExtraction.model_json_schema(),
-                          "messages": [{"role": "system", "content": prompt}],
+                          "messages": [
+                              {"role": "system", "content": system_prompt},
+                              {"role": "user", "content": json.dumps(events, ensure_ascii=False)},
+                          ],
                           "options": {"temperature": 0, "num_ctx": self.num_ctx},
                           "keep_alive": "0"},
                     timeout=self.timeout,
@@ -139,6 +150,13 @@ class OllamaMeetingClient:
         raise RuntimeError(f"Ollama extraction failed after retry: {last_error}") from last_error
 
     def analyze(self, chunks: list[dict[str, Any]]) -> MeetingExtraction:
+        # Avoid asking the model to invent meeting content when no usable event exists.
+        chunks = [chunk for chunk in chunks if any(
+            event.get("kind") == "speech" and str(event.get("text", "")).strip()
+            for event in chunk.get("events", [])
+        )]
+        if not chunks:
+            return MeetingExtraction()
         extractions = [self._extract(chunk["events"]) for chunk in chunks]
         tasks: dict[tuple[int, str], TaskItem] = {}
         decisions = []
