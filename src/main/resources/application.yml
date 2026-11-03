@@ -53,6 +53,7 @@ minio:
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket-name: ${MINIO_BUCKET:smartrec-media}
+  slide-bucket-name: ${MINIO_SLIDE_BUCKET:smartrec-slides}
   playback-url-expiry-seconds: ${MINIO_PLAYBACK_URL_EXPIRY_SECONDS:900}
 
 app:
@@ -65,8 +66,8 @@ trash:
 
 logging:
   level:
-    org.hibernate.SQL: DEBUG
-    org.hibernate.orm.jdbc.bind: TRACE
+    org.hibernate.SQL: INFO
+    org.hibernate.orm.jdbc.bind: INFO
 
 media:
   max-duration-hours: 4
@@ -79,7 +80,18 @@ job:
 smartrec:
   ai-engine:
     base-url: ${AI_ENGINE_BASE_URL:http://localhost:8000}
-  internal-token: ${SMARTREC_INTERNAL_TOKEN:}
+  internal-token: ${SMARTREC_INTERNAL_TOKEN:my-token-123}
+
+  stt:
+    request-path: ${STT_REQUEST_PATH:/api/v1/stt}
+    default-model: ${STT_DEFAULT_MODEL:default-stt}
+    default-language: ${STT_DEFAULT_LANGUAGE:vi}
+
+  ai-stt:
+    base-url: ${AI_WORKER_BASE_URL:http://localhost:8000}
+    transcribe-path: ${AI_WORKER_TRANSCRIBE_PATH:/ai/stt/transcribe}
+    model-name: ${AI_STT_MODEL_NAME:faster-whisper-large-v3}
+    model-version: "1.0.0"
 
 google:
   client-id: 341602707586-r5nt4c35p4jvgf1gii86b7459vfgkln0.apps.googleusercontent.com

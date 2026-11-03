@@ -45,6 +45,7 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
+                .requestMatchers(HttpMethod.POST, "/internal/stt/callback").permitAll()
                 .requestMatchers("/jobs/*/callback").permitAll()
                 .requestMatchers(HttpMethod.POST, "/jobs/*/heartbeat").permitAll()
                 .requestMatchers(HttpMethod.GET, "/jobs/dlq").authenticated()
@@ -64,7 +65,10 @@ public class SecurityConfig {
                 .requestMatchers("/upload/resume").authenticated()
                 .requestMatchers("/upload/cancel").authenticated()
                 .requestMatchers("/jobs", "/jobs/**").authenticated()
+                .requestMatchers(HttpMethod.POST, "/ai/stt/transcribe").authenticated()
                 .requestMatchers("/api/user/me","/api/user/change-password").permitAll()
+                .requestMatchers("/slide-keyframes/**").authenticated()
+                .requestMatchers("/transcripts/**").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
