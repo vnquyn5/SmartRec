@@ -46,9 +46,13 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
                 .requestMatchers("/jobs/*/callback").permitAll()
+                .requestMatchers(HttpMethod.POST, "/internal/jobs/*/ai-result").permitAll()
+                .requestMatchers(HttpMethod.POST, "/internal/stt/callback").permitAll()
+                .requestMatchers(HttpMethod.POST, "/internal/ai-usage").permitAll()
                 .requestMatchers(HttpMethod.POST, "/jobs/*/heartbeat").permitAll()
                 .requestMatchers(HttpMethod.GET, "/jobs/dlq").authenticated()
                 .requestMatchers(HttpMethod.GET, "/jobs/*").permitAll()
+                .requestMatchers(HttpMethod.POST, "/meetings/*/slides/metadata").permitAll()
                 .requestMatchers("/meetings/upload").authenticated()
                 .requestMatchers("/meetings", "/meetings/**").authenticated()
                 .requestMatchers("/upload/check-duplicate").authenticated()

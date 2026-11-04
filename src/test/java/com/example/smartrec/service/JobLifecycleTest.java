@@ -31,6 +31,7 @@ import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.enums.PipelineStage;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
+import com.example.smartrec.model.dto.AIResponse;
 import com.example.smartrec.repository.JobRepository;
 import com.example.smartrec.repository.JobDispatchOutboxRepository;
 import com.example.smartrec.repository.JobStageRepository;
@@ -48,6 +49,7 @@ class JobLifecycleTest {
     @Mock private SpeakerSegmentRepository speakerSegmentRepository;
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
+    @Mock private AIResultService aiResultService;
     @InjectMocks private JobServiceImpl service;
 
     private UUID jobId;
@@ -271,6 +273,8 @@ class JobLifecycleTest {
                 .executionId(executionId)
                 .stage(PipelineStage.OUTPUT)
                 .status(JobStageStatus.SUCCESS)
+                .aiResult(AIResponse.builder().jobId(jobId).meetingId(meetingId)
+                        .taskType("MEETING_ANALYSIS").status("SUCCESS").build())
                 .segments(List.of())
                 .build());
 
@@ -278,6 +282,7 @@ class JobLifecycleTest {
         assertEquals(JobStageStatus.CANCELLED, output.getStatus());
         verify(speakerSegmentRepository, never()).deleteByMeetingId(meetingId);
         verify(speakerSegmentRepository, never()).saveAll(any());
+        org.mockito.Mockito.verifyNoInteractions(aiResultService);
     }
 
     @Test

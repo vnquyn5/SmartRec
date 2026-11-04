@@ -68,7 +68,7 @@ def build_local_context(
                     "speaker_status": "PROVIDED" if segment.speakerId else "UNKNOWN",
                     "source_status": "LOCAL_VERIFIED",
                     "citation": {"kind": "LOCAL", "result": transcript_source.to_dict(),
-                                 "selector": {"segment_index": index}},
+                                "selector": {"segment_index": index}},
                 })
 
     ocr = load(ocr_source, "SLIDE_OCR")
@@ -153,7 +153,7 @@ def build_local_context(
                 })
 
     blocks.sort(key=lambda block: (block.get("start_ms", block.get("timestamp_ms")),
-                                   block["source_type"]))
+                                block["source_type"]))
     return {"schema": "smartrec.ai.local-context.v1", "meeting_id": meeting_id,
             "job_id": job_id, "time_unit": "milliseconds", "blocks": blocks,
             "warnings": warnings, "persistent_citations": False,

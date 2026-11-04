@@ -21,6 +21,7 @@ def parse_whisper_segments(
     segments: Sequence[Any],
     *,
     speaker_ids: Optional[Mapping[int, UUID]] = None,
+    speaker_labels: Optional[Mapping[int, str]] = None,
 ) -> list[TranscriptSegment]:
     """
     Chuẩn hóa Whisper segments thành danh sách câu thoại.
@@ -53,9 +54,16 @@ def parse_whisper_segments(
         if speaker_ids is not None:
             speaker_id = speaker_ids.get(index)
 
+        speaker_label = (
+            speaker_labels.get(index)
+            if speaker_labels is not None
+            else None
+        )
+
         result.append(
             TranscriptSegment(
                 speakerId=speaker_id,
+                speakerLabel=speaker_label,
                 startTimeMs=start_ms,
                 endTimeMs=end_ms,
                 text=text,
@@ -72,6 +80,7 @@ def build_transcript_payload(
     segments: Sequence[Any],
     language: str = "vi",
     speaker_ids: Optional[Mapping[int, UUID]] = None,
+    speaker_labels: Optional[Mapping[int, str]] = None,
 ) -> TranscriptPayload:
     """Tạo payload transcript theo hợp đồng dữ liệu Backend."""
 
@@ -84,5 +93,6 @@ def build_transcript_payload(
         segments=parse_whisper_segments(
             segments,
             speaker_ids=speaker_ids,
+            speaker_labels=speaker_labels,
         ),
     )

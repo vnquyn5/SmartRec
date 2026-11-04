@@ -89,15 +89,22 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-smartrec-media}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
+      LOCAL_LLM_ENDPOINT: ${LOCAL_LLM_ENDPOINT:-http://host.docker.internal:11434/api/generate}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}
       SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
       SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
       DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-cpu}
 
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_CACHE: /root/.cache/huggingface/hub
+      PYANNOTE_CACHE: /root/.cache/huggingface/hub
       STT_MODEL_ID: ${STT_MODEL_ID:-faster-whisper-small}
       WHISPER_MODEL_PATH: /models/${STT_MODEL_ID:-faster-whisper-small}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:8082/api/v1}
+      OCR_RECOGNITION_MODEL_DIR: ${OCR_RECOGNITION_MODEL_DIR:-/models/paddleocr/PP-OCRv6_medium_rec}
+      OCR_DETECTION_MODEL_DIR: ${OCR_DETECTION_MODEL_DIR:-/models/paddleocr/PP-OCRv6_medium_det}
       HF_TOKEN: ${HF_TOKEN:-}
     depends_on:
       - redis
@@ -105,6 +112,7 @@ services:
       - chromadb
     volumes:
       - ${SMARTREC_MODELS_DIR:?Set SMARTREC_MODELS_DIR to an absolute host path}:/models:ro
+      - ${SMARTREC_HF_CACHE_DIR:?Set SMARTREC_HF_CACHE_DIR to an absolute path}:/root/.cache/huggingface:ro
     restart: unless-stopped
     networks:
       - smartrec-net
@@ -148,6 +156,8 @@ services:
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       SMARTREC_HEARTBEAT_INTERVAL_SECONDS: ${SMARTREC_HEARTBEAT_INTERVAL_SECONDS:-12}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://host.docker.internal:8082/api/v1}
+      OCR_RECOGNITION_MODEL_DIR: ${OCR_RECOGNITION_MODEL_DIR:-/models/paddleocr/PP-OCRv6_medium_rec}
+      OCR_DETECTION_MODEL_DIR: ${OCR_DETECTION_MODEL_DIR:-/models/paddleocr/PP-OCRv6_medium_det}
       HF_TOKEN: ${HF_TOKEN:-}
       CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
     depends_on:

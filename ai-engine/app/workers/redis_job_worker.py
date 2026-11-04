@@ -20,7 +20,7 @@ from app.services.audio_extractor import AudioExtractorService, InvalidMediaErro
 from app.schemas.audio_schemas import AudioPipelineRequest
 from app.schemas.diarization_schemas import DiarizationExportPayload
 from app.tracking import ResourceTracker
-from app.services.callback_client import CallbackClient
+from app.services.callback_client import AIInferenceRequestError, CallbackClient
 from app.core.path_security import get_workspace_root, validate_safe_read_path, validate_safe_write_path
 from app.core.path_security import SUPPORTED_MEDIA_INPUT_EXTENSIONS
 from app.workers.processing_errors import (
@@ -150,8 +150,11 @@ def fetch_job_details(job_id: str) -> dict:
 
 
 def send_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
-    execution_id=None) -> bool:
+    execution_id=None, ai_result: Optional[Dict[str, Any]] = None) -> bool:
     """Gửi payload chuẩn hóa về endpoint POST /jobs/{jobId}/callback của Backend."""
+    if stage == "OUTPUT" and status == "SUCCESS" and ai_result is None:
+        raise ValueError("OUTPUT_SUCCESS_REQUIRES_AI_RESULT")
+
     url = f"{BACKEND_BASE_URL}/jobs/{job_id}/callback"
     payload = {
         "stage": stage,
@@ -160,15 +163,35 @@ def send_stage_callback(job_id: str, stage: str, status: str, segments=None, err
         "errorMessage": error_msg,
         "segments": segments
     }
+    if ai_result is not None:
+        payload["aiResult"] = ai_result
     return callback_client.send_callback(url, payload, job_id=job_id, internal_token=INTERNAL_TOKEN,
         execution_id=execution_id)
 
 
 def require_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
-    execution_id=None):
+    execution_id=None, ai_result: Optional[Dict[str, Any]] = None):
     if not send_stage_callback(job_id, stage, status, segments=segments, error_msg=error_msg, error_code=error_code,
-        execution_id=execution_id):
+        execution_id=execution_id, ai_result=ai_result):
         raise RetryableProcessingError(f"Backend callback failed for {job_id} {stage} {status}")
+
+
+def _validate_ai_result_response(ai_result: Dict[str, Any], job_id: str, meeting_id: str) -> None:
+    from uuid import UUID
+
+    try:
+        if (
+            str(UUID(str(ai_result.get("jobId")))) != str(UUID(str(job_id)))
+            or str(UUID(str(ai_result.get("meetingId")))) != str(UUID(str(meeting_id)))
+            or str(ai_result.get("status", "")).upper() != "SUCCESS"
+            or not isinstance(ai_result.get("result"), dict)
+        ):
+            raise ValueError("AI result identity or payload is invalid")
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise NonRetryableProcessingError(
+            "VALIDATION_ERROR",
+            "AI Router did not return a valid result for this Job and Meeting",
+        ) from exc
 
 
 def parse_timestamp_to_seconds(val) -> float:
@@ -478,7 +501,9 @@ def process_job(job_id: str):
     workspace_dir = os.path.join(str(get_workspace_root()), job_id)
     current_stage = "FFMPEG"
     heartbeat = None
-    preserve_workspace = False
+    # Until the execution lease is granted, this delivery does not own the
+    # shared job workspace (including terminal/duplicate deliveries).
+    preserve_workspace = True
     successful_stages = set()
     try:
         os.makedirs(workspace_dir, exist_ok=True)
@@ -499,6 +524,7 @@ def process_job(job_id: str):
         meeting_id = job_info.get("meetingId")
         logger.info(f"[{job_id}] ========== [BẮT ĐẦU XỬ LÝ JOB: {job_id}] ==========")
         heartbeat_state = heartbeat.checkpoint()
+        preserve_workspace = False
         current_stage = str(heartbeat_state.get("currentStage") or current_stage)
         successful_stages = set(heartbeat_state.get("successfulStages") or [])
         if not meeting_id:
@@ -639,7 +665,7 @@ def process_job(job_id: str):
             current_stage = "OUTPUT"
             heartbeat.checkpoint()
             require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
-            logger.info(f"[{job_id}] >>> Hoàn tất Stage 4: OUTPUT...")
+            logger.info(f"[{job_id}] >>> Bắt đầu Stage 4: OUTPUT...")
             diar_dict = diar_payload.model_dump()
             raw_segments = diar_dict.get("timeline") or diar_dict.get("segments") or []
             # Xác định thời lượng thực tế của file âm thanh để clamp mốc timeline
@@ -678,9 +704,53 @@ def process_job(job_id: str):
                         "endTime": end_time
                     })
             heartbeat.checkpoint()
-            require_stage_callback(job_id, current_stage, "SUCCESS", segments=formatted_segments,
-                execution_id=execution_id)
-            logger.info(f"[{job_id}] ========== [HOÀN TẤT THÀNH CÔNG JOB: {job_id}] ==========")
+            # Lazy import preserves lightweight Celery startup without loading ASR.
+            from app.services.stt_job_integration import run_stt_for_job
+            run_stt_for_job(
+                audio_path=clean_wav, formatted_segments=formatted_segments,
+                meeting_id=meeting_id, job_id=job_id, callback_client=callback_client,
+                backend_base_url=BACKEND_BASE_URL, internal_token=INTERNAL_TOKEN,
+                execution_id=execution_id, checkpoint=heartbeat.checkpoint,
+            )
+            heartbeat.checkpoint()
+            if file_ext in {".mp4", ".mkv"}:
+                from app.services.multimodal_pipeline import publish_job_ocr
+                publish_job_ocr(
+                    meeting_id=meeting_id, job_id=job_id, video_path=raw_input_path,
+                    output_dir=Path(workspace_dir) / f"ocr_{uuid4().hex}",
+                    storage_client=storage_client, callback_client=callback_client,
+                    backend_base_url=BACKEND_BASE_URL, internal_token=INTERNAL_TOKEN,
+                    execution_id=execution_id, checkpoint=heartbeat.checkpoint,
+                )
+            heartbeat.checkpoint()
+            try:
+                ai_result = callback_client.request_ai_result(
+                    BACKEND_BASE_URL,
+                    job_id,
+                    INTERNAL_TOKEN,
+                    execution_id,
+                    timeout_sec=float(os.getenv("AI_ROUTER_REQUEST_TIMEOUT_SECONDS", "900")),
+                )
+            except AIInferenceRequestError as exc:
+                if exc.code in {
+                    "EXECUTION_LEASE_LOST",
+                    "STALE_EXECUTION_CALLBACK",
+                    "STALE_JOB_CALLBACK",
+                }:
+                    raise _ExecutionLost() from exc
+                if exc.retryable:
+                    raise RetryableProcessingError(exc.code) from exc
+                raise NonRetryableProcessingError("VALIDATION_ERROR", exc.code) from exc
+            heartbeat.checkpoint()
+            _validate_ai_result_response(ai_result, job_id, meeting_id)
+            require_stage_callback(
+                job_id,
+                current_stage,
+                "SUCCESS",
+                segments=formatted_segments,
+                execution_id=execution_id,
+                ai_result=ai_result,
+            )
     except _ExecutionLost:
         preserve_workspace = True
         logger.info("[%s] Bỏ qua task vì execution lease đã thuộc worker khác hoặc Job terminal", job_id)
@@ -696,6 +766,7 @@ def process_job(job_id: str):
         control = heartbeat._send() if heartbeat else {}
         current_stage = control.get("currentStage") or current_stage
         require_stage_callback(job_id, current_stage, "CANCELLED", execution_id=execution_id)
+        preserve_workspace = False
         logger.info("[%s] Job cancelled safely at stage boundary %s", job_id, current_stage)
         return {"status": "CANCELLED", "stage": current_stage}
     except NonRetryableProcessingError as e:
@@ -715,6 +786,10 @@ def process_job(job_id: str):
             )
         return {"status": "FAILED", "stage": current_stage, "errorCode": e.error_code, "errorMessage": str(e)}
     except Exception as e:
+        # Backend retains successfulStages for resume. Keep their artifacts
+        # when Celery retries instead of turning a transient failure into
+        # WORKSPACE_LOST on the next delivery.
+        preserve_workspace = True
         if heartbeat and heartbeat._execution_lost.is_set():
             preserve_workspace = True
             logger.info("[%s] Bỏ qua exception vì execution lease đã mất", job_id)

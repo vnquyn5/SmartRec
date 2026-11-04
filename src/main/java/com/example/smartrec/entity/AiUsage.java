@@ -28,6 +28,28 @@ public class AiUsage {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Column(name = "request_id")
+    private UUID requestId;
+
+    @Column(name = "meeting_id")
+    private UUID meetingId;
+
+    @Column(name = "provider", length = 32)
+    private String provider;
+
+    @Column(name = "task_type", length = 100)
+    private String taskType;
+
+    @Column(name = "token_source", length = 64)
+    private String tokenSource;
+
+    @Column(name = "status", nullable = false, length = 20)
+    @Builder.Default
+    private String status = "success";
+
+    @Column(name = "error_code", length = 100)
+    private String errorCode;
+
     @Column(name = "job_id", nullable = false)
     private UUID jobId;
 
@@ -46,7 +68,7 @@ public class AiUsage {
     @Column(name = "total_tokens")
     private Long totalTokens;
 
-    @Column(name = "processing_time")
+    @Column(name = "processing_time_ms")
     private Long processingTime;
 
     @Column(name = "cpu_usage")

@@ -9,25 +9,58 @@ OCR và các bước xử lý AI liên quan.
 
 ## 1. Kiến trúc vận hành
 
-### Môi trường phát triển local
+```text
+Client
+  └─ Spring Boot Backend
+       ├─ PostgreSQL (Meetings, Jobs, transcript, summary, AI usage)
+       ├─ MinIO (media and OCR artifacts)
+       └─ AIModelRouter ── HTTP/internal token ──> FastAPI
+                                                    ├─ prepare/validate contract
+                                                    └─ Ollama / Qwen2.5-3B
+
+FastAPI ── enqueue/process request ──> Redis/Celery
+                                           └─ Celery Worker
+                                                ├─ FFmpeg / WebRTC
+                                                ├─ Pyannote diarization
+                                                ├─ Faster-Whisper STT
+                                                └─ Video keyframes / PaddleOCR
+                                                     └─ artifacts to MinIO
+```
+
+Backend owns job lifecycle and persists transcript and AI results. FastAPI
+provides the internal LLM contract; the Celery worker processes queued media
+and calls the Backend callbacks. Both FastAPI and the worker use Redis, MinIO
+and the configured model files. Ollama serves the local
+`qwen2.5:3b-instruct-q4_K_M` model; Gemini fallback is disabled for this
+local validation flow.
+
+### Hybrid local development (recommended on memory-constrained machines)
 
 - Docker: PostgreSQL, Redis, MinIO và ChromaDB.
-- Native Python: FastAPI, Celery và các model AI.
-- Pyannote chạy MPS hoặc CPU trên macOS.
-- Faster-Whisper chạy CPU trên macOS.
+- FastAPI: Docker container `ai-engine`.
+- Celery Worker: một tiến trình Python native trong `ai-engine/.venv`.
+- Pyannote có thể chạy MPS trên macOS; Faster-Whisper dùng CPU vì
+  CTranslate2 không hỗ trợ Apple MPS.
+- Ollama có thể chạy native trên host; FastAPI container truy cập host qua
+  `host.docker.internal`.
 
-Không khởi động thêm container `ai-engine` và
-`ai-worker` khi đang chạy AI Engine native.
+Worker là một Celery task pipeline đơn khối; không có Pyannote-only worker
+service. Không chạy Docker `ai-worker` và worker local đồng thời trên cùng
+Redis queue.
 
-Không cần triển khai Pyannote HTTP Server riêng.
+### Chạy toàn bộ AI Engine trong Docker
+
+Khi máy có đủ RAM, có thể chạy FastAPI và Celery Worker bằng Docker Compose.
+Compose mặc định dùng CPU cho Pyannote/Whisper; Ollama vẫn là service riêng
+được cấu hình bằng endpoint. Spring Boot Backend hiện chạy ngoài Compose.
 
 ### Môi trường Docker / Cloud GPU
 
-Repository có Dockerfile CPU và Dockerfile GPU.
-
-Docker GPU phục vụ tích hợp NVIDIA trên Linux.
-Cấu hình này **chưa được kiểm thử inference thực tế**.
-Thành viên có GPU cần xác minh trước khi triển khai.
+Repository có Dockerfile CPU và Dockerfile GPU. Override
+`docker-compose.gpu.yml` chỉ cấu hình `ai-worker` cho Whisper CUDA; Pyannote
+được đặt CPU. Cấu hình GPU **chưa được kiểm thử inference thực tế**.
+FastAPI, Backend, PostgreSQL, Redis, MinIO và Ollama không tự chuyển sang GPU
+chỉ bằng override này.
 
 ## 2. Phiên bản Pyannote
 
@@ -114,13 +147,33 @@ toàn bộ pipeline Pyannote 4.
 
 ## 5. Cấu hình môi trường
 
-Trong thư mục `ai-engine`:
+Có hai file mẫu cho hai mục đích khác nhau. Từ repository root, copy và cấu
+hình riêng từng file:
 
 ```bash
 cp .env.example .env
+cp ai-engine/.env.example ai-engine/.env
 ```
 
-Chỉnh file `.env` theo môi trường thực tế.
+`docker compose` đọc **root `.env`** để nội suy Compose. Python native đọc
+`ai-engine/.env` (cần nạp file trước khi khởi chạy process để các biến
+`os.getenv()` cũng được áp dụng). Không chép giá trị secret vào README hoặc
+Git. Tạo token/password riêng trong file local và dùng cùng
+`SMARTREC_INTERNAL_TOKEN` ở Backend, FastAPI và Worker. MinIO user/password
+của Compose phải khớp với access/secret key mà Backend và native Worker dùng.
+
+Trong hybrid mode, kiểm tra các endpoint theo nơi process chạy:
+
+| Process | Redis | MinIO | Backend / FastAPI | Ollama |
+| --- | --- | --- | --- | --- |
+| Native Worker | `localhost:6379` | `http://localhost:9000` | Backend callback: `http://127.0.0.1:8082/api/v1` | Không gọi trực tiếp |
+| Docker FastAPI | Compose service `redis:6379` | `http://minio:9000` | Không callback job trực tiếp | `http://host.docker.internal:11434/api/generate` |
+| Native Spring Boot | Không cần cho AI Engine contract | Backend config: `http://localhost:9000` | FastAPI: `http://localhost:8000` | Không gọi trực tiếp |
+
+Compose đã định nghĩa các địa chỉ Docker-side trên. Với thiết lập native,
+đặt các biến trong `ai-engine/.env` theo đúng bảng. Trên Linux, xác minh
+`host.docker.internal` phân giải được từ container trước khi dùng Ollama
+trên host; không thay endpoint bằng `localhost` bên trong container.
 
 Các nhóm biến quan trọng:
 
@@ -170,39 +223,54 @@ Thư mục model phải tồn tại và chứa `model.bin`.
 
 CTranslate2 không sử dụng Apple MPS.
 
-## 7. Khởi động Docker Infrastructure
+## 7. Khởi động services
 
-Tại thư mục gốc SmartRec:
+### Hybrid mode: Docker infrastructure + FastAPI, native Worker
+
+Tạo hai `.env` theo mục 5. Đảm bảo root `.env` có model/cache paths tuyệt đối
+được Compose yêu cầu (`SMARTREC_MODELS_DIR`, `SMARTREC_HF_CACHE_DIR`) dù
+Worker sẽ chạy native. Docker Compose vẫn nội suy các biến bắt buộc trong
+toàn bộ file khi chạy một nhóm service.
+
+Chạy tại repository root:
 
 ```bash
-set -a
-source ai-engine/.env
-set +a
-
-# Chỉ sử dụng trên môi trường local đã thống nhất
-# MinIO credentials với nhóm phụ trách hạ tầng.
-export MINIO_USER="${MINIO_USER:-$MINIO_ACCESS_KEY}"
-export MINIO_PASSWORD="${MINIO_PASSWORD:-$MINIO_SECRET_KEY}"
-
-export SMARTREC_MODELS_DIR="${SMARTREC_MODELS_DIR:-$HOME/smartrec-models}"
-export SMARTREC_HF_CACHE_DIR="${SMARTREC_HF_CACHE_DIR:-$HOME/.cache/huggingface}"
-
-mkdir -p "$SMARTREC_MODELS_DIR" "$SMARTREC_HF_CACHE_DIR"
-
-docker compose up -d postgres redis minio minio-init chromadb
+docker compose up -d postgres redis minio minio-init chromadb ai-engine
 ```
 
-Lưu ý: Docker Compose vẫn nội suy các biến bắt buộc
-trong toàn bộ file Compose ngay cả khi chỉ chạy hạ tầng.
+Lệnh này **không** chạy `ai-worker`. Backend Spring Boot chạy native theo cấu
+hình local hiện có; root `.env` không tự được Spring Boot nạp. FastAPI container
+nhận Redis/MinIO endpoints nội bộ từ Compose và Ollama endpoint trong root
+`.env`.
 
-Không dùng `docker compose up -d` toàn bộ khi
-FastAPI và Celery đang chạy native.
+### Toàn bộ AI services bằng Docker (khi đủ RAM)
 
-Nếu hạ tầng đang có dữ liệu và credentials riêng,
-cần giữ nguyên các giá trị thực tế đã thống nhất
-với Backend; không tự thay đổi mật khẩu MinIO.
+Tại repository root, tạo/cấu hình root `.env` theo `.env.example`, bảo đảm
+model files đã có trong `SMARTREC_MODELS_DIR` và Hugging Face cache tại
+`SMARTREC_HF_CACHE_DIR`, rồi chạy:
 
-## 8. Chạy FastAPI native
+```bash
+docker compose up -d postgres redis minio minio-init chromadb ai-engine ai-worker
+```
+
+Backend Spring Boot và Ollama không phải service trong Compose hiện tại; cần
+chạy riêng và cấu hình để truy cập các port đã publish. Không dùng lệnh này
+nếu một local Celery Worker đang hoạt động.
+
+### Dùng Docker GPU override trên Linux/NVIDIA
+
+Sau khi cấu hình root `.env`, kiểm tra và build:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml build ai-worker
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d postgres redis minio minio-init chromadb ai-engine ai-worker
+```
+
+Override này dùng `Dockerfile.gpu` cho Worker. GPU inference vẫn cần kiểm
+thử riêng; tham khảo mục 14.
+
+## 8. Chạy FastAPI native (khi muốn chạy cả Python native)
 
 Mở Terminal thứ nhất:
 
@@ -223,9 +291,27 @@ Nạp `.env` trước khi import source để các module
 Chỉ chạy `source` với file `.env` đáng tin cậy
 do chính bạn quản lý.
 
-## 9. Chạy Celery native
+## 9. Chạy Celery Worker native
 
-Mở Terminal thứ hai:
+Chỉ chạy local Worker sau khi đã xác nhận Docker `ai-worker` dừng và không có
+local Worker khác trên cùng Redis broker. Trước khi bắt đầu:
+
+```bash
+docker compose ps ai-worker
+docker exec smartrec-redis redis-cli LLEN celery
+ps -axo pid,command | grep '[c]elery.*worker'
+```
+
+Nếu `ai-worker` đang chạy, dừng **chỉ** service đó trước khi khởi động local
+Worker:
+
+```bash
+docker compose stop ai-worker
+```
+
+Xác nhận container đã dừng và không còn Celery Worker khác; queue bằng
+`LLEN` chỉ báo queued tasks, không chứng minh worker độc quyền. Mở Terminal
+thứ hai:
 
 ```bash
 cd ai-engine
@@ -239,46 +325,70 @@ python -m celery -A app.celery_app:celery_app worker \
   --loglevel=INFO --pool=solo --concurrency=1
 ```
 
-Giới hạn một worker để giảm tải RAM trên máy local.
+`--pool=solo --concurrency=1` phù hợp với local MPS và giới hạn bộ nhớ.
+Pyannote MPS được bật bằng `DIARIZATION_DEVICE=mps`. Whisper dùng CPU:
+`WHISPER_DEVICE=cpu`, `WHISPER_COMPUTE_TYPE=int8`, `WHISPER_MODEL_PATH` phải
+trỏ tới thư mục có `model.bin`. Local Paddle/PaddleOCR chưa được cài đặt
+trong môi trường đã kiểm thử nên local Worker đó chưa sẵn sàng cho Video OCR.
+
+Để chuyển lại Docker Worker, dừng local Worker bằng `Ctrl+C`, xác nhận process
+đã thoát, sau đó chạy `docker compose start ai-worker`. Không khởi động
+Docker Worker trước khi local Worker dừng.
 
 ## 10. Kiểm tra hoạt động
 
-Kiểm tra dependency:
+Chạy kiểm tra từ vị trí tương ứng:
 
 ```bash
+# Repository root: Docker service status
+docker compose ps
+
+# Local Python environment
+cd ai-engine
+source .venv/bin/activate
 python -m pip check
 ```
 
-Kiểm tra Redis:
+Kiểm tra hạ tầng và API:
 
 ```bash
+docker exec smartrec-postgres pg_isready -U postgres -d smartrec_db
 docker exec smartrec-redis redis-cli ping
+curl -fsS http://127.0.0.1:9000/minio/health/live
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:11434/api/tags
 ```
 
-Kết quả mong đợi là `PONG`.
+Redis mong đợi `PONG`; Ollama `/api/tags` cần liệt kê model đã cấu hình.
+FastAPI `/health` chỉ kiểm tra health; nó **không** chứng minh Backend→FastAPI
+contract hay inference hoạt động. Kiểm tra listener Backend bằng một API
+hiện có trên `http://127.0.0.1:8082/api/v1`; endpoint đăng nhập cần POST body
+đúng schema, nên request `{}` có thể trả validation 400 dù server sẵn sàng.
 
-Kiểm tra FastAPI:
+Để kiểm tra FastAPI internal routes mà không gọi inference, gửi request
+contract hợp lệ với token sai: `prepare`, `generate` và `validate` cần trả
+401 sau khi body được parse; payload `{}` có thể bị từ chối 422 trước bước
+authentication. Không gửi token qua shell command có thể được lưu lại hoặc
+hiển thị.
 
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-Để kiểm tra E2E, cần một job hợp lệ từ Backend,
-có đầy đủ thông tin MinIO object key.
-
-Ở lần kiểm thử trước, Celery đã nhận job nhưng
-job bị dừng do Backend không cung cấp `objectKey`
-hợp lệ. Đây là vấn đề tích hợp đã ghi nhận,
-không phải lỗi inference Pyannote native.
+Sau khi có một job mới từ Backend, theo dõi worker log và Backend Job API/DB
+để xác nhận từng stage, transcript, summary, action items, AI Usage và trạng
+thái cuối. Không đánh dấu E2E thành công chỉ dựa trên service health hoặc
+Worker nhận được Job.
 
 ## 11. Dừng hệ thống
 
-Nhấn `Ctrl+C` ở terminal FastAPI và Celery.
+Nhấn `Ctrl+C` trong terminal native Worker (và FastAPI native nếu đang
+chạy). Với Docker Worker, dừng riêng service:
+
+```bash
+docker compose stop ai-worker
+```
 
 Tại thư mục gốc SmartRec:
 
 ```bash
-docker compose stop postgres redis minio minio-init chromadb
+docker compose stop ai-engine postgres redis minio minio-init chromadb
 ```
 
 Không sử dụng `docker compose down -v` nếu không
@@ -293,22 +403,36 @@ chủ động muốn xóa dữ liệu trong Docker volumes.
 | Hugging Face 401/403 | Token và quyền truy cập model |
 | Whisper model not found | Model path và `model.bin` |
 | Pyannote `use_auth_token` | Thư viện phải khớp API `token=` |
-| Thiếu `objectKey` | Hợp đồng dữ liệu Backend – AI |
 | Docker Compose thiếu biến | Token và đường dẫn model/cache |
 | Worker quá tải RAM | Dùng một worker, không chạy AI Docker song song |
+| Docker/local worker cùng nhận Job | Dừng một Worker; chỉ cho một Worker pool dùng cùng Redis queue |
+| Backend `AI_ENGINE_CONFIGURATION_INVALID` | Kiểm tra base URL chỉ chứa scheme/host/port; API path được cấu hình riêng |
+| FastAPI 502 `SCHEMA_VALIDATION_ERROR` | Qwen đã trả output nhưng output không thỏa strict summary schema/citations; cần kiểm tra JSON/schema, không bật Gemini để lách |
+| Local Worker không xử lý được Video | Kiểm tra Paddle/PaddleOCR và model dirs; môi trường local đã kiểm thử hiện thiếu thư viện OCR |
+| `host.docker.internal` không phân giải trên Linux | Kiểm tra host-gateway/network mapping; không dùng `localhost` từ container để trỏ tới host |
 
 ## 13. Phạm vi kiểm thử và bàn giao
 
-Đã kiểm thử:
-- Pyannote native trên Apple MPS.
-- FastAPI và Celery native kết nối hạ tầng.
-- Xác thực Internal Token và nhận job.
+Trạng thái đã kiểm chứng thực tế trong local run:
 
-Chưa xác nhận:
-- E2E xử lý hoàn chỉnh với Backend hiện tại.
-- Docker CPU sau khi cập nhật dependencies.
-- NVIDIA GPU inference.
-- Toàn bộ pipeline PaddleOCR trong native `.venv`.
+- Upload media qua Backend và MinIO: thành công.
+- FFmpeg, WebRTC và Pyannote native trên Apple MPS: thành công.
+- Faster-Whisper STT: đã lưu transcript không rỗng đúng Meeting/Job.
+- Backend gọi FastAPI `prepare`: thành công; FastAPI được gọi để `generate`.
+- Ollama/Qwen2.5-3B inference đã chạy, nhưng output hai lần không đạt
+  `SCHEMA_VALIDATION_ERROR`. Một lần kiểm tra chẩn đoán riêng trả JSON hợp lệ
+  nhưng không có summary hay action items; kết quả đó không được persist.
+- Audio E2E **chưa PASS**: Job `68da3335-0633-4c0d-a042-3c7054f44976` thất
+  bại tại OUTPUT. Summary, action items và AI Usage chưa được lưu; Job chưa
+  chuyển `COMPLETED`.
+- Results API read-back cho Job thất bại với HTTP 500; nguyên nhân chưa được
+  xác định.
+- Video/OCR **chưa E2E PASS**. Local `.venv` thiếu Paddle/PaddleOCR; sự hiện
+  diện package trong FastAPI container không chứng minh OCR Worker stage chạy
+  thành công hoặc OCR artifacts được lưu.
+
+Không coi readiness, model availability, một phản hồi JSON chẩn đoán hoặc
+việc một stage riêng lẻ thành công là Full E2E PASS.
 
 
 ## 14. Lưu ý khi triển khai Docker GPU
@@ -364,3 +488,50 @@ TorchCodec 0.16.0 từ nguồn wheel CPU.
 Cách này cần kiểm tra khả năng import, giải mã audio và
 tương thích binary với PyTorch CUDA trên server thực tế.
 Không coi Docker build thành công là inference đã PASS.
+
+## 15. Triển khai toàn bộ stack trên Cloud GPU VPS
+
+Hiện tại repository Compose không định nghĩa Spring Boot Backend hoặc Ollama
+service. Một VPS có thể host toàn stack, nhưng hai thành phần đó vẫn phải
+được cài/chạy riêng trên host hoặc được triển khai bằng một cơ chế container
+được quản lý độc lập:
+
+- Spring Boot Backend: chạy trên VPS, kết nối PostgreSQL/Redis/MinIO/FastAPI.
+- Docker Compose: PostgreSQL, Redis, MinIO, ChromaDB, FastAPI và một Celery
+  Worker.
+- Ollama: chạy trên VPS GPU; FastAPI container gọi model qua
+  `LOCAL_LLM_ENDPOINT` (`host.docker.internal`/host gateway).
+- Model files và Hugging Face cache: persistent local volumes/directories,
+  mount đúng `SMARTREC_MODELS_DIR` và `SMARTREC_HF_CACHE_DIR`.
+
+Quy trình triển khai dựa trên cấu hình hiện có:
+
+1. Dùng Linux VPS có NVIDIA GPU, NVIDIA driver và NVIDIA Container Toolkit;
+   đo RAM hệ thống/VRAM theo model và concurrency thực tế, không giả định
+   cấu hình CPU/Docker Desktop local sẽ đủ tải.
+2. Cài Docker Compose, Python/Java chỉ khi Backend hoặc Worker chạy native,
+   FFmpeg và Ollama. Bảo đảm model Qwen đã có sẵn trong Ollama; không để
+   FastAPI/Worker tự tải model khi xử lý request.
+3. Tạo root `.env` từ `.env.example` và `ai-engine/.env` từ
+   `ai-engine/.env.example`. Điền secret riêng ngoài repository, giữ internal
+   token nhất quán, cấu hình đường dẫn persistent tuyệt đối và MinIO
+   credentials nhất quán.
+4. Đặt `LOCAL_LLM_ENDPOINT` trỏ từ FastAPI container tới Ollama host; đặt
+   `BACKEND_BASE_URL` trỏ từ Worker container tới Backend trên VPS. Xác minh
+   DNS/routing từ bên trong container, không dùng container `localhost` cho
+   service chạy trên host.
+5. Build/start stack CPU hoặc NVIDIA override bằng Compose commands ở mục 7;
+   chỉ chạy một Celery Worker cho queue đó. NVIDIA override hiện chỉ bật
+   CUDA cho Faster-Whisper; Pyannote vẫn CPU theo file cấu hình hiện có.
+6. Chạy connectivity/auth checks, sau đó synthetic Audio E2E và kiểm tra
+   transcript→Context→Qwen→persistence→Results API. Video/OCR cần nghiệm thu
+   riêng với PaddleOCR/model files.
+7. Trước khi nhận traffic: chỉ publish ports cần thiết, giới hạn PostgreSQL,
+   Redis, MinIO console/API và Ollama bằng firewall/private network, terminate
+   HTTPS tại reverse proxy, thiết lập backup/restore và giám sát disk/RAM/VRAM.
+   Compose hiện publish service ports trên host và chưa phải hardening profile
+   production; không mở các cổng quản trị ra Internet.
+
+Đây là phương án triển khai, chưa phải bằng chứng cloud GPU hoặc full E2E
+đã được kiểm thử. Cần xác minh driver/image/PyTorch-CUDA/TorchCodec tương thích
+trên đúng VPS trước khi coi GPU inference là sẵn sàng.
