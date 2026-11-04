@@ -14,6 +14,7 @@ export default function TranscriptView({
   speakers = [],
   speakerNameMap = {},
   selectedChunk = null,
+  currentTime = 0,
   onSelectChunk,
   onSeekSegment, 
 }) {
@@ -78,6 +79,20 @@ export default function TranscriptView({
     const found = transcripts.find((t) => t.chunkKey === selectedChunk.chunkKey);
     if (found) setActiveSegmentId(found.id);
   }, [selectedChunk]);
+
+  useEffect(() => {
+    if (typeof currentTime !== 'number' || transcripts.length === 0) return;
+
+    const currentSegment = transcripts.find((item) => {
+      const start = item.seconds;
+      const end = item.endSeconds > start ? item.endSeconds : start + 3;
+      return currentTime >= start && currentTime < end;
+    });
+
+    if (currentSegment && currentSegment.id !== activeSegmentId) {
+      setActiveSegmentId(currentSegment.id);
+    }
+  }, [currentTime, transcripts, activeSegmentId]);
 
   useEffect(() => {
     const container = listContainerRef.current;
@@ -225,21 +240,23 @@ export default function TranscriptView({
                 ref={(el) => (itemRefs.current[item.id] = el)}
                 onClick={() => handleSelectSegment(item)}
                 data-testid="transcript-card"
-                className={`p-3.5 rounded-xl transition-all cursor-pointer text-xs relative ${
+                className={`p-3.5 rounded-xl transition-all duration-200 cursor-pointer text-xs relative ${
                   isActive
-                    ? 'bg-[#132247] border border-[#38bdf8] shadow-lg shadow-cyan-950/30'
+                    ? 'bg-[#132247] border-2 border-[#38bdf8] shadow-lg shadow-cyan-950/40 ring-1 ring-[#38bdf8]/40 scale-[1.01]'
                     : 'bg-[#0d1526]/80 hover:bg-[#111c33] border border-[#1b2742]'
                 }`}
               >
-                {/* Header câu thoại: Speaker + Timestamp */}
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    {/* Avatar người nói */}
-                    <div className="w-6 h-6 rounded-full bg-[#1e3a6d] text-[#38bdf8] font-bold text-[10px] flex items-center justify-center border border-[#38bdf8]/30">
+                    <div className={`w-6 h-6 rounded-full font-bold text-[10px] flex items-center justify-center border transition-colors ${
+                      isActive 
+                        ? 'bg-[#2563eb] text-white border-[#38bdf8]' 
+                        : 'bg-[#1e3a6d] text-[#38bdf8] border-[#38bdf8]/30'
+                    }`}>
                       {(item.speakerName || 'S').charAt(0)}
                     </div>
 
-                    <span className="font-bold text-slate-100 text-xs">
+                    <span className={`font-bold text-xs transition-colors ${isActive ? 'text-white' : 'text-slate-200'}`}>
                       {item.speakerName}
                     </span>
 
@@ -248,15 +265,17 @@ export default function TranscriptView({
                     </span>
                   </div>
 
-                  {/* Timestamp Badge */}
-                  <span className="font-mono text-[11px] font-bold text-[#38bdf8] bg-[#0c162b] px-2 py-0.5 rounded-md border border-[#233a68] flex items-center gap-1">
-                    {isActive && <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-ping"></span>}
+                  <span className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1.5 transition-colors ${
+                    isActive 
+                      ? 'bg-[#1e3a8a] text-[#38bdf8] border-[#38bdf8]' 
+                      : 'bg-[#0c162b] text-slate-400 border-[#233a68]'
+                  }`}>
+                    {isActive && <span className="inline-block w-2 h-2 rounded-full bg-[#38bdf8] animate-pulse"></span>}
                     {item.timeStart} - {item.timeEnd}
                   </span>
                 </div>
 
-                {/* Nội dung câu thoại */}
-                <p className={`text-[12px] leading-relaxed pl-8 ${isActive ? 'text-white font-medium' : 'text-slate-300'}`}>
+                <p className={`text-[12px] leading-relaxed pl-8 transition-colors ${isActive ? 'text-white font-medium' : 'text-slate-300'}`}>
                   {renderHighlightedText(item.text, searchTerm)}
                 </p>
               </div>

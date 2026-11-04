@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import mockSummaryData from '../../mocks/mock_summary.json';
 
-
 function parseTimeToSeconds(timeStr) {
   if (!timeStr) return 0;
   const parts = timeStr.split(':').map((p) => Number(p.trim()) || 0);
@@ -45,7 +44,6 @@ export default function TaskMatrixTable({ onSeekSegment }) {
 
   return (
     <div className="w-full flex flex-col gap-4 text-slate-300">
-      {/* Header */}
       <div className="flex items-center justify-between pb-2 border-b border-[#1b2640]">
         <div>
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -58,7 +56,6 @@ export default function TaskMatrixTable({ onSeekSegment }) {
         </div>
       </div>
 
-      {/* Table Ma trận công việc */}
       <div className="w-full overflow-x-auto rounded-2xl border border-[#1b2742] bg-[#0d1526] shadow-xl">
         <table className="w-full min-w-[840px] text-left border-collapse text-xs">
           <thead>
@@ -69,27 +66,34 @@ export default function TaskMatrixTable({ onSeekSegment }) {
               <th className="py-3.5 px-4 w-44">Người thực hiện</th>
               <th className="py-3.5 px-4 w-36">Người giám sát</th>
               <th className="py-3.5 px-4 w-36">Hạn chót</th>
-              <th className= "py-3.5 px-4 w-36 text-center">Do uu tien</th>
+              <th className="py-3.5 px-4 w-36 text-center">Độ ưu tiên</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#152037]">
             {tasks.map((task) => (
-              <tr key={task.task_index} className="hover:bg-[#121c33] transition">
-                {/* STT */}
+              <tr 
+                key={task.task_index} 
+                className="hover:bg-[#121c33] transition cursor-pointer"
+                onClick={() => handleSeek(task.timestamp)}
+              >
                 <td className="py-3.5 px-3 text-center font-bold text-slate-400 whitespace-nowrap">
                   {task.task_index}
                 </td>
 
-                {/* Nội dung task */}
-                <td className="py-3.5 px-4 text-slate-200 font-medium leading-relaxed">
+                <td 
+                  className="py-3.5 px-4 text-slate-200 font-medium leading-relaxed hover:text-[#38bdf8] transition-colors"
+                  title="Nhấp để phát đoạn thảo luận nhiệm vụ này"
+                >
                   {task.content}
                 </td>
 
-                {/* Timestamp Button */}
                 <td className="py-3.5 px-3 text-center whitespace-nowrap">
                   <button
                     type="button"
-                    onClick={() => handleSeek(task.timestamp)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSeek(task.timestamp);
+                    }}
                     className="inline-flex items-center gap-1.5 whitespace-nowrap bg-[#101b30] hover:bg-[#1c3057] text-[#38bdf8] font-mono font-bold px-2.5 py-1 rounded border border-[#233a69] transition text-[11px]"
                     title="Nhấp để tua video đến mốc này"
                   >
@@ -97,8 +101,7 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                   </button>
                 </td>
 
-                {/* Assignee (Dropdown chọn / sửa) */}
-                <td className="py-3.5 px-4 whitespace-nowrap">
+                <td className="py-3.5 px-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                   <select
                     value={task.assignee || ''}
                     onChange={(e) => handleUpdate(task.task_index, 'assignee', e.target.value)}
@@ -119,13 +122,11 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                   </select>
                 </td>
 
-                {/* Responsible */}
                 <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
                   {task.responsible || <span className="text-slate-500 italic">Chưa xác định</span>}
                 </td>
 
-                {/* Deadline (Input Date) */}
-                <td className="py-3.5 px-4 whitespace-nowrap">
+                <td className="py-3.5 px-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                   <input
                     type="date"
                     value={task.deadline || ''}
@@ -138,27 +139,20 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                   />
                 </td>
 
-                {/* Priority */}
-                <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                <td className="py-3.5 px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                   <select
                     value={task.priority || 'Medium'}
-                    onChange={(e) =>
-                handleUpdate(task.task_index, 'priority',
-                  e.target.value)}
-                            className={`rounded-lg px-2.5 py-1
-                  text-xs font-semibold focus:outline-none cursor-pointer
-                  border transition [color-scheme:dark] ${
-                    PRIORITY_STYLES[task.priority] ||
-              PRIORITY_STYLES.Medium
-                            }`}
-                    >
-                      {PRIORITY_OPTIONS.map((p) => (
-                        <option key={p} value={p}
-          className="bg-[#0b1325] text-slate-200 font-medium">
-                    {p}
-                  </option>
-                      ))}
-                      </select>
+                    onChange={(e) => handleUpdate(task.task_index, 'priority', e.target.value)}
+                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none cursor-pointer border transition [color-scheme:dark] ${
+                      PRIORITY_STYLES[task.priority] || PRIORITY_STYLES.Medium
+                    }`}
+                  >
+                    {PRIORITY_OPTIONS.map((p) => (
+                      <option key={p} value={p} className="bg-[#0b1325] text-slate-200 font-medium">
+                        {p}
+                      </option>
+                    ))}
+                  </select>
                 </td>
               </tr>
             ))}
@@ -168,4 +162,3 @@ export default function TaskMatrixTable({ onSeekSegment }) {
     </div>
   );
 }
-

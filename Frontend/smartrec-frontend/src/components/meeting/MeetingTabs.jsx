@@ -7,7 +7,7 @@ import AudioAiStatus from './AudioAiStatus';
 import TranscriptView from './TranscriptView';
 import AiUsageBadge from './AiUsageBadge';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({ fileType = 'video', speakers = [], currentTime = 0, onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('transcript');
   const [speakerNameMap, setSpeakerNameMap] = useState({});
   const [selectedChunk, setSelectedChunk] = useState(null);
@@ -180,6 +180,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                   selectedChunk={selectedChunk}
                   onSelectChunk={setSelectedChunk}
                   onSeekSegment={onSeekSegment}
+                  currentTime={currentTime}
                 />
               </>
             )}
