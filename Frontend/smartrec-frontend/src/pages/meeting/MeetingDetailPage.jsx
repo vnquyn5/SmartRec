@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
+import ShareMeetingModal from "../../components/meeting/ShareMeetingModal";
+import { ShareIcon } from "../../components/common/icons";
 import { api } from "../../lib/http/client";
 import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
 
@@ -73,6 +75,7 @@ export default function MeetingDetailPage() {
   const [startingProcess, setStartingProcess] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState(false);
   const [refreshGeneration, setRefreshGeneration] = useState(0);
+  const [shareOpen, setShareOpen] = useState(false);
   const activeMeetingIdRef = useRef(null);
   const requestedJobIdsRef = useRef(new Set());
   const meetingSnapshotRef = useRef(null);
@@ -320,6 +323,18 @@ export default function MeetingDetailPage() {
           </button>
           <h1 className="text-base font-bold text-white tracking-wide truncate" title={fileName}>{fileName}</h1>
         </div>
+        {isCurrentMeeting && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#233357] bg-[#141d33] hover:bg-[#1a2642] text-xs font-semibold text-slate-200 transition shadow-sm"
+            >
+              <ShareIcon className="w-3.5 h-3.5" />
+              <span>Chia sẻ</span>
+            </button>
+          </div>
+        )}
       </div>
       {displayState === "loading" && <p className="text-sm text-slate-400 mb-4">Đang tải cuộc họp…</p>}
       {displayState === "error" && <p role="alert" className="text-sm text-red-300 mb-4">{meetingError || "Không thể tải thông tin cuộc họp."}</p>}
@@ -344,6 +359,12 @@ export default function MeetingDetailPage() {
         retrying={retrying}
         onSaveSpeakers={displayState === "completed" && !speakerError ? handleSaveSpeakers : undefined}
       />}
+      {shareOpen && isCurrentMeeting && (
+        <ShareMeetingModal
+          meeting={meeting}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </div>
   );
 }

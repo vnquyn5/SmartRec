@@ -17,6 +17,7 @@ import {
   TrashIcon,
 } from "../../components/common/icons.jsx";
 import DeleteMeetingModal from "../../components/meeting/DeleteMeetingModal.jsx";
+import ShareMeetingModal from "../../components/meeting/ShareMeetingModal.jsx";
 import MeetingStatusBadge from "../../components/meeting/MeetingStatusBadge.jsx";
 import { MEETING_STATUS } from "../../types/meeting.js";
 import {
@@ -133,7 +134,6 @@ export default function FileManagerPage() {
   const [isRenaming, setIsRenaming] = useState(false);
   const [infoMeeting, setInfoMeeting] = useState(null);
   const [shareMeeting, setShareMeeting] = useState(null);
-  const [shareCopied, setShareCopied] = useState(false);
   const [processMeeting, setProcessMeeting] = useState(null);
   const [isStartingProcess, setIsStartingProcess] = useState(false);
   const [processError, setProcessError] = useState("");
@@ -586,20 +586,6 @@ export default function FileManagerPage() {
 
   const openShare = (meeting) => {
     setShareMeeting(meeting);
-    setShareCopied(false);
-  };
-
-  const getShareUrl = (meeting) =>
-    `${window.location.origin}/meeting/${meeting.id}`;
-
-  const copyShareUrl = async () => {
-    if (!shareMeeting) return;
-    try {
-      await navigator.clipboard.writeText(getShareUrl(shareMeeting));
-      setShareCopied(true);
-    } catch {
-      setActionMessage("Không thể sao chép link. Vui lòng sao chép thủ công.");
-    }
   };
 
   const openMeetingDetail = (meeting) => {
@@ -1247,66 +1233,10 @@ export default function FileManagerPage() {
         </div>
       )}
       {shareMeeting && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
-          role="presentation"
-          onMouseDown={(event) =>
-            event.target === event.currentTarget && setShareMeeting(null)
-          }
-        >
-          <div
-            className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#101624] p-6 shadow-2xl shadow-black/50"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="share-meeting-title"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">
-                  Chia sẻ cuộc họp
-                </p>
-                <h2
-                  id="share-meeting-title"
-                  className="mt-1 text-lg font-bold text-white"
-                >
-                  Link chia sẻ file
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShareMeeting(null)}
-                className="text-xl leading-none text-slate-500 hover:text-white"
-                aria-label="Đóng"
-              >
-                ×
-              </button>
-            </div>
-            <div className="mt-5 flex items-center gap-2 rounded-lg border border-slate-700 bg-[#171d31] p-2">
-              <input
-                readOnly
-                value={getShareUrl(shareMeeting)}
-                className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-300 outline-none"
-                aria-label="Link chia sẻ"
-              />
-              <button
-                type="button"
-                onClick={copyShareUrl}
-                className="shrink-0 rounded-md bg-blue-500 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-400"
-              >
-                {shareCopied ? "Đã sao chép" : "Sao chép"}
-              </button>
-            </div>
-            <div className="mt-6 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShareMeeting(null)}
-                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 hover:border-slate-500"
-              >
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
+        <ShareMeetingModal
+          meeting={shareMeeting}
+          onClose={() => setShareMeeting(null)}
+        />
       )}
       {renameMeeting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">

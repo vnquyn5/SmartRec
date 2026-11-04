@@ -6,6 +6,7 @@ import DashboardPage from "../pages/dashboard/DashboardPage";
 import UploadPage from "../pages/upload/UploadPage";
 import FileManagerPage from "../pages/meeting/FileManagerPage";
 import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
+import GuestMeetingPage from "../pages/meeting/GuestMeetingPage";
 import TrashPage from "../pages/trash/TrashPage";
 import WorkspacePage from "../pages/workspace/WorkspacePage";
 
@@ -19,12 +20,14 @@ import { RequireAuth } from "../features/auth/RequireAuth";
 const AppRoutes = () => {
   return (
     <Routes>
-      {/* Authentication */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-      {/* Protected routes */}
+      <Route path="/shared/meeting/:id" element={<GuestMeetingPage />} />
+      <Route path="/public/meeting/:id" element={<GuestMeetingPage />} />
+      <Route path="/share/:id" element={<GuestMeetingPage />} />
+
       <Route element={<RequireAuth />}>
         <Route element={<DashboardLayout />}>
           <Route path="/" element={<DashboardPage />} />
