@@ -1760,7 +1760,6 @@ const UploadPage = () => {
                 padding: "0 24px",
                 fontSize: "13px",
               }}
-              disabled={!hasFiles}
               onClick={handleCancelAllUploads}
             >
               Hủy
