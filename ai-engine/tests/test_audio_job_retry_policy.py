@@ -575,6 +575,7 @@ def test_worker_rejects_ai_result_for_another_job_before_output_success():
 
 
 def test_output_success_callback_forwards_ai_result(monkeypatch):
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", True)
     send_callback = Mock(return_value=True)
     monkeypatch.setattr(redis_job_worker.callback_client, "send_callback", send_callback)
     ai_result = {
@@ -604,11 +605,26 @@ def test_output_success_callback_forwards_ai_result(monkeypatch):
 def test_output_success_callback_requires_ai_result(monkeypatch):
     send_callback = Mock(return_value=True)
     monkeypatch.setattr(redis_job_worker.callback_client, "send_callback", send_callback)
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", True)
 
     with pytest.raises(ValueError, match="OUTPUT_SUCCESS_REQUIRES_AI_RESULT"):
         redis_job_worker.send_stage_callback("job-ai", "OUTPUT", "SUCCESS")
 
     send_callback.assert_not_called()
+
+
+def test_output_success_without_ai_result_is_allowed_only_when_llm_is_disabled(monkeypatch):
+    send_callback = Mock(return_value=True)
+    monkeypatch.setattr(redis_job_worker.callback_client, "send_callback", send_callback)
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", False)
+
+    redis_job_worker.send_stage_callback(
+        "job-core", "OUTPUT", "SUCCESS", segments=[], execution_id="execution-core"
+    )
+
+    _, payload = send_callback.call_args.args
+    assert "aiResult" not in payload
+    assert payload["segments"] == []
 
 
 def test_output_callback_delivery_failure_does_not_report_success(monkeypatch):
@@ -637,6 +653,7 @@ def test_output_callback_delivery_failure_does_not_report_success(monkeypatch):
 def test_video_ocr_precedes_inference_and_failure_preserves_transcript(tmp_path, monkeypatch, ocr_failure):
     import app.services.stt_job_integration as stt
     import app.services.multimodal_pipeline as multimodal
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", True)
     events = []
     _configure_no_speech_worker(tmp_path, monkeypatch,
         lambda job, stage, status, **kw: events.append((stage, status)))
@@ -674,3 +691,39 @@ def test_video_ocr_precedes_inference_and_failure_preserves_transcript(tmp_path,
         redis_job_worker.process_job(job_id)
         assert order == ["STT_PERSISTED", "OCR", "LLM"]
         assert ("OUTPUT", "SUCCESS") in events
+
+
+def test_core_output_skips_router_when_llm_is_disabled(tmp_path, monkeypatch):
+    import app.services.stt_job_integration as stt
+    events = []
+    _configure_no_speech_worker(
+        tmp_path, monkeypatch,
+        lambda job, stage, status, **kw: events.append((stage, status, kw)),
+    )
+    job_id = "11111111-1111-4111-8111-111111111111"
+    meeting_id = "22222222-2222-4222-8222-222222222222"
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", False)
+    monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda _: {
+        "objectKey": "audio.wav", "meetingId": meeting_id, "status": "QUEUED"
+    })
+    monkeypatch.setattr(redis_job_worker, "_get_audio_chunker", lambda: SimpleNamespace(
+        process_audio=lambda **kw: {"is_chunked": False}))
+    payload = SimpleNamespace(status="SUCCESS", model_dump=lambda: {
+        "timeline": [{"speaker_label": "SPEAKER_01", "start": 0, "end": 0.005}]})
+    monkeypatch.setattr(redis_job_worker, "speaker_labeling_service", SimpleNamespace(
+        process_and_export=lambda **kw: (payload, None)))
+    stt_call = Mock(return_value={"segments": []})
+    monkeypatch.setattr(stt, "run_stt_for_job", stt_call)
+    inference = Mock(side_effect=AssertionError("LLM router must not be called"))
+    monkeypatch.setattr(redis_job_worker.callback_client, "request_ai_result", inference)
+
+    result = redis_job_worker.process_job(job_id)
+
+    assert result is None
+    stt_call.assert_called_once()
+    inference.assert_not_called()
+    output_success = [
+        event for event in events if event[0] == "OUTPUT" and event[1] == "SUCCESS"
+    ]
+    assert len(output_success) == 1
+    assert output_success[0][2]["ai_result"] is None

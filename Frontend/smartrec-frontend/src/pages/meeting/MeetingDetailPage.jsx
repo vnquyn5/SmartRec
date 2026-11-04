@@ -64,6 +64,9 @@ export default function MeetingDetailPage() {
   const [job, setJob] = useState(null);
   const [jobLoading, setJobLoading] = useState(false);
   const [speakers, setSpeakers] = useState([]);
+  const [results, setResults] = useState(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState("");
   const [speakersMeetingId, setSpeakersMeetingId] = useState(null);
   const [speakerLoading, setSpeakerLoading] = useState(false);
   const [pageState, setPageState] = useState("loading");
@@ -95,6 +98,9 @@ export default function MeetingDetailPage() {
       setJob(null);
       setJobLoading(false);
       setSpeakers([]);
+      setResults(null);
+      setResultsError("");
+      setResultsLoading(false);
       setSpeakersMeetingId(null);
       setSpeakerLoading(false);
       setSpeakerError("");
@@ -138,6 +144,8 @@ export default function MeetingDetailPage() {
     const status = jobStatus || meetingStatus;
 
     if (FAILURE_STATUSES.has(status) || (!jobStatus && FAILURE_STATUSES.has(meetingStatus))) {
+      setResults(null);
+      setResultsLoading(false);
       setSpeakers([]);
       setSpeakersMeetingId(id);
       setSpeakerError("");
@@ -148,25 +156,40 @@ export default function MeetingDetailPage() {
     if (COMPLETE_STATUSES.has(status) || (!jobStatus && COMPLETE_STATUSES.has(meetingStatus))) {
       setPageState("completed-loading-speakers");
       setSpeakerLoading(true);
-      try {
-        const speakerResponse = await api.get(`/meetings/${id}/speakers`);
-        if (isCancelled()) return { shouldPoll: false };
-        setSpeakers(groupSegments(Array.isArray(speakerResponse) ? speakerResponse : []));
+      setResultsLoading(true);
+      const resultsJobId = currentJob?.id || currentMeeting.activeJobId;
+      const [speakerOutcome, resultsOutcome] = await Promise.allSettled([
+        api.get(`/meetings/${id}/speakers`),
+        resultsJobId
+          ? api.get(`/meetings/${id}/jobs/${resultsJobId}/results`)
+          : Promise.reject(new Error("Không tìm thấy Processing Job của cuộc họp.")),
+      ]);
+      if (isCancelled()) return { shouldPoll: false };
+      if (speakerOutcome.status === "fulfilled") {
+        setSpeakers(groupSegments(Array.isArray(speakerOutcome.value) ? speakerOutcome.value : []));
         setSpeakersMeetingId(id);
         setSpeakerError("");
-        setPageState("completed");
-      } catch (error) {
-        if (isCancelled()) return { shouldPoll: false };
+      } else {
         setSpeakers([]);
         setSpeakersMeetingId(id);
-        setSpeakerError(apiMessage(error, "Không thể tải kết quả người nói."));
-        setPageState("completed");
-      } finally {
-        if (!isCancelled()) setSpeakerLoading(false);
+        setSpeakerError(apiMessage(speakerOutcome.reason, "Không thể tải kết quả người nói."));
       }
+      if (resultsOutcome.status === "fulfilled") {
+        setResults(resultsOutcome.value);
+        setResultsError("");
+      } else {
+        setResults(null);
+        setResultsError(apiMessage(resultsOutcome.reason, "Không thể tải transcript/OCR của cuộc họp."));
+      }
+      setPageState("completed");
+      setSpeakerLoading(false);
+      setResultsLoading(false);
       return { shouldPoll: false };
     }
 
+    setResults(null);
+    setResultsError("");
+    setResultsLoading(false);
     setSpeakers([]);
     setSpeakersMeetingId(null);
     setSpeakerError("");
@@ -196,6 +219,9 @@ export default function MeetingDetailPage() {
       setJob(null);
       setJobLoading(false);
       setSpeakers([]);
+      setResults(null);
+      setResultsError("");
+      setResultsLoading(false);
       setSpeakersMeetingId(null);
       setSpeakerLoading(false);
       setPageState("loading");
@@ -230,6 +256,8 @@ export default function MeetingDetailPage() {
     if (!job?.id || retrying) return;
     setRetrying(true);
     setSpeakers([]);
+    setResults(null);
+    setResultsError("");
     setSpeakersMeetingId(null);
     setPageState("processing");
     try {
@@ -334,6 +362,9 @@ export default function MeetingDetailPage() {
         aiError={displayState === "failed" ? failureMessage : ""}
         speakerError={speakerError}
         speakerLoading={speakerLoading}
+        results={results}
+        resultsLoading={resultsLoading}
+        resultsError={resultsError}
         onRetry={displayState === "failed" ? handleRetry : undefined}
         onPause={job && ["PROCESSING", "RUNNING", "RETRYING", "QUEUED"].includes(String(job.status).toUpperCase()) ? () => handleLifecycleAction(pauseJob, "PAUSE_REQUESTED") : undefined}
         onResume={displayState === "paused" ? () => handleLifecycleAction(resumeJob, "QUEUED") : undefined}

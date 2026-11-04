@@ -52,6 +52,47 @@ def test_failed_ocr_does_not_publish_or_silently_fallback(tmp_path, monkeypatch)
     args["callback_client"].send_ocr_metadata.assert_not_called()
 
 
+def test_no_slides_is_published_as_valid_result_and_does_not_call_slide_callback(tmp_path, monkeypatch):
+    args = fixture_job(tmp_path, monkeypatch)
+    artifact = tmp_path / "ocr-no-slides.json"
+    artifact.write_text(json.dumps({
+        "schema_version": "1.0",
+        "keyframe_run_id": "run_empty",
+        "result_status": "NO_SLIDES_DETECTED",
+        "total_slides": 0,
+        "successful_slides": 0,
+        "failed_slides": 0,
+        "slides": [],
+        "meeting_id": args["meeting_id"],
+        "job_id": args["job_id"],
+        "source_video_reference": {"kind": "LOCAL"},
+    }))
+    source = capture_local_source(tmp_path, artifact, args["meeting_id"], args["job_id"])
+    monkeypatch.setattr(pipeline, "run_local_multimodal", Mock(return_value={"ocr_source": source}))
+
+    assert pipeline.publish_job_ocr(**args) == 0
+    uploaded_path = args["storage_client"].upload_file.call_args.args[0]
+    assert json.loads(Path(uploaded_path).read_text())["result_status"] == "NO_SLIDES_DETECTED"
+    assert pipeline.publish_job_ocr(**args) == 0
+    assert args["storage_client"].upload_file.call_count == 2
+    calls = args["storage_client"].upload_file.call_args_list
+    assert calls[0].args[1] == calls[1].args[1]
+    assert args["callback_client"].send_ocr_metadata.call_count == 0
+
+
+def test_failed_slide_preserves_specific_ocr_error_code(tmp_path, monkeypatch):
+    args = fixture_job(tmp_path, monkeypatch, "FAILED")
+    payload = json.loads((tmp_path / "ocr.json").read_text())
+    payload["slides"][0]["error"] = {"code": "OCR_INFERENCE_FAILED"}
+    (tmp_path / "ocr.json").write_text(json.dumps(payload))
+    source = capture_local_source(tmp_path, tmp_path / "ocr.json", args["meeting_id"], args["job_id"])
+    monkeypatch.setattr(pipeline, "run_local_multimodal", Mock(return_value={"ocr_source": source}))
+
+    with pytest.raises(RetryableProcessingError, match="OCR_INFERENCE_FAILED"):
+        pipeline.publish_job_ocr(**args)
+    args["storage_client"].upload_file.assert_not_called()
+
+
 def test_lease_loss_after_upload_prevents_metadata(tmp_path, monkeypatch):
     args = fixture_job(tmp_path, monkeypatch)
     class Lost(Exception): pass

@@ -108,6 +108,23 @@ class JobServiceImplSpeakerCallbackTest {
     }
 
     @Test
+    void outputWithoutAiResultCompletesCorePipelineWhenLlmIsDisabled() {
+        ReflectionTestUtils.setField(jobService, "llmEnabled", false);
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+
+        jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId).stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
+                .segments(java.util.List.of()).build());
+
+        assertEquals(JobStatus.COMPLETED, job.getStatus());
+        assertEquals(com.example.smartrec.entity.MeetingStatus.COMPLETED, meeting.getStatus());
+        assertEquals(JobStageStatus.SUCCESS, outputStage.getStatus());
+        verify(aiResultService, org.mockito.Mockito.never()).saveAIResult(any());
+        verify(speakerSegmentRepository).deleteByMeetingId(meetingId);
+    }
+
+    @Test
     void aiPersistenceFailureCannotCompleteOrDeleteSpeakers() {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
                 .thenReturn(Optional.of(outputStage));

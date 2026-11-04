@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     local_llm_model: Optional[str] = None
     local_llm_connect_timeout_seconds: float = 5.0
     local_llm_timeout_seconds: float = 120.0
+    # Keep legacy inference behavior unless an operator explicitly disables it.
+    smartrec_llm_enabled: bool = True
 
     # Pyannote Speaker Diarization Settings
     hf_token: Optional[str] = None

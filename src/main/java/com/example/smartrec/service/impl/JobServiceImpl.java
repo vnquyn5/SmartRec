@@ -56,6 +56,8 @@ public class JobServiceImpl implements JobService {
     private int maxRetry;
     @Value("${job.heartbeat-timeout-seconds:90}")
     private long heartbeatTimeoutSeconds;
+    @Value("${smartrec.ai-router.enabled:true}")
+    private boolean llmEnabled = true;
 
     @Override
     @Transactional
@@ -591,11 +593,12 @@ public class JobServiceImpl implements JobService {
                         "Không tìm thấy Job Stage"));
         if (isIdempotentCallback(job, jobStage, request)) return;
 
-        // OUTPUT can only succeed after AI processing returns a result.
-        // PROCESSING callbacks remain valid without aiResult.
+        // Keep the legacy requirement while LLM inference is enabled. In M1 the
+        // Core Pipeline can complete without producing AI summary/tasks.
         if (request.getStage() == PipelineStage.OUTPUT
                 && request.getStatus() == JobStageStatus.SUCCESS
-                && request.getAiResult() == null) {
+                && request.getAiResult() == null
+                && llmEnabled) {
             throw new BusinessException(
                     HttpStatus.BAD_REQUEST,
                     "AI_RESULT_REQUIRED",

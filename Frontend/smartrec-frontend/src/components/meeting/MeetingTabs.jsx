@@ -6,7 +6,7 @@ import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 import TranscriptPanel from './TranscriptPanel';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, results, resultsLoading, resultsError, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('speaker');
 
   // Khai báo các tab theo yêu cầu 
@@ -25,7 +25,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     {
       id: 'task',
       label: 'Task',
-      count: 3,
+      ...(results ? { count: results.actionItems?.length ?? 0 } : {}),
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4" />
@@ -59,7 +59,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     tabs.push({
       id: 'slide',
       label: 'Slide Keyframes & OCR',
-      count: 6,
+      ...(results ? { count: results.slides?.length ?? 0 } : {}),
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="8" y1="6" x2="21" y2="6" />
@@ -110,9 +110,24 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
 
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
-        {activeTab === 'summary' && <MeetingSummaryTab />}
-        {activeTab === 'task' && <MeetingTasksTab />}
-        {activeTab === 'transcript' && <TranscriptPanel onSeek={onSeek} />}
+        {activeTab === 'summary' && <MeetingSummaryTab
+          summary={results?.summary}
+          llmStatus={results?.llmStatus}
+          loading={resultsLoading}
+          error={resultsError}
+        />}
+        {activeTab === 'task' && <MeetingTasksTab
+          tasks={results?.actionItems || []}
+          llmStatus={results?.llmStatus}
+          loading={resultsLoading}
+          error={resultsError}
+        />}
+        {activeTab === 'transcript' && <TranscriptPanel
+          transcripts={results?.transcripts || []}
+          loading={resultsLoading}
+          error={resultsError}
+          onSeek={onSeekSegment}
+        />}
         {activeTab === 'speaker' && (
           <div className="h-full flex flex-col gap-4">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
@@ -165,7 +180,13 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
             )}
           </div>
         )}
-        {activeTab === 'slide' && <SlideOcrTab />}
+        {activeTab === 'slide' && <SlideOcrTab
+          slides={results?.slides || []}
+          status={results?.ocrStatus}
+          loading={resultsLoading}
+          error={resultsError}
+          onSeek={onSeekSegment}
+        />}
       </div>
     </div>
   );

@@ -34,6 +34,11 @@ logger = logging.getLogger("smartrec.worker")
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://host.docker.internal:8082/api/v1").rstrip("/")
 INTERNAL_TOKEN = settings.smartrec_internal_token or ""
+
+
+def llm_enabled() -> bool:
+    """Return the shared M1/M2 inference switch, defaulting to legacy behavior."""
+    return settings.smartrec_llm_enabled
 # Khởi tạo các client dùng chung cho processor.
 storage_client = StorageClient()
 callback_client = CallbackClient()
@@ -152,7 +157,7 @@ def fetch_job_details(job_id: str) -> dict:
 def send_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
     execution_id=None, ai_result: Optional[Dict[str, Any]] = None) -> bool:
     """Gửi payload chuẩn hóa về endpoint POST /jobs/{jobId}/callback của Backend."""
-    if stage == "OUTPUT" and status == "SUCCESS" and ai_result is None:
+    if stage == "OUTPUT" and status == "SUCCESS" and ai_result is None and llm_enabled():
         raise ValueError("OUTPUT_SUCCESS_REQUIRES_AI_RESULT")
 
     url = f"{BACKEND_BASE_URL}/jobs/{job_id}/callback"
@@ -723,26 +728,30 @@ def process_job(job_id: str):
                     execution_id=execution_id, checkpoint=heartbeat.checkpoint,
                 )
             heartbeat.checkpoint()
-            try:
-                ai_result = callback_client.request_ai_result(
-                    BACKEND_BASE_URL,
-                    job_id,
-                    INTERNAL_TOKEN,
-                    execution_id,
-                    timeout_sec=float(os.getenv("AI_ROUTER_REQUEST_TIMEOUT_SECONDS", "900")),
-                )
-            except AIInferenceRequestError as exc:
-                if exc.code in {
-                    "EXECUTION_LEASE_LOST",
-                    "STALE_EXECUTION_CALLBACK",
-                    "STALE_JOB_CALLBACK",
-                }:
-                    raise _ExecutionLost() from exc
-                if exc.retryable:
-                    raise RetryableProcessingError(exc.code) from exc
-                raise NonRetryableProcessingError("VALIDATION_ERROR", exc.code) from exc
-            heartbeat.checkpoint()
-            _validate_ai_result_response(ai_result, job_id, meeting_id)
+            ai_result = None
+            if llm_enabled():
+                try:
+                    ai_result = callback_client.request_ai_result(
+                        BACKEND_BASE_URL,
+                        job_id,
+                        INTERNAL_TOKEN,
+                        execution_id,
+                        timeout_sec=float(os.getenv("AI_ROUTER_REQUEST_TIMEOUT_SECONDS", "900")),
+                    )
+                except AIInferenceRequestError as exc:
+                    if exc.code in {
+                        "EXECUTION_LEASE_LOST",
+                        "STALE_EXECUTION_CALLBACK",
+                        "STALE_JOB_CALLBACK",
+                    }:
+                        raise _ExecutionLost() from exc
+                    if exc.retryable:
+                        raise RetryableProcessingError(exc.code) from exc
+                    raise NonRetryableProcessingError("VALIDATION_ERROR", exc.code) from exc
+                heartbeat.checkpoint()
+                _validate_ai_result_response(ai_result, job_id, meeting_id)
+            else:
+                logger.info("[%s] LLM disabled; OUTPUT will persist Core Pipeline artifacts only", job_id)
             require_stage_callback(
                 job_id,
                 current_stage,
@@ -797,7 +806,8 @@ def process_job(job_id: str):
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
         try:
             require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e),
-                error_code="RETRYABLE_PROCESSING_ERROR", execution_id=execution_id)
+                error_code=getattr(e, "error_code", None) or "RETRYABLE_PROCESSING_ERROR",
+                execution_id=execution_id)
         except RetryableProcessingError:
             logger.exception("Failed to report worker failure to Backend")
         raise RetryableProcessingError(str(e)) from e

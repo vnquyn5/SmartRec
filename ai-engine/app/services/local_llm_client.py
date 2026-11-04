@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import requests
 
 from app.core.config import settings
+from app.schemas.meeting_summary import MeetingSummary
 
 
 logger = logging.getLogger("smartrec.local_llm")
@@ -43,6 +44,7 @@ class LocalLLMClient:
             "prompt": prompt,
             "system": system_prompt,
             "stream": False,
+            "format": MeetingSummary.model_json_schema(),
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -98,6 +100,11 @@ class LocalLLMClient:
                 "ollama_metadata"
                 if prompt_tokens is not None or output_tokens is not None
                 else "unavailable"
+            ),
+            "done_reason": (
+                body.get("done_reason")
+                if isinstance(body.get("done_reason"), str)
+                else None
             ),
             "processing_time_ms": max(0, int((time.monotonic() - started) * 1000)),
         }

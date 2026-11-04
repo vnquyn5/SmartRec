@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.client.RestClientException;
 
 import com.example.smartrec.config.AIModelRouterProperties;
@@ -55,10 +56,14 @@ public class AIModelRouter {
     private final AIResponseValidator responseValidator;
     private final ObjectMapper objectMapper;
 
+    @Value("${smartrec.ai-router.enabled:true}")
+    private boolean enabled = true;
+
     private int localFailures;
     private long localCircuitOpenUntilNanos;
 
     public AIResponse generate(UUID jobId, UUID executionId) {
+        requireEnabled();
         Job job = jobRepository.findById(jobId)
                 .orElseThrow(() -> new BusinessException(
                         HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "Không tìm thấy Job cần inference"));
@@ -66,6 +71,7 @@ public class AIModelRouter {
     }
 
     public AIResponse generate(UUID jobId, UUID meetingId, UUID executionId) {
+        requireEnabled();
         Job job = requireLiveExecution(jobId, meetingId, executionId);
         JobContext context = contextPayloadService.createJobContext(meetingId, jobId, true);
         verifyContext(context, meetingId, jobId);
@@ -138,6 +144,13 @@ public class AIModelRouter {
         return routeToGemini(
                 jobId, meetingId, executionId, requestId, prepared,
                 Math.max(0, localAttemptsExecuted - 1), localFailure);
+    }
+
+    private void requireEnabled() {
+        if (!enabled) {
+            throw new BusinessException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "LLM_DISABLED", "LLM inference is disabled by configuration");
+        }
     }
 
     private AIResponse routeToGemini(

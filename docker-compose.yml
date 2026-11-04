@@ -91,6 +91,7 @@ services:
       CHROMA_PORT: 8000
       LOCAL_LLM_ENDPOINT: ${LOCAL_LLM_ENDPOINT:-http://host.docker.internal:11434/api/generate}
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}
+      SMARTREC_LLM_ENABLED: ${SMARTREC_LLM_ENABLED:-true}
       SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
       SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
       DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-cpu}
@@ -128,6 +129,7 @@ services:
         "app.celery_app.celery_app",
         "worker",
         "--loglevel=INFO",
+        "--pool=solo",
         "--concurrency=${CELERY_WORKER_CONCURRENCY:-1}",
       ]
     environment:
@@ -141,6 +143,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-smartrec-media}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
+      SMARTREC_LLM_ENABLED: ${SMARTREC_LLM_ENABLED:-true}
       SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
       SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
       DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-cpu}

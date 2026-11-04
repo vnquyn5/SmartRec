@@ -4,6 +4,8 @@ server:
     context-path: /api/v1
 
 spring:
+  config:
+    import: "optional:file:.env[.properties]"
   application:
     name: smartrec-backend
   profiles:
@@ -87,6 +89,7 @@ smartrec:
     connect-timeout: ${AI_ENGINE_CONNECT_TIMEOUT:5000}
     read-timeout: ${AI_ENGINE_READ_TIMEOUT:130000}
   ai-router:
+    enabled: ${SMARTREC_LLM_ENABLED:true}
     local-max-attempts: ${AI_LOCAL_MAX_ATTEMPTS:2}
     local-retry-backoff-ms: ${AI_LOCAL_RETRY_BACKOFF_MS:100}
     local-circuit-failure-threshold: ${AI_LOCAL_CIRCUIT_FAILURE_THRESHOLD:3}

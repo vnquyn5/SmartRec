@@ -23,10 +23,13 @@ import com.example.smartrec.model.dto.MeetingResultsResponse;
 import com.example.smartrec.model.dto.MeetingResultsResponse.ActionItemResult;
 import com.example.smartrec.model.dto.MeetingResultsResponse.SummaryResult;
 import com.example.smartrec.model.dto.MeetingResultsResponse.TranscriptResult;
+import com.example.smartrec.model.dto.MeetingResultsResponse.SlideResult;
+import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.model.dto.TranscriptResponse;
 import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
+import com.example.smartrec.repository.MeetingSlideRepository;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.TranscriptService;
@@ -44,12 +47,13 @@ public class MeetingResultsController {
     private final SummaryRepository summaryRepository;
     private final ActionItemRepository actionItemRepository;
     private final SpeakerSegmentRepository speakerSegmentRepository;
+    private final MeetingSlideRepository meetingSlideRepository;
 
     @GetMapping
     public ResponseEntity<MeetingResultsResponse> getResults(
             @PathVariable UUID meetingId,
             @PathVariable UUID jobId) {
-        meetingService.getMeeting(meetingId);
+        MeetingResponseDTO meeting = meetingService.getMeeting(meetingId);
         JobResponse job = jobService.getJobForCurrentUser(jobId);
         if (job == null || !meetingId.equals(job.getMeetingId())) {
             throw notFound();
@@ -89,9 +93,33 @@ public class MeetingResultsController {
         List<ActionItemResult> actionItems = actionItemRepository.findByProcessingJobId(jobId).stream()
                 .map(item -> toActionItem(meetingId, item, summaryEntity))
                 .toList();
+        List<SlideResult> slides = meetingSlideRepository
+                .findByMeetingIdAndJobIdOrderByTimestampMsAsc(meetingId, jobId)
+                .stream()
+                .map(item -> new SlideResult(item.getSlideId(), item.getTimestampMs(), item.getObjectKey(),
+                        item.getOcrText(), item.getTopic(), item.getKeywords()))
+                .toList();
+        String llmStatus = summaryEntity == null ? "NOT_PROCESSED" : "PROCESSED";
+        String ocrStatus = resolveOcrStatus(meeting, job, slides);
 
         return ResponseEntity.ok(new MeetingResultsResponse(
-                meetingId, jobId, job.getStatus(), transcripts, summary, actionItems));
+                meetingId, jobId, job.getStatus(), transcripts, summary, actionItems,
+                llmStatus, ocrStatus, slides));
+    }
+
+    private String resolveOcrStatus(MeetingResponseDTO meeting, JobResponse job, List<SlideResult> slides) {
+        if (meeting.getMimeType() == null || !meeting.getMimeType().toLowerCase().startsWith("video/")) {
+            return "NOT_APPLICABLE";
+        }
+        if (job.getStatus() == com.example.smartrec.enums.JobStatus.COMPLETED) {
+            return slides.isEmpty() ? "NO_SLIDES_DETECTED" : "COMPLETED";
+        }
+        if ((job.getStatus() == com.example.smartrec.enums.JobStatus.FAILED
+                || job.getStatus() == com.example.smartrec.enums.JobStatus.DLQ)
+                && job.getStage() == com.example.smartrec.enums.PipelineStage.OUTPUT) {
+            return "FAILED";
+        }
+        return "NOT_PROCESSED";
     }
 
     private SummaryResult toSummary(UUID meetingId, Summary summary) {

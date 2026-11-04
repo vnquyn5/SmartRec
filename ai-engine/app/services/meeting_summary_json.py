@@ -16,6 +16,7 @@ from app.schemas.meeting_summary import (
 
 class SummaryErrorCode(str, Enum):
     GENERATION_ERROR = "GENERATION_ERROR"
+    GENERATION_TRUNCATED = "GENERATION_TRUNCATED"
     JSON_PARSE_ERROR = "JSON_PARSE_ERROR"
     SCHEMA_VALIDATION_ERROR = "SCHEMA_VALIDATION_ERROR"
     SOURCE_REFERENCE_ERROR = "SOURCE_REFERENCE_ERROR"
@@ -24,8 +25,9 @@ class SummaryErrorCode(str, Enum):
 class SummaryValidationError(ValueError):
     """An AI-layer error; not a Backend error contract."""
 
-    def __init__(self, code: SummaryErrorCode, message: str):
+    def __init__(self, code: SummaryErrorCode, message: str, diagnostics=None):
         self.code = code
+        self.diagnostics = tuple(diagnostics or ())
         super().__init__(message)
 
 
@@ -145,45 +147,30 @@ def sanitize_json(raw_output: str) -> dict:
         raise SummaryValidationError(
             SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
             "Expected a JSON object",
+            diagnostics=({"path": "$", "type": "schema_validation", "code": "object_type"},),
         )
 
     return parsed
 
 
-def _collect_source_refs(model: BaseModel) -> set[str]:
-    """Collect all citation IDs from supported output models."""
-    refs = set()
+def _collect_source_ref_paths(model: BaseModel) -> dict[str, set[str]]:
+    """Map citation field paths to their values without exposing those values."""
+    paths = {}
 
-    if isinstance(model, MeetingSummary):
-        refs.update(model.executive_summary_refs)
+    def visit(value, path=""):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else key
+                if key in {"source_refs", "executive_summary_refs"} and isinstance(child, list):
+                    paths[child_path] = {ref for ref in child if isinstance(ref, str)}
+                else:
+                    visit(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{path}.{index}" if path else str(index))
 
-        groups = (
-            model.key_points,
-            model.decisions,
-            model.action_items,
-            model.open_issues,
-            model.next_steps,
-            model.conflicts,
-        )
-
-    elif isinstance(model, ActionExtraction):
-        groups = (model.action_items,)
-
-    elif isinstance(model, ClassificationExtraction):
-        groups = (
-            model.decisions,
-            model.proposals,
-            model.open_issues,
-        )
-
-    else:
-        raise TypeError("Unsupported summary model")
-
-    for group in groups:
-        for item in group:
-            refs.update(item.source_refs)
-
-    return refs
+    visit(model.model_dump())
+    return paths
 
 
 def validate_summary_output(
@@ -217,18 +204,42 @@ def validate_summary_output(
             strict=True,
         )
     except ValidationError as exc:
+        diagnostics = []
+        for error in exc.errors(include_input=False, include_url=False)[:20]:
+            location = list(error["loc"])
+            # An unknown JSON key is model-controlled and could itself contain
+            # sensitive content. Keep its position, but never log its spelling.
+            if error["type"] == "extra_forbidden" and location:
+                location[-1] = "<unknown>"
+            diagnostics.append({
+                "path": ".".join(str(part) for part in location) or "$",
+                "type": "schema_validation",
+                "code": error["type"],
+            })
         raise SummaryValidationError(
             SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
-            f"Pydantic validation failed: {exc}",
+            "Pydantic validation failed",
+            diagnostics=tuple(diagnostics),
         ) from exc
 
-    output_refs = _collect_source_refs(validated)
+    ref_paths = _collect_source_ref_paths(validated)
+    output_refs = set().union(*ref_paths.values()) if ref_paths else set()
     unknown_refs = output_refs - allowed_source_refs
 
     if unknown_refs:
+        diagnostics = tuple(
+            {
+                "path": path,
+                "type": "source_reference",
+                "code": "source_ref_not_allowed",
+            }
+            for path, refs in ref_paths.items()
+            if refs & unknown_refs
+        )[:20]
         raise SummaryValidationError(
             SummaryErrorCode.SOURCE_REFERENCE_ERROR,
-            "Unknown citation IDs: " + ", ".join(sorted(unknown_refs)),
+            "Unknown citation IDs",
+            diagnostics=diagnostics,
         )
 
     return validated

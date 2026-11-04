@@ -14,7 +14,10 @@ public record MeetingResultsResponse(
         JobStatus jobStatus,
         List<TranscriptResult> transcripts,
         SummaryResult summary,
-        List<ActionItemResult> actionItems) {
+        List<ActionItemResult> actionItems,
+        String llmStatus,
+        String ocrStatus,
+        List<SlideResult> slides) {
 
     public record TranscriptResult(
             UUID id,
@@ -26,6 +29,14 @@ public record MeetingResultsResponse(
             BigDecimal confidenceScore) {}
 
     public record SummaryResult(String executiveSummary, JsonNode details) {}
+
+    public record SlideResult(
+            UUID slideId,
+            Long timestampMs,
+            String objectKey,
+            String ocrText,
+            String topic,
+            List<String> keywords) {}
 
     public record ActionItemResult(
             UUID id,

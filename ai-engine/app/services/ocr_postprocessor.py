@@ -644,6 +644,13 @@ class OCRPostProcessor:
                 "keyframe_run_id"
             ),
             "source_video": ocr_result.get("source_video"),
+            "result_status": (
+                "NO_SLIDES_DETECTED"
+                if not processed_slides
+                else "OCR_FAILED"
+                if any(slide["status"] == "FAILED" for slide in processed_slides)
+                else "OCR_COMPLETED"
+            ),
             "total_slides": len(processed_slides),
             "successful_slides": sum(
                 slide["status"] == "SUCCESS"

@@ -133,6 +133,15 @@ def test_empty_meeting_summary_is_valid():
     assert result.action_items == []
 
 
+def test_ollama_json_schema_describes_grounded_summary_and_verbatim_relative_deadlines():
+    schema = MeetingSummary.model_json_schema()
+
+    summary_description = schema["properties"]["executive_summary"]["description"]
+    deadline_description = schema["$defs"]["ActionItem"]["properties"]["deadline_raw"]["description"]
+    assert "grounded in evidence" in summary_description
+    assert "complete original phrase verbatim" in deadline_description
+
+
 def test_balanced_json_code_fence():
     raw = "```json\n" + to_json(ACTIONS) + "\n```"
     assert len(parse(raw).action_items) == 2
@@ -224,6 +233,46 @@ def test_invalid_action_schema_rejected(mutation):
         to_json(payload),
         SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
     )
+
+
+def test_schema_diagnostics_include_path_type_and_code_without_input_values():
+    payload = deepcopy(ACTIONS)
+    payload["action_items"][0]["title"] = 73
+
+    with pytest.raises(SummaryValidationError) as error:
+        parse(to_json(payload))
+
+    diagnostic = error.value.diagnostics[0]
+    assert diagnostic == {
+        "path": "action_items.0.title",
+        "type": "schema_validation",
+        "code": "string_type",
+    }
+    assert "73" not in str(error.value)
+
+
+def test_missing_required_field_has_path_diagnostic():
+    payload = deepcopy(ACTIONS)
+    del payload["action_items"][0]["assignee"]
+
+    with pytest.raises(SummaryValidationError) as error:
+        parse(to_json(payload))
+
+    assert {
+        "path": "action_items.0.assignee",
+        "type": "schema_validation",
+        "code": "missing",
+    } in error.value.diagnostics
+
+
+def test_unknown_source_reference_diagnostic_does_not_include_reference():
+    with pytest.raises(SummaryValidationError) as error:
+        parse(to_json(ACTIONS), refs={"SRC_ALLOWED"})
+
+    assert error.value.code == SummaryErrorCode.SOURCE_REFERENCE_ERROR
+    assert error.value.diagnostics[0]["code"] == "source_ref_not_allowed"
+    assert error.value.diagnostics[0]["path"] == "action_items.0.source_refs"
+    assert "SRC_001" not in str(error.value)
 
 
 def test_unknown_action_citation_rejected():

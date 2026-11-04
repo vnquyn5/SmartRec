@@ -32,10 +32,18 @@ class DiscussionPoint(StrictSummaryModel):
 class ActionItem(StrictSummaryModel):
     """An assigned or proposed task extracted from a meeting."""
 
-    title: StrictStr = Field(min_length=1)
+    title: StrictStr = Field(
+        min_length=1,
+        description="A task supported by meeting evidence; include every explicit assignment.",
+    )
     assignee: StrictStr | None
     deadline: StrictStr | None
-    deadline_raw: StrictStr | None
+    deadline_raw: StrictStr | None = Field(
+        description=(
+            "For a relative or ambiguous deadline, preserve the complete original "
+            "phrase verbatim, including relational words such as 'trước' or 'sau'."
+        ),
+    )
     source_refs: list[StrictStr] = Field(min_length=1)
 
 
@@ -51,15 +59,26 @@ class MeetingSummary(StrictSummaryModel):
 
     schema_version: Literal["smartrec.ai.meeting-summary.v1"]
 
-    executive_summary: StrictStr | None
+    executive_summary: StrictStr | None = Field(
+        description=(
+            "A concise natural-language summary grounded in evidence; required "
+            "when evidence is provided, never a field label or source ID."
+        ),
+    )
 
-    executive_summary_refs: list[StrictStr]
+    executive_summary_refs: list[StrictStr] = Field(
+        description="Exact evidence source_ref IDs supporting executive_summary.",
+    )
 
     key_points: list[DiscussionPoint]
 
-    decisions: list[EvidenceItem]
+    decisions: list[EvidenceItem] = Field(
+        description="All explicitly confirmed decisions, each grounded and cited.",
+    )
 
-    action_items: list[ActionItem]
+    action_items: list[ActionItem] = Field(
+        description="All explicit evidence-supported task assignments, each cited.",
+    )
 
     open_issues: list[EvidenceItem]
 

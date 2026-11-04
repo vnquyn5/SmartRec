@@ -36,7 +36,7 @@ def extract_evidence_json(prompt):
 
 
 def test_prompt_version():
-    assert PROMPT_VERSION == "smartrec.enterprise-summary-prompt.v1"
+    assert PROMPT_VERSION == "smartrec.enterprise-summary-prompt.v2"
 
 
 def test_original_system_prompt_exists():
@@ -102,6 +102,25 @@ def test_valid_transcript_evidence():
     prompt = build_meeting_summary_prompt([block])
 
     assert extract_evidence_json(prompt) == [block]
+
+
+def test_transcript_only_summary_requires_grounding_and_citations():
+    block = make_block(text="Nam phụ trách kiểm thử.")
+
+    prompt = build_meeting_summary_prompt([block])
+
+    assert extract_evidence_json(prompt) == [block]
+    assert "executive_summary\n  MUST be a concise, non-empty string" in SYSTEM_PROMPT
+    assert "executive_summary_refs MUST contain the exact source_ref ID(s)" in SYSTEM_PROMPT
+    assert "never as a\n  field label, category name, or citation ID" in SYSTEM_PROMPT
+    assert "An explicit affirmative meeting agreement belongs in decisions" in SYSTEM_PROMPT
+    assert "copy the entire phrase into" in SYSTEM_PROMPT
+    assert "provide a short, non-empty" in prompt
+
+
+def test_null_executive_summary_is_reserved_for_absent_evidence():
+    assert "executive_summary only when there are no evidence blocks" in SYSTEM_PROMPT
+    assert '"executive_summary": null' not in SYSTEM_PROMPT
 
 
 def test_vietnamese_english_evidence_preserved():

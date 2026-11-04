@@ -50,7 +50,13 @@ def run_local_multimodal(
         extractor = KeyframeExtractor()
     keyframes_dir = requested / "keyframes"
     checkpoint()
-    extractor.extract(str(video_path), str(keyframes_dir))
+    try:
+        extractor.extract(str(video_path), str(keyframes_dir))
+    except Exception as exc:
+        from app.workers.processing_errors import RetryableProcessingError
+        raise RetryableProcessingError(
+            "Keyframe extraction failed", error_code="KEYFRAME_EXTRACTION_FAILED"
+        ) from exc
     checkpoint()
     raw = ocr_service.process_keyframes(
         keyframes_dir, meeting_id=meeting_id, job_id=job_id,
@@ -114,8 +120,20 @@ def publish_job_ocr(
     root = get_workspace_root()
     normalized = read_verified_json(root, result["ocr_source"], meeting_id, job_id)
     slides = normalized["slides"]
-    if not slides or any(slide["status"] == "FAILED" for slide in slides):
-        raise RetryableProcessingError("OCR_INCOMPLETE")
+    # A successfully published empty keyframe manifest is a valid result. Keep
+    # its explicit status in the uploaded OCR artifact and continue OUTPUT.
+    # Failed OCR on an actual keyframe remains an error with its specific code.
+    if not slides and normalized.get("result_status") != "NO_SLIDES_DETECTED":
+        raise RetryableProcessingError("OCR_INCOMPLETE", error_code="OCR_INCOMPLETE")
+    if any(slide["status"] == "FAILED" for slide in slides):
+        error_codes = [
+            (slide.get("error") or {}).get("code")
+            for slide in slides if slide["status"] == "FAILED"
+        ]
+        error_code = next(
+            (code for code in error_codes if code), "OCR_INCOMPLETE"
+        )
+        raise RetryableProcessingError(error_code, error_code=error_code)
     prefix = f"meetings/{meeting_id}/jobs/{job_id}/ocr"
     pending = []
     for slide in slides:
@@ -128,8 +146,8 @@ def publish_job_ocr(
                 "timestampMs": timestamp, "objectKey": f"{prefix}/{slide_id}.jpg",
                 "ocrText": slide["normalized_text"], "keywords": [],
             }))
-    if not pending:
-        raise RetryableProcessingError("OCR_INCOMPLETE")
+    if slides and not pending:
+        raise RetryableProcessingError("OCR_INCOMPLETE", error_code="OCR_INCOMPLETE")
     checkpoint()
     storage_client.upload_file(
         str(workspace_file(root, result["ocr_source"].workspace_path)),

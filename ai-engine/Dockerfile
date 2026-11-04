@@ -18,6 +18,8 @@ RUN python -m pip install \
     torch==2.11.0 torchaudio==2.11.0 torchcodec==0.16.0 \
     --index-url https://download.pytorch.org/whl/cpu
 
+ENV PIP_DEFAULT_TIMEOUT=180 \
+    PIP_RETRIES=10
 # PaddleOCR uses opencv-contrib-python; install only one distribution of cv2.
 RUN sed '/^opencv-python-headless==/d' requirements.txt > /tmp/requirements-worker.txt && \
     python -m pip install \

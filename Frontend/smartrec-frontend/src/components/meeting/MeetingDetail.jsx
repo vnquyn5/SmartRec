@@ -19,7 +19,10 @@ export default function MeetingDetail({
   startingProcess,
   retrying,
   speakerError,
-  speakerLoading
+  speakerLoading,
+  results,
+  resultsLoading,
+  resultsError
 }) {
   const mediaRef = useRef(null);
   const seekToSegment = useCallback((startTime) => {
@@ -72,6 +75,9 @@ export default function MeetingDetail({
           jobLoading={jobLoading}
           speakerError={speakerError}
           speakerLoading={speakerLoading}
+          results={results}
+          resultsLoading={resultsLoading}
+          resultsError={resultsError}
           aiError={aiError}
           onRetry={onRetry}
           onPause={onPause}
