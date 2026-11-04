@@ -116,3 +116,56 @@ def test_stt_pipeline_to_backend_json(tmp_path):
         word_timestamps=True,
     )
     adapter.unload.assert_called_once()
+
+
+def test_speaker_alignment_uses_same_boundaries_as_transcript_parser():
+    """Regression F-001: word boundaries không được làm lệch speaker mapping."""
+    speaker_a = uuid4()
+    speaker_b = uuid4()
+
+    whisper_segment = SimpleNamespace(
+        start=0.0,
+        end=10.0,
+        text="Nội dung cuộc họp.",
+        words=[
+            SimpleNamespace(start=8.0, end=9.0),
+            SimpleNamespace(start=9.0, end=10.0),
+        ],
+    )
+
+    diarization_timeline = [
+        SimpleNamespace(
+            start_seconds=0.0,
+            end_seconds=8.0,
+            raw_speaker_id="SPEAKER_00",
+            speaker="Speaker A",
+        ),
+        SimpleNamespace(
+            start_seconds=8.0,
+            end_seconds=10.0,
+            raw_speaker_id="SPEAKER_01",
+            speaker="Speaker B",
+        ),
+    ]
+
+    speaker_ids = align_speakers(
+        [whisper_segment],
+        diarization_timeline,
+        {
+            "SPEAKER_00": speaker_a,
+            "SPEAKER_01": speaker_b,
+        },
+    )
+
+    payload = build_transcript_payload(
+        meeting_id=uuid4(),
+        processing_job_id=uuid4(),
+        segments=[whisper_segment],
+        speaker_ids=speaker_ids,
+    )
+
+    assert speaker_ids[0] == speaker_a
+    assert len(payload.segments) == 1
+    assert payload.segments[0].speakerId == speaker_a
+    assert payload.segments[0].startTimeMs == 0
+    assert payload.segments[0].endTimeMs == 10000

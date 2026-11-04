@@ -1,6 +1,5 @@
-# SmartRec AI Worker - NVIDIA GPU
-# Target: Linux x86_64, Windows + WSL2
-# CUDA 12.8 / PyTorch 2.7.1
+# NVIDIA GPU worker - chưa kiểm thử thực tế
+# Linux AMD64 / CUDA 12.8
 
 FROM python:3.11-slim
 
@@ -10,36 +9,32 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ffmpeg libsndfile1 libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg libsndfile1 libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt requirements_ai.txt ./
 
-# Tách PyTorch khỏi danh sách dependencies chung.
-RUN grep -Ev '^[[:space:]]*(torch|torchaudio)[=<>!~]' \
-    requirements_ai.txt > /tmp/requirements_gpu_ai.txt
-
-# Cài đặt dependencies ứng dụng.
-RUN pip install --no-cache-dir \
-    -r requirements.txt \
-    -r /tmp/requirements_gpu_ai.txt
-
-# Cài đặt PyTorch CUDA 12.8 sau cùng.
-RUN pip install --no-cache-dir \
-    torch==2.7.1 torchaudio==2.7.1 \
+# PyTorch CUDA - cần xác minh trên NVIDIA GPU.
+# PyTorch CUDA 12.8
+RUN python -m pip install \
+    torch==2.11.0 torchaudio==2.11.0 \
     --index-url https://download.pytorch.org/whl/cu128
 
-# Kiểm tra phiên bản và dependencies.
-RUN python -c "import torch, torchaudio, pyannote.audio; \
-    assert torch.version.cuda == '12.8'; \
-    assert torch.__version__.startswith('2.7.1'); \
-    assert torchaudio.__version__.startswith('2.7.1'); \
-    print('PyTorch:', torch.__version__, 'CUDA:', torch.version.cuda)" \
-    && pip check
+# TorchCodec 0.16.0 is unavailable in the cu128 index.
+# CPU wheel: installation fallback; CUDA runtime not yet verified.
+RUN python -m pip install --no-deps \
+    torchcodec==0.16.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+RUN python -m pip install \
+    -r requirements.txt -r requirements_ai.txt && \
+    python -m pip check && \
+    python -c "import torch, pyannote.audio; assert torch.version.cuda is not None"
 
 COPY app ./app
+COPY model_registry.json ./model_registry.json
 
 CMD ["celery", "-A", "app.celery_app.celery_app", \
      "worker", "--loglevel=INFO", "--concurrency=1"]

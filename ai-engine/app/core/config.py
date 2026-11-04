@@ -17,11 +17,26 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/1"
     smartrec_internal_token: Optional[str] = None
     workspace_root: str = "/tmp/smartrec_workspace"
+    local_llm_endpoint: Optional[str] = None
+    local_llm_model: Optional[str] = None
+    local_llm_connect_timeout_seconds: float = 5.0
+    local_llm_timeout_seconds: float = 120.0
 
     # Pyannote Speaker Diarization Settings
     hf_token: Optional[str] = None
     pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
+
+    # PaddleOCR Settings
+    # Model paths can be mounted from Docker host storage.
+    ocr_detection_model_dir: Optional[str] = None
+    ocr_recognition_model_dir: Optional[str] = None
+    ocr_device: str = "cpu"
+
+    # CPU inference configuration
+    # Defaults validated on Linux ARM64 Docker.
+    ocr_enable_mkldnn: bool = False
+    ocr_cpu_threads: int = 1
 
     model_config = SettingsConfigDict(
         env_file=".env",

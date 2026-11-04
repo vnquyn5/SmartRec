@@ -26,6 +26,7 @@ import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
+import com.example.smartrec.service.AIResultService;
 
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +51,7 @@ public class JobServiceImpl implements JobService {
     private final SpeakerSegmentRepository speakerSegmentRepository;
     private final MeetingRepository meetingRepository;
     private final MeetingService meetingService;
+    private final AIResultService aiResultService;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
     @Value("${job.heartbeat-timeout-seconds:90}")
@@ -551,12 +553,55 @@ public class JobServiceImpl implements JobService {
             throw new BusinessException(HttpStatus.CONFLICT, "STALE_EXECUTION_CALLBACK",
                     "Callback thiếu execution ID hợp lệ hoặc không thuộc execution hiện tại của Job");
         }
+        if (request.getAiResult() != null) {
+            var aiResult = request.getAiResult();
+
+            if (request.getStage() != PipelineStage.OUTPUT
+                    || !jobId.equals(aiResult.getJobId())
+                    || !java.util.Objects.equals(
+                            job.getMeetingId(), aiResult.getMeetingId())) {
+                throw new BusinessException(
+                        HttpStatus.BAD_REQUEST,
+                        "INVALID_AI_RESULT_CALLBACK",
+                        "AI Result khong khop Job, Meeting hoac Stage");
+            }
+
+            boolean aiSuccess = "SUCCESS".equalsIgnoreCase(aiResult.getStatus());
+            boolean aiFailed = "FAILED".equalsIgnoreCase(aiResult.getStatus());
+
+            if ((!aiSuccess && !aiFailed)
+                    || (aiSuccess && request.getStatus() != JobStageStatus.SUCCESS)
+                    || (aiFailed && request.getStatus() != JobStageStatus.FAILED)) {
+                throw new BusinessException(
+                        HttpStatus.BAD_REQUEST,
+                        "AI_STATUS_MISMATCH",
+                        "Trang thai AI Result va callback khong khop");
+            }
+
+            if (aiFailed && (request.getErrorCode() == null
+                    || request.getErrorCode().isBlank())) {
+                request.setErrorCode("AI_PROCESSING_FAILED");
+            }
+        }
+
         JobStage jobStage = jobStageRepository.findByJobIdAndStage(jobId, request.getStage())
                 .orElseThrow(() -> new BusinessException(
                         HttpStatus.NOT_FOUND,
                         "JOB_STAGE_NOT_FOUND",
                         "Không tìm thấy Job Stage"));
         if (isIdempotentCallback(job, jobStage, request)) return;
+
+        // OUTPUT can only succeed after AI processing returns a result.
+        // PROCESSING callbacks remain valid without aiResult.
+        if (request.getStage() == PipelineStage.OUTPUT
+                && request.getStatus() == JobStageStatus.SUCCESS
+                && request.getAiResult() == null) {
+            throw new BusinessException(
+                    HttpStatus.BAD_REQUEST,
+                    "AI_RESULT_REQUIRED",
+                    "OUTPUT SUCCESS yêu cầu kết quả AI hợp lệ");
+        }
+
         if (Set.of(JobStatus.COMPLETED, JobStatus.DLQ, JobStatus.CANCELLED, JobStatus.PAUSED, JobStatus.FAILED)
                 .contains(job.getStatus())) {
             throw new BusinessException(HttpStatus.CONFLICT, "TERMINAL_JOB_CALLBACK",
@@ -614,10 +659,17 @@ public class JobServiceImpl implements JobService {
             if (job.getStatus() == JobStatus.CANCEL_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
         } else if (request.getStatus() == JobStageStatus.SUCCESS) {
 
+            if (request.getStage() == PipelineStage.OUTPUT
+                    && request.getAiResult() != null) {
+                aiResultService.saveAIResult(request.getAiResult());
+            }
+
             jobStage.setStatus(JobStageStatus.SUCCESS);
             jobStage.setCompletedAt(Instant.now());
 
-            if (request.getStage() == PipelineStage.OUTPUT) {
+            if (request.getStage() == PipelineStage.OUTPUT
+                    && (request.getAiResult() == null
+                            || request.getSegments() != null)) {
                 if (job.getMeetingId() != null) {
                     speakerSegmentRepository.deleteByMeetingId(job.getMeetingId());
                 }

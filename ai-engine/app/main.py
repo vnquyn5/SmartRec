@@ -10,6 +10,7 @@ logger = logging.getLogger("smartrec.api")
 logger.info("Initializing SmartRec AI Engine")
 
 from app.api.routes import router as audio_router, internal_router
+from app.api.internal_llm_routes import router as internal_llm_router
 
 app = FastAPI(
     title="SmartRec AI Engine - Audio Preprocessing Service",
@@ -23,6 +24,7 @@ logger.info("Global exception handlers registered")
 # Đăng ký router tiền xử lý âm thanh
 app.include_router(audio_router, prefix="/api/v1")
 app.include_router(internal_router)
+app.include_router(internal_llm_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health Check"])

@@ -3,3 +3,4 @@ poc/data/
 tests/output/
 *.wav
 .env
+.venv-ocr/

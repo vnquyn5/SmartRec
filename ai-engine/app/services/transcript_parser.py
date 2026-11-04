@@ -21,6 +21,7 @@ def parse_whisper_segments(
     segments: Sequence[Any],
     *,
     speaker_ids: Optional[Mapping[int, UUID]] = None,
+    speaker_labels: Optional[Mapping[int, str]] = None,
 ) -> list[TranscriptSegment]:
     """
     Chuẩn hóa Whisper segments thành danh sách câu thoại.
@@ -36,24 +37,10 @@ def parse_whisper_segments(
         if not text:
             continue
 
-        words = getattr(segment, "words", None)
-
-        if words:
-            valid_words = [
-                word for word in words
-                if getattr(word, "start", None) is not None
-                and getattr(word, "end", None) is not None
-            ]
-
-            if valid_words:
-                start_seconds = valid_words[0].start
-                end_seconds = valid_words[-1].end
-            else:
-                start_seconds = segment.start
-                end_seconds = segment.end
-        else:
-            start_seconds = segment.start
-            end_seconds = segment.end
+        # Sử dụng cùng segment boundaries với Speaker Aligner.
+        # Word timestamps không quyết định khoảng thời gian của transcript.
+        start_seconds = segment.start
+        end_seconds = segment.end
 
         start_ms = seconds_to_ms(start_seconds)
         end_ms = seconds_to_ms(end_seconds)
@@ -67,9 +54,16 @@ def parse_whisper_segments(
         if speaker_ids is not None:
             speaker_id = speaker_ids.get(index)
 
+        speaker_label = (
+            speaker_labels.get(index)
+            if speaker_labels is not None
+            else None
+        )
+
         result.append(
             TranscriptSegment(
                 speakerId=speaker_id,
+                speakerLabel=speaker_label,
                 startTimeMs=start_ms,
                 endTimeMs=end_ms,
                 text=text,
@@ -86,6 +80,7 @@ def build_transcript_payload(
     segments: Sequence[Any],
     language: str = "vi",
     speaker_ids: Optional[Mapping[int, UUID]] = None,
+    speaker_labels: Optional[Mapping[int, str]] = None,
 ) -> TranscriptPayload:
     """Tạo payload transcript theo hợp đồng dữ liệu Backend."""
 
@@ -98,5 +93,6 @@ def build_transcript_payload(
         segments=parse_whisper_segments(
             segments,
             speaker_ids=speaker_ids,
+            speaker_labels=speaker_labels,
         ),
     )

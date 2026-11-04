@@ -1,3 +1,4 @@
+
 {
   "models": [
     {
@@ -19,6 +20,27 @@
       "version": "3.0",
       "runtime": "local",
       "device": "auto",
+      "status": "disabled"
+    },
+    {
+      "model_name": "faster-whisper-small",
+      "version": "1.0",
+      "runtime": "local",
+      "device": "auto",
+      "status": "enabled"
+    },
+    {
+      "model_name": "PP-OCRv6_medium_det",
+      "version": "6",
+      "runtime": "local",
+      "device": "cpu",
+      "status": "enabled"
+    },
+    {
+      "model_name": "PP-OCRv6_medium_rec",
+      "version": "6",
+      "runtime": "local",
+      "device": "cpu",
       "status": "enabled"
     }
   ]

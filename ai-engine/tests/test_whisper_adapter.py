@@ -11,6 +11,24 @@ from app.adapters.whisper_adapter import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_model_configuration(monkeypatch):
+    # Temporary fixture folders are not model IDs. Select a supported ID
+    # explicitly and do not inherit developer device/precision settings.
+    monkeypatch.setenv("STT_MODEL_ID", "faster-whisper-small")
+    monkeypatch.delenv("WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("WHISPER_COMPUTE_TYPE", raising=False)
+
+
+def test_unsupported_model_id_remains_rejected(tmp_path, monkeypatch):
+    (tmp_path / "model.bin").write_bytes(b"mock")
+    monkeypatch.setenv("STT_MODEL_ID", "unsupported-test-model")
+    with patch("app.adapters.whisper_adapter.WhisperModel") as constructor:
+        with pytest.raises(ValueError, match="Model STT không được hỗ trợ"):
+            create_whisper_adapter(model_path=str(tmp_path))
+    constructor.assert_not_called()
+
+
 def test_missing_model_path(monkeypatch):
     monkeypatch.delenv("WHISPER_MODEL_PATH", raising=False)
 
@@ -87,3 +105,36 @@ def test_adapter_lifecycle(tmp_path):
         adapter.unload()
 
         assert adapter.status == ModelStatus.UNINITIALIZED
+
+
+@pytest.mark.parametrize(
+    ("requested_device", "expected_device"),
+    [
+        ("cpu", "cpu"),
+        ("mps", "cpu"),
+        ("cuda", "cuda"),
+    ],
+)
+def test_whisper_adapter_reports_actual_device(
+    tmp_path, requested_device, expected_device
+):
+    (tmp_path / "model.bin").write_bytes(b"mock")
+
+    adapter = create_whisper_adapter(
+        model_path=str(tmp_path),
+        device=requested_device,
+    )
+
+    assert adapter.device == expected_device
+
+
+def test_whisper_adapter_auto_device_without_cuda(tmp_path):
+    (tmp_path / "model.bin").write_bytes(b"mock")
+
+    with patch(
+        "app.adapters.whisper_adapter.torch.cuda.is_available",
+        return_value=False,
+    ):
+        adapter = create_whisper_adapter(model_path=str(tmp_path))
+
+    assert adapter.device == "cpu"

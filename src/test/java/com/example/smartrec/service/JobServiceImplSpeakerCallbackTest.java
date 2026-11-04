@@ -26,6 +26,7 @@ import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.enums.PipelineStage;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
+import com.example.smartrec.model.dto.AIResponse;
 import com.example.smartrec.repository.JobRepository;
 import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MeetingRepository;
@@ -42,6 +43,7 @@ class JobServiceImplSpeakerCallbackTest {
     @Mock private SpeakerSegmentRepository speakerSegmentRepository;
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
+    @Mock private AIResultService aiResultService;
     @InjectMocks private JobServiceImpl jobService;
 
     private UUID jobId;
@@ -50,6 +52,14 @@ class JobServiceImplSpeakerCallbackTest {
     private Job job;
     private JobStage outputStage;
     private Meeting meeting;
+
+    private AIResponse successfulAnalysis() {
+        return AIResponse.builder().jobId(jobId).meetingId(meetingId)
+                .taskType("MEETING_ANALYSIS").status("SUCCESS")
+                .result(new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                        .put("executiveSummary", "Kết quả mock"))
+                .build();
+    }
 
     @BeforeEach
     void setUp() {
@@ -73,7 +83,7 @@ class JobServiceImplSpeakerCallbackTest {
                 .thenReturn(Optional.of(outputStage));
         WorkerCallbackRequest request = WorkerCallbackRequest.builder()
                 .executionId(executionId).stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
-                .segments(java.util.List.of()).build();
+                .aiResult(successfulAnalysis()).segments(java.util.List.of()).build();
 
         jobService.handleWorkerCallback(jobId, request);
 
@@ -82,6 +92,81 @@ class JobServiceImplSpeakerCallbackTest {
         verify(jobRepository).save(job);
         assertEquals(JobStatus.COMPLETED, job.getStatus());
         assertEquals(com.example.smartrec.entity.MeetingStatus.COMPLETED, meeting.getStatus());
+    }
+
+    @Test
+    void outputWithoutAiResultCannotCompleteJob() {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        assertThrows(BusinessException.class, () -> jobService.handleWorkerCallback(jobId,
+                WorkerCallbackRequest.builder().executionId(executionId)
+                        .stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS).build()));
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertEquals(JobStageStatus.PROCESSING, outputStage.getStatus());
+        org.mockito.Mockito.verifyNoInteractions(aiResultService, speakerSegmentRepository);
+        verify(jobRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void aiPersistenceFailureCannotCompleteOrDeleteSpeakers() {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        AIResponse response = successfulAnalysis();
+        org.mockito.Mockito.doThrow(new IllegalStateException("mock DB failure"))
+                .when(aiResultService).saveAIResult(response);
+        assertThrows(IllegalStateException.class, () -> jobService.handleWorkerCallback(jobId,
+                WorkerCallbackRequest.builder().executionId(executionId)
+                        .stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
+                        .aiResult(response).segments(java.util.List.of()).build()));
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertEquals(JobStageStatus.PROCESSING, outputStage.getStatus());
+        org.mockito.Mockito.verifyNoInteractions(speakerSegmentRepository);
+        verify(jobRepository, org.mockito.Mockito.never()).save(any());
+        verify(jobStageRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void aiOnlyCallbackPreservesSpeakersAndSavesBeforeCompletion() {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        AIResponse response = successfulAnalysis();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            assertEquals(JobStatus.PROCESSING, job.getStatus());
+            assertEquals(JobStageStatus.PROCESSING, outputStage.getStatus());
+            return null;
+        }).when(aiResultService).saveAIResult(response);
+        jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.SUCCESS).aiResult(response).build());
+        org.mockito.Mockito.verifyNoInteractions(speakerSegmentRepository);
+        verify(aiResultService).saveAIResult(response);
+        assertEquals(JobStatus.COMPLETED, job.getStatus());
+    }
+
+    @Test
+    void duplicateAiCallbackDoesNotPersistTwice() {
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        AIResponse response = successfulAnalysis();
+        WorkerCallbackRequest callback = WorkerCallbackRequest.builder().executionId(executionId)
+                .stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS).aiResult(response).build();
+        jobService.handleWorkerCallback(jobId, callback);
+        jobService.handleWorkerCallback(jobId, callback);
+        verify(aiResultService, org.mockito.Mockito.times(1)).saveAIResult(response);
+        verify(jobRepository, org.mockito.Mockito.times(1)).save(job);
+    }
+
+    @Test
+    void expiredLeaseCannotPersistAiResult() {
+        job.setLeaseExpiresAt(java.time.Instant.now().minusSeconds(1));
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
+                .thenReturn(Optional.of(outputStage));
+        assertThrows(BusinessException.class, () -> jobService.handleWorkerCallback(jobId,
+                WorkerCallbackRequest.builder().executionId(executionId)
+                        .stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS)
+                        .aiResult(successfulAnalysis()).build()));
+        org.mockito.Mockito.verifyNoInteractions(aiResultService, speakerSegmentRepository);
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
     }
 
     @Test

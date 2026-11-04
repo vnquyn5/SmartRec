@@ -1,0 +1,13 @@
+# SmartRec Sprint 3 - OCR CPU runtime
+# Python 3.11
+
+paddlepaddle==3.2.0
+paddleocr==3.7.0
+
+# Keyframe extraction / image processing
+numpy>=2.0,<3
+opencv-contrib-python==4.10.0.84
+scikit-image==0.24.0
+
+# Shared SmartRec configuration
+pydantic-settings>=2.2.0

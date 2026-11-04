@@ -30,7 +30,7 @@ class SpeechActivityInterval(BaseModel):
 
 
 class SpeakerSegmentationResponse(BaseModel):
-    """Kết quả phân đoạn giọng nói và VAD từ Task 2.10.2."""
+    """Kết quả phân đoạn giọng nói và VAD từ pipeline, chuẩn hóa để bàn giao cho các module downstream."""
     job_id: Optional[str] = None
     status: str = Field(..., description="SUCCESS | NO_SPEECH_DETECTED | FAILED")
     audio_duration_seconds: float = Field(..., description="Tổng thời lượng audio đầu vào")
