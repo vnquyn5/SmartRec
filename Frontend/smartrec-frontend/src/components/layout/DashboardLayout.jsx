@@ -1,15 +1,18 @@
 import React from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 
 const DashboardLayout = () => {
+  const { pathname } = useLocation();
+  const isMeetingDetails = /^\/meeting\/[^/]+\/?$/.test(pathname);
+
   return (
-    <div className="dashboard-shell">
+    <div className={`dashboard-shell${isMeetingDetails ? " meeting-details-shell" : ""}`}>
       <Sidebar />
       <div className="dashboard-main">
         <TopBar hideSearch />
-        <div className="dashboard-content">
+        <div className={`dashboard-content${isMeetingDetails ? " meeting-details-content" : ""}`}>
           <Outlet />
         </div>
       </div>

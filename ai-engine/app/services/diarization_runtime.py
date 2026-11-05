@@ -1,8 +1,10 @@
 import logging
+import gc
 import os
 import threading
 import time
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union, Any, Dict, List
 
@@ -51,6 +53,16 @@ _configure_torch_threads_once()
 
 from pyannote.audio import Pipeline
 from pyannote.core import Annotation
+
+
+@dataclass(frozen=True)
+class DiarizationOutput:
+    """Single inference result retaining raw and optional native-exclusive timelines."""
+
+    speaker_diarization: Annotation
+    exclusive_speaker_diarization: Optional[Annotation]
+    output_type: str
+    exclusive_error: Optional[str] = None
 
 
 def _audio_duration_and_label(audio_input: Union[str, Path, Dict[str, Any]]) -> tuple[Optional[float], str]:
@@ -222,25 +234,38 @@ class DiarizationRuntimeManager:
             self._pipeline = pipeline
             return self._pipeline
 
-    def _normalize_annotation(self, raw_output: Any) -> Annotation:
-        """
-        Chuẩn hóa kết quả inference đảm bảo trả về đúng kiểu pyannote.core.Annotation.
-        Hỗ trợ cả Annotation trực tiếp và đối tượng chứa thuộc tính speaker_diarization.
-        """
+    def _normalize_diarization_output(self, raw_output: Any) -> DiarizationOutput:
+        """Preserve raw diarization and a native exclusive annotation when present."""
         if isinstance(raw_output, Annotation):
-            return raw_output
-        if hasattr(raw_output, "speaker_diarization"):
-            annot = getattr(raw_output, "speaker_diarization")
-            if isinstance(annot, Annotation):
-                return annot
+            return DiarizationOutput(raw_output, None, type(raw_output).__name__)
+        raw_annotation = getattr(raw_output, "speaker_diarization", None)
+        if isinstance(raw_annotation, Annotation):
+            exclusive_candidate = getattr(raw_output, "exclusive_speaker_diarization", None)
+            exclusive_annotation = exclusive_candidate if isinstance(exclusive_candidate, Annotation) else None
+            exclusive_error = None
+            if exclusive_candidate is not None and exclusive_annotation is None:
+                exclusive_error = (
+                    "exclusive_speaker_diarization is not a pyannote.core.Annotation "
+                    f"(received {type(exclusive_candidate).__name__})"
+                )
+            return DiarizationOutput(
+                raw_annotation, exclusive_annotation, type(raw_output).__name__, exclusive_error
+            )
         raise DiarizationInferenceError(
-            f"Kết quả diarization không hợp lệ. Kỳ vọng kiểu 'pyannote.core.Annotation', nhưng nhận được '{type(raw_output).__name__}'."
+            "Diarization output must be an Annotation or expose a valid "
+            "speaker_diarization Annotation; received "
+            f"'{type(raw_output).__name__}'."
         )
 
-    def diarize(self, audio_input: Union[str, Path, Dict[str, Any]], **kwargs) -> Annotation:
+    def _normalize_annotation(self, raw_output: Any) -> Annotation:
+        """Backward-compatible normalization returning raw diarization only."""
+        return self._normalize_diarization_output(raw_output).speaker_diarization
+
+    def diarize_with_output(
+        self, audio_input: Union[str, Path, Dict[str, Any]], **kwargs
+    ) -> DiarizationOutput:
         """
-        Thực thi Speaker Diarization trên audio đầu vào.
-        Thread-safe: Sử dụng _inference_lock bảo vệ model dùng chung khi fallback MPS -> CPU.
+        Run Pyannote once and retain all supported output timelines.
         """
         with self._inference_lock:
             pipeline = self.load_pipeline()
@@ -271,9 +296,16 @@ class DiarizationRuntimeManager:
                         raise DiarizationInferenceError(
                             f"Diarization inference thất bại trên cả MPS và CPU: {cpu_err}"
                         ) from cpu_err
-                annotation = self._normalize_annotation(raw_output)
+                result = self._normalize_diarization_output(raw_output)
                 succeeded = True
-                return annotation
+                logger.info(
+                    "PYANNOTE_OUTPUT pipeline_class=%s legacy=%s output_type=%s "
+                    "native_exclusive_available=%s exclusive_error=%s",
+                    type(pipeline).__name__, getattr(pipeline, "legacy", "unknown"),
+                    result.output_type, result.exclusive_speaker_diarization is not None,
+                    result.exclusive_error,
+                )
+                return result
             finally:
                 elapsed = time.perf_counter() - started_at
                 rtf = elapsed / audio_duration if audio_duration is not None and audio_duration > 0 else None
@@ -285,6 +317,10 @@ class DiarizationRuntimeManager:
                     f"{rtf:.2f}x" if rtf is not None else "n/a",
                     file_label,
                 )
+
+    def diarize(self, audio_input: Union[str, Path, Dict[str, Any]], **kwargs) -> Annotation:
+        """Backward-compatible API returning only raw speaker diarization."""
+        return self.diarize_with_output(audio_input, **kwargs).speaker_diarization
 
     def extract_speaker_embeddings(
         self,
@@ -387,9 +423,16 @@ class DiarizationRuntimeManager:
                 if self._pipeline is not None:
                     del self._pipeline
                     self._pipeline = None
+                gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                elif hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                elif (
+                    hasattr(torch, "backends")
+                    and hasattr(torch.backends, "mps")
+                    and torch.backends.mps.is_available()
+                    and hasattr(torch, "mps")
+                    and hasattr(torch.mps, "empty_cache")
+                ):
                     torch.mps.empty_cache()
                 logger.info("Đã giải phóng tài nguyên Diarization pipeline.")
 

@@ -29,6 +29,8 @@ public class SttResultRequest {
     public static class TranscriptSegment {
         private UUID speakerId;
 
+        private String attributionStatus;
+
         @Size(max = 100)
         private String speakerLabel;
 

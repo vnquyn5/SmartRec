@@ -95,16 +95,17 @@ class JobServiceImplSpeakerCallbackTest {
     }
 
     @Test
-    void outputWithoutAiResultCannotCompleteJob() {
+    void outputWithoutAiResultCompletesCoreJobAndPreservesTranscriptStage() {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
                 .thenReturn(Optional.of(outputStage));
-        assertThrows(BusinessException.class, () -> jobService.handleWorkerCallback(jobId,
-                WorkerCallbackRequest.builder().executionId(executionId)
-                        .stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS).build()));
-        assertEquals(JobStatus.PROCESSING, job.getStatus());
-        assertEquals(JobStageStatus.PROCESSING, outputStage.getStatus());
-        org.mockito.Mockito.verifyNoInteractions(aiResultService, speakerSegmentRepository);
-        verify(jobRepository, org.mockito.Mockito.never()).save(any());
+        jobService.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.SUCCESS).segments(java.util.List.of()).build());
+        assertEquals(JobStatus.COMPLETED, job.getStatus());
+        assertEquals(JobStageStatus.SUCCESS, outputStage.getStatus());
+        org.mockito.Mockito.verifyNoInteractions(aiResultService);
+        verify(speakerSegmentRepository).deleteByMeetingId(meetingId);
+        verify(jobRepository).save(job);
     }
 
     @Test

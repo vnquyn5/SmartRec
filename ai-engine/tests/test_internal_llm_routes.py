@@ -118,6 +118,18 @@ def test_internal_routes_reject_invalid_authentication(monkeypatch):
     assert response.status_code == 401
 
 
+def test_internal_llm_routes_reject_when_feature_is_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    monkeypatch.setattr(settings, "smartrec_llm_enabled", False)
+    response = client.post(
+        "/api/v1/internal/llm/prepare",
+        json=_prepare_request(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "LLM_DISABLED"
+
+
 def test_generate_returns_validated_local_output_and_provider_token_metadata(monkeypatch):
     monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
 
@@ -153,7 +165,7 @@ def test_generate_returns_validated_local_output_and_provider_token_metadata(mon
 def test_generate_reports_missing_model_configuration_without_inference(monkeypatch):
     monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
     monkeypatch.setattr(internal_llm_routes, "local_llm_client",
-                        internal_llm_routes.LocalLLMClient(endpoint=None, model=None))
+                        internal_llm_routes.LocalLLMClient(endpoint="", model=None))
 
     response = client.post(
         "/api/v1/internal/llm/generate",
@@ -163,6 +175,28 @@ def test_generate_reports_missing_model_configuration_without_inference(monkeypa
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "LOCAL_MODEL_NOT_CONFIGURED"
+
+
+def test_generate_classifies_ollama_token_limit_as_truncation(monkeypatch):
+    from app.services.local_llm_client import LocalLLMClient
+
+    class Response:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"response": "{\"schema_version\":", "done": True, "done_reason": "length"}
+
+    monkeypatch.setattr("app.services.local_llm_client.requests.post", lambda *a, **k: Response())
+    client_instance = LocalLLMClient(
+        endpoint="http://localhost:11434/api/generate",
+        model="qwen2.5:3b-instruct-q4_K_M",
+    )
+    try:
+        client_instance.generate("prompt", "system", 0.1, 16)
+    except LocalLLMError as exc:
+        assert exc.code == "LOCAL_MODEL_TRUNCATED"
+    else:
+        raise AssertionError("truncated Ollama response was accepted")
 
 
 def test_generate_maps_timeout_to_structured_error_without_logging_prompt(monkeypatch, caplog):

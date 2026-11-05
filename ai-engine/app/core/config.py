@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Literal, Optional
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,11 +22,18 @@ class Settings(BaseSettings):
     local_llm_model: Optional[str] = None
     local_llm_connect_timeout_seconds: float = 5.0
     local_llm_timeout_seconds: float = 120.0
+    smartrec_llm_enabled: bool = True
 
     # Pyannote Speaker Diarization Settings
     hf_token: Optional[str] = None
     pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
+    pyannote_timeline_mode: Literal["raw", "exclusive"] = "raw"
+    pyannote_turn_smoothing_enabled: bool = False
+    pyannote_turn_smoothing_max_fragment_ms: int = Field(default=150, gt=0, le=10000)
+    pyannote_num_speakers: Optional[int] = Field(default=None, gt=0)
+    pyannote_min_speakers: Optional[int] = Field(default=None, gt=0)
+    pyannote_max_speakers: Optional[int] = Field(default=None, gt=0)
 
     # PaddleOCR Settings
     # Model paths can be mounted from Docker host storage.

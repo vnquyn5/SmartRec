@@ -115,6 +115,39 @@ def test_speaker_embeddings_integration_and_status():
     assert payload.timeline[0].embedding == [0.123] * 256
 
 
+def test_export_keeps_raw_overlap_but_profiles_follow_selected_exclusive_timeline():
+    service = SpeakerLabelingService()
+    raw_segments = [
+        create_dummy_segment(1, "SPEAKER_A", 0.0, 2.0),
+        create_dummy_segment(2, "SPEAKER_B", 0.5, 1.5),
+    ]
+    selected_segments = [create_dummy_segment(1, "SPEAKER_A", 0.0, 2.0)]
+    response = SpeakerSegmentationResponse(
+        status="SUCCESS", audio_duration_seconds=3.0,
+        speech_duration_seconds=2.0, speech_ratio=2 / 3,
+        total_segments=1, unique_speakers=["SPEAKER_A"],
+        segments=selected_segments, raw_segments=raw_segments,
+        timeline_mode="exclusive", timeline_source="native_exclusive_diagnostics_only",
+        native_exclusive_segments=selected_segments, smoothed_segments=selected_segments,
+        smoothing_enabled=True, smoothing_max_fragment_ms=150,
+    )
+    payload = service.build_export_payload(response, "meeting.wav")
+    assert payload.timeline_mode == "exclusive"
+    assert payload.timeline_source == "native_exclusive_diagnostics_only"
+    assert payload.smoothing_enabled is True
+    assert payload.smoothing_max_fragment_ms == 150
+    assert [(item.start_seconds, item.end_seconds) for item in payload.timeline] == [
+        (item.start_seconds, item.end_seconds) for item in payload.native_exclusive_timeline
+    ]
+    assert [(item.start_seconds, item.end_seconds) for item in payload.timeline] == [
+        (item.start_seconds, item.end_seconds) for item in payload.smoothed_timeline
+    ]
+    assert payload.total_speakers == 1
+    assert [speaker.speaker_label for speaker in payload.speakers] == ["Speaker 1"]
+    assert [segment.raw_speaker_id for segment in payload.raw_timeline] == ["SPEAKER_A", "SPEAKER_B"]
+    assert payload.raw_timeline[1].speaker == "Speaker 2"
+
+
 def test_hierarchical_speaker_segment_structure():
     service = SpeakerLabelingService()
     raw_segments = [

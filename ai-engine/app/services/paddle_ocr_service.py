@@ -1,4 +1,5 @@
 import sys
+import logging
 """PaddleOCR service for SmartRec meeting keyframes."""
 
 import json
@@ -10,6 +11,8 @@ from typing import Any
 from app.core.config import settings
 from app.core.path_security import get_workspace_root
 from app.services.artifact_provenance import capture_local_source, verify_local_source
+
+logger = logging.getLogger("smartrec.paddle_ocr")
 
 
 class PaddleOCRService:
@@ -93,6 +96,12 @@ class PaddleOCRService:
             )
 
         self._ocr = PaddleOCR(**paddle_options)
+        logger.info(
+            "PaddleOCR initialized: device=%s detection_model=%s recognition_model=%s",
+            device.strip().lower(),
+            resolved_detection_dir.name if resolved_detection_dir else "default",
+            model_dir.name,
+        )
 
 
     @staticmethod

@@ -20,7 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.example.smartrec.entity.ActionItem;
 import com.example.smartrec.entity.MeetingStatus;
-import com.example.smartrec.entity.SpeakerSegment;
+import com.example.smartrec.entity.Speaker;
 import com.example.smartrec.entity.Summary;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.exception.BusinessException;
@@ -29,6 +29,7 @@ import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.model.dto.TranscriptResponse;
 import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.SummaryRepository;
+import com.example.smartrec.repository.SpeakerRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
@@ -53,6 +54,8 @@ class MeetingResultsControllerTest {
     @Mock
     private ActionItemRepository actionItemRepository;
     @Mock
+    private SpeakerRepository speakerRepository;
+    @Mock
     private SpeakerSegmentRepository speakerSegmentRepository;
     @InjectMocks
     private MeetingResultsController controller;
@@ -67,6 +70,7 @@ class MeetingResultsControllerTest {
                         .meetingId(MEETING_ID)
                         .processingJobId(JOB_ID)
                         .speakerId(SPEAKER_SEGMENT_ID)
+                        .attributionStatus("ATTRIBUTED")
                         .startTimeMs(1000L)
                         .endTimeMs(2000L)
                         .textContent("Đã thống nhất gửi bản kế hoạch.")
@@ -82,12 +86,12 @@ class MeetingResultsControllerTest {
                     "deadline_raw":"trong tuần tới","source_refs":["TRANSCRIPT:%s"]}]
                 }}
                 """.formatted(TRANSCRIPT_ID, TRANSCRIPT_ID)));
-        SpeakerSegment speakerSegment = new SpeakerSegment();
-        speakerSegment.setId(SPEAKER_SEGMENT_ID);
-        speakerSegment.setMeetingId(MEETING_ID);
-        speakerSegment.setSpeakerLabel("SPEAKER_01");
-        when(speakerSegmentRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID)))
-                .thenReturn(List.of(speakerSegment));
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER_01");
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID)))
+                .thenReturn(List.of(speaker));
         when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.of(summary));
 
         ActionItem item = new ActionItem();
@@ -105,12 +109,73 @@ class MeetingResultsControllerTest {
         assertEquals(JobStatus.COMPLETED, response.jobStatus());
         assertEquals("Đã thống nhất gửi bản kế hoạch.", response.transcripts().get(0).textContent());
         assertEquals("SPEAKER_01", response.transcripts().get(0).speakerLabel());
+        assertEquals("ATTRIBUTED", response.transcripts().get(0).attributionStatus());
+        assertEquals(TRANSCRIPT_ID, response.transcripts().get(0).id());
+        assertEquals(MEETING_ID, response.transcripts().get(0).meetingId());
+        assertEquals(JOB_ID, response.transcripts().get(0).jobId());
+        assertEquals(1000L, response.transcripts().get(0).startTimeMs());
+        assertEquals(2000L, response.transcripts().get(0).endTimeMs());
         assertEquals("Gửi bản kế hoạch", response.actionItems().get(0).title());
         assertEquals("trong tuần tới", response.actionItems().get(0).deadlineRaw());
         assertEquals(TRANSCRIPT_ID, response.actionItems().get(0).sourceTranscriptId());
         assertEquals("Gửi bản kế hoạch", response.summary().details().path("decisions").path(0).path("text").asText());
         verify(meetingService).getMeeting(MEETING_ID);
         verify(jobService).getJobForCurrentUser(JOB_ID);
+    }
+
+    @Test
+    void returnsBoundaryAttributionWithoutInventingSpeakerLabel() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder()
+                        .id(TRANSCRIPT_ID).meetingId(MEETING_ID).processingJobId(JOB_ID)
+                        .speakerId(null).attributionStatus("CROSS_SPEAKER_BOUNDARY")
+                        .startTimeMs(17500L).endTimeMs(19000L).textContent("Crossing turn")
+                        .build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var transcript = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().get(0);
+
+        assertNull(transcript.speakerId());
+        assertNull(transcript.speakerLabel());
+        assertEquals("CROSS_SPEAKER_BOUNDARY", transcript.attributionStatus());
+        assertEquals(17500L, transcript.startTimeMs());
+        assertEquals(19000L, transcript.endTimeMs());
+        verifyNoInteractions(speakerRepository);
+    }
+
+    @Test
+    void legacyMajoritySpeakerIsReclassifiedWhenTranscriptCrossesPersistedTurns() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(SPEAKER_SEGMENT_ID)
+                        .attributionStatus("ATTRIBUTED").startTimeMs(17500L).endTimeMs(19000L)
+                        .textContent("Crosses a diarization boundary").build()));
+        Speaker existing = new Speaker();
+        existing.setId(SPEAKER_SEGMENT_ID);
+        existing.setMeetingId(MEETING_ID);
+        existing.setAiLabel("SPEAKER 4");
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(existing));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(existing));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Speaker 3").startTime(17.5).endTime(18.037).build(),
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Speaker 4").startTime(18.037).endTime(19.0).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().get(0);
+
+        assertNull(result.speakerId());
+        assertNull(result.speakerLabel());
+        assertEquals("CROSS_SPEAKER_BOUNDARY", result.attributionStatus());
+        assertEquals(17500L, result.startTimeMs());
+        assertEquals(19000L, result.endTimeMs());
     }
 
     @Test
@@ -122,7 +187,7 @@ class MeetingResultsControllerTest {
                 BusinessException.class, () -> controller.getResults(MEETING_ID, JOB_ID));
 
         assertEquals("MEETING_JOB_NOT_FOUND", error.getCode());
-        verifyNoInteractions(transcriptService, summaryRepository, actionItemRepository, speakerSegmentRepository);
+        verifyNoInteractions(transcriptService, summaryRepository, actionItemRepository, speakerRepository);
     }
 
     @Test

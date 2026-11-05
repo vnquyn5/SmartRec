@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 import { api } from "../../lib/http/client";
 import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
+import { formatMediaTimeSeconds } from "../../components/meeting/transcriptData";
 
 const POLL_INTERVAL_MS = 2500;
 const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING", "PROCESSING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
@@ -11,14 +12,7 @@ const COMPLETE_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED"]);
 const UNPROCESSED_STATUS = "UNPROCESSED";
 
 function formatTimestamp(value) {
-  const seconds = Math.max(0, Number(value) || 0);
-  const wholeSeconds = Math.floor(seconds);
-  const hours = Math.floor(wholeSeconds / 3600);
-  const minutes = Math.floor((wholeSeconds % 3600) / 60);
-  const remainder = wholeSeconds % 60;
-  return hours > 0
-    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  return formatMediaTimeSeconds(value);
 }
 
 function groupSegments(segments = []) {
@@ -312,8 +306,8 @@ export default function MeetingDetailPage() {
     : `Xử lý âm thanh thất bại${job?.errorCode ? ` (${job.errorCode})` : ""}.`;
 
   return (
-    <div className="w-full min-w-0 font-sans flex flex-col">
-      <div className="flex items-center justify-between mb-5 pb-3 border-b border-[#1b2742] min-w-0">
+    <div className="meeting-details-page w-full min-w-0 min-h-0 font-sans flex flex-col">
+      <div className="flex items-center justify-between mb-3 pb-3 border-b border-[#1b2742] min-w-0 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <button type="button" onClick={() => navigate("/workspace")} className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#141d33] border border-[#233357] text-slate-300 hover:text-white hover:bg-[#1a2642] transition shadow-sm shrink-0" title="Quay lại">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
@@ -321,12 +315,14 @@ export default function MeetingDetailPage() {
           <h1 className="text-base font-bold text-white tracking-wide truncate" title={fileName}>{fileName}</h1>
         </div>
       </div>
-      {displayState === "loading" && <p className="text-sm text-slate-400 mb-4">Đang tải cuộc họp…</p>}
-      {displayState === "error" && <p role="alert" className="text-sm text-red-300 mb-4">{meetingError || "Không thể tải thông tin cuộc họp."}</p>}
-      {isCurrentMeeting && loadError && <p role="alert" className="text-sm text-amber-200 mb-4">{loadError}</p>}
+      {displayState === "loading" && <p role="status" className="text-sm text-slate-400 mb-4 shrink-0">Đang tải cuộc họp…</p>}
+      {displayState === "error" && <p role="alert" className="text-sm text-red-300 mb-4 shrink-0">{meetingError || "Không thể tải thông tin cuộc họp."}</p>}
+      {isCurrentMeeting && loadError && <p role="alert" className="text-sm text-amber-200 mb-4 shrink-0">{loadError}</p>}
       {isCurrentMeeting && displayState !== "loading" && <MeetingDetail
         key={id}
         meeting={meeting}
+        jobId={job?.id || meeting?.activeJobId}
+        jobStatus={job?.status || meeting?.status}
         fileType={fileType}
         speakers={currentSpeakers}
         aiStatus={aiStatus}

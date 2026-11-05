@@ -87,7 +87,9 @@ public class AIModelRouter {
 
         AdapterException localFailure = null;
         int localAttemptsExecuted = 0;
-        int attempts = Math.max(1, Math.min(properties.getLocalMaxAttempts(), 3));
+        // At most one retry. Keep the same verified prompt and never feed a
+        // failed/raw model response back into the next attempt.
+        int attempts = Math.max(1, Math.min(properties.getLocalMaxAttempts(), 2));
         for (int attempt = 1; attempt <= attempts; attempt++) {
             if (isLocalCircuitOpen()) {
                 localFailure = new AdapterException("LOCAL_CIRCUIT_OPEN", true);

@@ -133,7 +133,7 @@ public class LocalLLMAdapterClient {
     private boolean isFallbackEligible(String code) {
         return switch (code) {
             case "LOCAL_MODEL_TIMEOUT", "LOCAL_MODEL_UNAVAILABLE", "LOCAL_MODEL_INVALID_RESPONSE",
-                    "LOCAL_ADAPTER_UNAVAILABLE", "JSON_PARSE_ERROR", "SCHEMA_VALIDATION_ERROR",
+                    "LOCAL_MODEL_TRUNCATED", "LOCAL_ADAPTER_UNAVAILABLE", "JSON_PARSE_ERROR", "SCHEMA_VALIDATION_ERROR",
                     "SOURCE_REFERENCE_ERROR" -> true;
             default -> false;
         };

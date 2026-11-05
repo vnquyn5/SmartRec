@@ -591,17 +591,6 @@ public class JobServiceImpl implements JobService {
                         "Không tìm thấy Job Stage"));
         if (isIdempotentCallback(job, jobStage, request)) return;
 
-        // OUTPUT can only succeed after AI processing returns a result.
-        // PROCESSING callbacks remain valid without aiResult.
-        if (request.getStage() == PipelineStage.OUTPUT
-                && request.getStatus() == JobStageStatus.SUCCESS
-                && request.getAiResult() == null) {
-            throw new BusinessException(
-                    HttpStatus.BAD_REQUEST,
-                    "AI_RESULT_REQUIRED",
-                    "OUTPUT SUCCESS yêu cầu kết quả AI hợp lệ");
-        }
-
         if (Set.of(JobStatus.COMPLETED, JobStatus.DLQ, JobStatus.CANCELLED, JobStatus.PAUSED, JobStatus.FAILED)
                 .contains(job.getStatus())) {
             throw new BusinessException(HttpStatus.CONFLICT, "TERMINAL_JOB_CALLBACK",

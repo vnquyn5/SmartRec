@@ -107,7 +107,7 @@ export default function MeetingVideoPlayer({
   };
 
   return (
-    <div className="w-full min-w-0 bg-[#080d1a] border border-[#1b2640] rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+    <div className="w-full min-w-0 shrink-0 bg-[#080d1a] border border-[#1b2640] rounded-2xl overflow-hidden shadow-2xl flex flex-col">
       {unsupportedMkv ? (
         <div className="aspect-video w-full bg-[#0c1324] flex flex-col items-center justify-center gap-4 p-6 text-center">
           <p className="text-sm text-slate-300">Trình duyệt không hỗ trợ phát trực tiếp định dạng MKV.</p>
@@ -121,7 +121,7 @@ export default function MeetingVideoPlayer({
           </button>
         </div>
       ) : isAudio ? (
-        <div className="aspect-video w-full bg-[#0c1324] flex flex-col items-center justify-center gap-5 p-6">
+        <div className="aspect-video max-h-[36vh] w-full bg-[#0c1324] flex flex-col items-center justify-center gap-5 p-6">
           <div className="w-20 h-20 rounded-full bg-[#172554] border border-[#2563eb]/40 flex items-center justify-center text-[#60a5fa]" aria-hidden="true">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
           </div>
@@ -139,7 +139,7 @@ export default function MeetingVideoPlayer({
       ) : (
         <video
           ref={mediaRef}
-          className="aspect-video w-full bg-black object-contain"
+          className="aspect-video max-h-[36vh] w-full bg-black object-contain"
           controls
           preload="metadata"
           src={playbackUrl || undefined}

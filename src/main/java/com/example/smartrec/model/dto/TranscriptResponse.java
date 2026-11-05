@@ -23,6 +23,8 @@ public class TranscriptResponse {
 
     private UUID speakerId;
 
+    private String attributionStatus;
+
     private Long startTimeMs;
 
     private Long endTimeMs;

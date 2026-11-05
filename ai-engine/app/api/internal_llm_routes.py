@@ -37,6 +37,14 @@ def _authenticate(x_internal_token: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_INTERNAL_TOKEN"})
 
 
+def _require_llm_enabled() -> None:
+    if not settings.smartrec_llm_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "LLM_DISABLED"},
+        )
+
+
 def _validated_summary(raw_output: str, refs: list[str]) -> MeetingSummary:
     try:
         summary = validate_summary_output(raw_output, MeetingSummary, set(refs))
@@ -60,6 +68,7 @@ def prepare_inference(
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> PrepareInferenceResponse:
     _authenticate(x_internal_token)
+    _require_llm_enabled()
     if not any(item.source_type == "TRANSCRIPT" for item in request.evidence):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -108,6 +117,7 @@ def generate_local(
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> LocalInferenceResponse:
     _authenticate(x_internal_token)
+    _require_llm_enabled()
     try:
         generated = local_llm_client.generate(
             prompt=request.prompt,
@@ -150,6 +160,7 @@ def validate_fallback_output(
     x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
 ) -> ValidatedInferenceResponse:
     _authenticate(x_internal_token)
+    _require_llm_enabled()
     summary = _validated_summary(request.raw_output, request.allowed_source_refs)
     return ValidatedInferenceResponse(
         contractVersion="smartrec.local-llm.v1",

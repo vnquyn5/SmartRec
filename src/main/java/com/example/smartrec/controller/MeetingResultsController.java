@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.entity.ActionItem;
 import com.example.smartrec.entity.Summary;
+import com.example.smartrec.entity.Speaker;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.MeetingResultsResponse;
@@ -26,6 +27,7 @@ import com.example.smartrec.model.dto.MeetingResultsResponse.TranscriptResult;
 import com.example.smartrec.model.dto.TranscriptResponse;
 import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.SummaryRepository;
+import com.example.smartrec.repository.SpeakerRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
@@ -43,6 +45,7 @@ public class MeetingResultsController {
     private final TranscriptService transcriptService;
     private final SummaryRepository summaryRepository;
     private final ActionItemRepository actionItemRepository;
+    private final SpeakerRepository speakerRepository;
     private final SpeakerSegmentRepository speakerSegmentRepository;
 
     @GetMapping
@@ -66,22 +69,29 @@ public class MeetingResultsController {
                 .collect(Collectors.toSet());
         Map<UUID, String> speakerLabels = new HashMap<>();
         if (!speakerIds.isEmpty()) {
-            speakerSegmentRepository.findAllById(speakerIds).forEach(segment -> {
-                if (!meetingId.equals(segment.getMeetingId())) {
+            speakerRepository.findAllById(speakerIds).forEach(speaker -> {
+                if (!meetingId.equals(speaker.getMeetingId())) {
                     throw inconsistentData();
                 }
-                speakerLabels.put(segment.getId(), segment.getSpeakerLabel());
+                speakerLabels.put(speaker.getId(),
+                        speaker.getRealName() == null || speaker.getRealName().isBlank()
+                                ? speaker.getAiLabel()
+                                : speaker.getRealName());
+            });
+        }
+        List<com.example.smartrec.entity.SpeakerSegment> speakerTimeline =
+                speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(meetingId);
+        Map<String, Speaker> speakersByAiLabel = new HashMap<>();
+        if (!speakerTimeline.isEmpty()) {
+            speakerRepository.findByMeetingId(meetingId).forEach(speaker -> {
+                if (!meetingId.equals(speaker.getMeetingId())) {
+                    throw inconsistentData();
+                }
+                speakersByAiLabel.put(normalizeSpeakerLabel(speaker.getAiLabel()), speaker);
             });
         }
         List<TranscriptResult> transcripts = persistedTranscripts.stream()
-                .map(item -> new TranscriptResult(
-                        item.getId(),
-                        item.getSpeakerId(),
-                        speakerLabels.get(item.getSpeakerId()),
-                        item.getStartTimeMs(),
-                        item.getEndTimeMs(),
-                        item.getTextContent(),
-                        item.getConfidenceScore()))
+                .map(item -> toTranscriptResult(item, speakerLabels, speakersByAiLabel, speakerTimeline))
                 .toList();
 
         Summary summaryEntity = summaryRepository.findByProcessingJobId(jobId).orElse(null);
@@ -92,6 +102,73 @@ public class MeetingResultsController {
 
         return ResponseEntity.ok(new MeetingResultsResponse(
                 meetingId, jobId, job.getStatus(), transcripts, summary, actionItems));
+    }
+
+    private TranscriptResult toTranscriptResult(
+            TranscriptResponse item,
+            Map<UUID, String> persistedSpeakerLabels,
+            Map<String, Speaker> speakersByAiLabel,
+            List<com.example.smartrec.entity.SpeakerSegment> speakerTimeline) {
+        String storedStatus = item.getAttributionStatus() == null
+                ? "ATTRIBUTED" : item.getAttributionStatus();
+        UUID speakerId = item.getSpeakerId();
+        String speakerLabel = persistedSpeakerLabels.get(speakerId);
+        String attributionStatus = storedStatus;
+
+        if ("CROSS_SPEAKER_BOUNDARY".equals(storedStatus) || "UNRESOLVED".equals(storedStatus)) {
+            speakerId = null;
+            speakerLabel = null;
+        } else if (!speakerTimeline.isEmpty()
+                && item.getStartTimeMs() != null && item.getEndTimeMs() != null
+                && item.getEndTimeMs() > item.getStartTimeMs()) {
+            double start = item.getStartTimeMs() / 1000.0;
+            double end = item.getEndTimeMs() / 1000.0;
+            List<com.example.smartrec.entity.SpeakerSegment> overlapping = speakerTimeline.stream()
+                    .filter(turn -> turn.getStartTime() != null && turn.getEndTime() != null
+                            && turn.getStartTime() < end && turn.getEndTime() > start)
+                    .toList();
+            var overlapLabels = overlapping.stream()
+                    .map(turn -> normalizeSpeakerLabel(turn.getSpeakerLabel()))
+                    .filter(label -> !label.isEmpty())
+                    .collect(Collectors.toSet());
+            if (overlapLabels.size() > 1) {
+                attributionStatus = "CROSS_SPEAKER_BOUNDARY";
+                speakerId = null;
+                speakerLabel = null;
+            } else {
+                var containing = overlapping.stream()
+                        .filter(turn -> turn.getStartTime() <= start && end <= turn.getEndTime())
+                        .findFirst();
+                if (containing.isEmpty()) {
+                    attributionStatus = "UNRESOLVED";
+                    speakerId = null;
+                    speakerLabel = null;
+                } else {
+                    Speaker matchedSpeaker = speakersByAiLabel.get(
+                            normalizeSpeakerLabel(containing.get().getSpeakerLabel()));
+                    if (matchedSpeaker == null) {
+                        attributionStatus = "UNRESOLVED";
+                        speakerId = null;
+                        speakerLabel = null;
+                    } else {
+                        attributionStatus = "ATTRIBUTED";
+                        speakerId = matchedSpeaker.getId();
+                        speakerLabel = matchedSpeaker.getRealName() == null
+                                || matchedSpeaker.getRealName().isBlank()
+                                ? matchedSpeaker.getAiLabel() : matchedSpeaker.getRealName();
+                    }
+                }
+            }
+        }
+
+        return new TranscriptResult(
+                item.getId(), speakerId, speakerLabel, attributionStatus,
+                item.getStartTimeMs(), item.getEndTimeMs(), item.getTextContent(),
+                item.getConfidenceScore(), item.getMeetingId(), item.getProcessingJobId());
+    }
+
+    private String normalizeSpeakerLabel(String label) {
+        return label == null ? "" : label.trim().toUpperCase(java.util.Locale.ROOT);
     }
 
     private SummaryResult toSummary(UUID meetingId, Summary summary) {

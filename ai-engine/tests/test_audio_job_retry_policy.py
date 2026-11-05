@@ -516,6 +516,7 @@ def test_job_lookup_failure_preserves_workspace_before_lease_claim(tmp_path, mon
 
 def test_worker_delivers_stt_then_router_result_before_output_success(tmp_path, monkeypatch):
     import app.services.stt_job_integration as stt
+    import app.services.multimodal_pipeline as multimodal
     events = []
     _configure_no_speech_worker(tmp_path, monkeypatch,
         lambda job, stage, status, **kw: events.append((stage, status, kw)))
@@ -532,6 +533,8 @@ def test_worker_delivers_stt_then_router_result_before_output_success(tmp_path, 
         process_and_export=lambda **kw: (payload, None)))
     invocation = Mock(return_value={"segments": []})
     monkeypatch.setattr(stt, "run_stt_for_job", invocation)
+    ocr = Mock()
+    monkeypatch.setattr(multimodal, "publish_job_ocr", ocr)
     ai_result = {
         "jobId": job_id,
         "meetingId": meeting_id,
@@ -543,6 +546,7 @@ def test_worker_delivers_stt_then_router_result_before_output_success(tmp_path, 
     monkeypatch.setattr(redis_job_worker.callback_client, "request_ai_result", router_request)
     result = redis_job_worker.process_job(job_id)
     invocation.assert_called_once()
+    ocr.assert_not_called()
     args = invocation.call_args.kwargs
     assert args["execution_id"]
     assert callable(args["checkpoint"])
@@ -601,14 +605,77 @@ def test_output_success_callback_forwards_ai_result(monkeypatch):
     assert send_callback.call_args.kwargs["execution_id"] == "execution-ai"
 
 
-def test_output_success_callback_requires_ai_result(monkeypatch):
+def test_core_output_success_callback_allows_missing_ai_result(monkeypatch):
     send_callback = Mock(return_value=True)
     monkeypatch.setattr(redis_job_worker.callback_client, "send_callback", send_callback)
 
-    with pytest.raises(ValueError, match="OUTPUT_SUCCESS_REQUIRES_AI_RESULT"):
-        redis_job_worker.send_stage_callback("job-ai", "OUTPUT", "SUCCESS")
+    assert redis_job_worker.send_stage_callback("job-ai", "OUTPUT", "SUCCESS")
 
-    send_callback.assert_not_called()
+    send_callback.assert_called_once()
+    assert "aiResult" not in send_callback.call_args.args[1]
+
+
+def test_worker_skips_ai_router_when_llm_feature_flag_is_disabled(tmp_path, monkeypatch):
+    import app.services.stt_job_integration as stt
+    events = []
+    _configure_no_speech_worker(
+        tmp_path, monkeypatch,
+        lambda job, stage, status, **kw: events.append((stage, status, kw)),
+    )
+    job_id = "11111111-1111-4111-8111-111111111111"
+    meeting_id = "22222222-2222-4222-8222-222222222222"
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", False)
+    monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda _: {
+        "objectKey": "audio.wav", "meetingId": meeting_id, "status": "QUEUED"
+    })
+    monkeypatch.setattr(redis_job_worker, "_get_audio_chunker", lambda: SimpleNamespace(
+        process_audio=lambda **kw: {"is_chunked": False}))
+    diarization = SimpleNamespace(status="SUCCESS", model_dump=lambda: {
+        "timeline": [{"speaker_label": "SPEAKER_00", "start": 0, "end": 0.005}]})
+    monkeypatch.setattr(redis_job_worker, "speaker_labeling_service", SimpleNamespace(
+        process_and_export=lambda **kw: (diarization, None)))
+    monkeypatch.setattr(stt, "run_stt_for_job", lambda **kw: {"segments": []})
+    router = Mock(side_effect=AssertionError("LLM router must be bypassed"))
+    monkeypatch.setattr(redis_job_worker.callback_client, "request_ai_result", router)
+
+    redis_job_worker.process_job(job_id)
+
+    router.assert_not_called()
+    output_success = [e for e in events if e[0] == "OUTPUT" and e[1] == "SUCCESS"]
+    assert len(output_success) == 1
+    assert output_success[0][2]["ai_result"] is None
+
+
+def test_llm_router_failure_preserves_core_output_success(tmp_path, monkeypatch):
+    import app.services.stt_job_integration as stt
+    events = []
+    _configure_no_speech_worker(
+        tmp_path, monkeypatch,
+        lambda job, stage, status, **kw: events.append((stage, status, kw)),
+    )
+    job_id = "11111111-1111-4111-8111-111111111111"
+    meeting_id = "22222222-2222-4222-8222-222222222222"
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", True)
+    monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda _: {
+        "objectKey": "audio.wav", "meetingId": meeting_id, "status": "QUEUED"
+    })
+    monkeypatch.setattr(redis_job_worker, "_get_audio_chunker", lambda: SimpleNamespace(
+        process_audio=lambda **kw: {"is_chunked": False}))
+    diarization = SimpleNamespace(status="SUCCESS", model_dump=lambda: {
+        "timeline": [{"speaker_label": "SPEAKER_00", "start": 0, "end": 0.005}]})
+    monkeypatch.setattr(redis_job_worker, "speaker_labeling_service", SimpleNamespace(
+        process_and_export=lambda **kw: (diarization, None)))
+    monkeypatch.setattr(stt, "run_stt_for_job", lambda **kw: {"segments": []})
+    from app.services.callback_client import AIInferenceRequestError
+    router = Mock(side_effect=AIInferenceRequestError("LOCAL_MODEL_TIMEOUT", True))
+    monkeypatch.setattr(redis_job_worker.callback_client, "request_ai_result", router)
+
+    redis_job_worker.process_job(job_id)
+
+    router.assert_called_once()
+    output_success = [e for e in events if e[0] == "OUTPUT" and e[1] == "SUCCESS"]
+    assert len(output_success) == 1
+    assert output_success[0][2]["ai_result"] is None
 
 
 def test_output_callback_delivery_failure_does_not_report_success(monkeypatch):
@@ -659,6 +726,7 @@ def test_video_ocr_precedes_inference_and_failure_preserves_transcript(tmp_path,
         order.append("OCR")
         if ocr_failure:
             raise RetryableProcessingError("OCR_INCOMPLETE")
+        return 0  # A verified empty keyframe scan is valid Core output.
     monkeypatch.setattr(multimodal, "publish_job_ocr", ocr)
     def infer(*args, **kwargs):
         order.append("LLM")

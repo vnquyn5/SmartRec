@@ -43,6 +43,9 @@ class LocalLLMClient:
             "prompt": prompt,
             "system": system_prompt,
             "stream": False,
+            # A single local summary job can unload its model before the next
+            # Celery job starts Pyannote/STT and competes for unified memory.
+            "keep_alive": 0,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -78,6 +81,9 @@ class LocalLLMClient:
 
         if not isinstance(body, dict) or body.get("error"):
             raise LocalLLMError("LOCAL_MODEL_UNAVAILABLE")
+        if body.get("done_reason") == "length":
+            logger.warning("Local model output reached the configured token limit")
+            raise LocalLLMError("LOCAL_MODEL_TRUNCATED")
         text = body.get("response")
         if not isinstance(text, str) or not text.strip():
             raise LocalLLMError("LOCAL_MODEL_INVALID_RESPONSE")

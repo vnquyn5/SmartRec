@@ -45,6 +45,7 @@ def test_posts_ollama_payload_and_returns_token_metadata(monkeypatch):
             "prompt": "transcript prompt",
             "system": "system rules",
             "stream": False,
+            "keep_alive": 0,
             "options": {"temperature": 0.1, "num_predict": 2048},
         },
         headers={"Content-Type": "application/json"},

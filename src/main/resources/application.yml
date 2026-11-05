@@ -78,6 +78,8 @@ job:
   watchdog-scan-interval-ms: ${JOB_WATCHDOG_SCAN_INTERVAL_MS:30000}
 
 smartrec:
+  llm:
+    enabled: ${SMARTREC_LLM_ENABLED:true}
   ai-engine:
     base-url: ${AI_ENGINE_BASE_URL:http://localhost:8000}
     prepare-path: ${AI_ENGINE_PREPARE_PATH:/api/v1/internal/llm/prepare}

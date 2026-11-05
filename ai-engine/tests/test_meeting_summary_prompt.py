@@ -57,6 +57,14 @@ def test_original_system_prompt_exists():
         assert field in SYSTEM_PROMPT
 
 
+def test_compact_prompt_targets_negation_assignee_and_relative_deadlines():
+    assert "chưa thống nhất" in SYSTEM_PROMPT
+    assert "assigned/committed task" in SYSTEM_PROMPT
+    assert "deadline_raw" in SYSTEM_PROMPT
+    assert "Never resolve relative dates from today's date" in SYSTEM_PROMPT
+    assert "source_ref values" in SYSTEM_PROMPT
+
+
 def test_action_prompt_contract():
     assert ACTION_EXTRACTION_PROMPT.strip()
 

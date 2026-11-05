@@ -20,10 +20,13 @@ public record MeetingResultsResponse(
             UUID id,
             UUID speakerId,
             String speakerLabel,
+            String attributionStatus,
             Long startTimeMs,
             Long endTimeMs,
             String textContent,
-            BigDecimal confidenceScore) {}
+            BigDecimal confidenceScore,
+            UUID meetingId,
+            UUID jobId) {}
 
     public record SummaryResult(String executiveSummary, JsonNode details) {}
 
