@@ -21,6 +21,7 @@ import {
   buildUploadDuplicateNotice,
   checkFilesForUploadDuplicates,
 } from "../../utils/uploadDuplicateNotice";
+import { getFolders, createFolder, moveMeetingsToFolder } from "../../services/folderService";
 
 // Helper format bytes
 const formatBytes = (bytes) => {
@@ -53,6 +54,18 @@ const MAX_SINGLE_FILES = 5;
 const MAX_CHUNKED_FILES = 3;
 const SINGLE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
 const CHUNKED_UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024;
+
+const LANGUAGES = [
+  { id: "auto", label: "Auto" },
+  { id: "vi", label: "Vietnamese (Tiếng Việt)" },
+  { id: "fr", label: "French (Français)" },
+  { id: "en", label: "English (English)" },
+  { id: "ja", label: "Japanese (日本語)" },
+  { id: "ko", label: "Korean (한국어)" },
+  { id: "es", label: "Spanish (Español)" },
+  { id: "de", label: "Deutsch (German)" },
+  { id: "zh", label: "Chinese (中文)" },
+];
 
 const getFileIdentity = (file) =>
   `${file.name}-${file.size}-${file.lastModified}`;
@@ -91,6 +104,57 @@ const UploadPage = () => {
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
   const queue = singleUploadState.items;
+
+  // State cho giao diện mới (Folder & Summarize Language)
+  const [selectedFolder, setSelectedFolder] = useState({ id: null, name: "All Notes" });
+  const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
+  const [folders, setFolders] = useState([]);
+  const [folderSearchText, setFolderSearchText] = useState("");
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [selectedLanguage, setSelectedLanguage] = useState("English (English)");
+  const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
+
+  const folderDropdownRef = useRef(null);
+  const langDropdownRef = useRef(null);
+
+  const handleCreateFolderSubmit = async (e) => {
+    e?.preventDefault();
+    if (!newFolderName.trim()) return;
+    try {
+      const created = await createFolder(newFolderName.trim());
+      if (created) {
+        setFolders((prev) => [...prev, created]);
+        setSelectedFolder({ id: created.id, name: created.name });
+        setNewFolderName("");
+        setIsCreatingFolder(false);
+        setFolderDropdownOpen(false);
+      }
+    } catch (err) {
+      console.error("Lỗi khi tạo folder:", err);
+    }
+  };
+
+  useEffect(() => {
+    getFolders()
+      .then((data) => {
+        if (Array.isArray(data)) setFolders(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (folderDropdownRef.current && !folderDropdownRef.current.contains(e.target)) {
+        setFolderDropdownOpen(false);
+      }
+      if (langDropdownRef.current && !langDropdownRef.current.contains(e.target)) {
+        setLanguageDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -719,6 +783,9 @@ const UploadPage = () => {
           const summary = buildSavedSummary({ ...singleItem, uploadResponse: confirmedUpload });
           setSavedFilesSummary([summary]);
           singleUploadStore.markSaved(id);
+          if (selectedFolder?.id && confirmedUpload?.meetingId) {
+            moveMeetingsToFolder([confirmedUpload.meetingId], selectedFolder.id).catch(() => {});
+          }
         } else {
           if (chunkItem.phase === "success") {
             const savedItem = await largeUploadStore.merge(id);
@@ -877,6 +944,14 @@ const UploadPage = () => {
       if (successfulSummaries.length > 0) {
         setSavedFilesSummary(successfulSummaries);
         savedSingleIds.forEach((id) => singleUploadStore.markSaved(id));
+        if (selectedFolder?.id) {
+          const meetingIds = successfulSummaries
+            .map((s) => s.meetingId)
+            .filter(Boolean);
+          if (meetingIds.length > 0) {
+            moveMeetingsToFolder(meetingIds, selectedFolder.id).catch(() => {});
+          }
+        }
       }
 
       if (failedNames.length > 0) {
@@ -955,68 +1030,74 @@ const UploadPage = () => {
     ["uploading", "finalizing", "merging"].includes(item.phase)
   );
 
+  const canSubmitAiSummary = hasFiles && !isSavingAll && savingIds.size === 0;
+
+  const handleAiSummarySubmit = async () => {
+    if (!hasFiles) {
+      handleChooseFiles();
+      return;
+    }
+    if (isSavingAll || savingIds.size > 0) return;
+    if (saveableCount > 0) {
+      await handleSaveAll();
+      return;
+    }
+    if (hasUploadedSuccess) {
+      navigate("/history");
+      return;
+    }
+    if (isItemUploading) {
+      setUploadNotice("Hệ thống đang tải lên các file. Khi hoàn tất, các cuộc họp sẽ tự động được lưu và tạo bản tóm tắt AI.");
+      window.setTimeout(() => setUploadNotice(null), 4000);
+      return;
+    }
+  };
+
   return (
     <>
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "flex-start",
-          padding: "24px",
-          paddingTop: "40px",
-        }}
-      >
-        <div style={{ width: "700px", maxWidth: "100%" }}>
+      <div className="w-full flex-1 flex items-center justify-center p-4 sm:p-6 my-auto">
+        <div className="relative w-full max-w-[720px] bg-[#0d1424] text-[#f7f9ff] rounded-[28px] shadow-2xl shadow-black/70 p-6 sm:p-8 border border-[#1e2a44] font-sans transition-all">
           {/* Header */}
-          <div style={{ textAlign: "center", marginBottom: "16px" }}>
-            <h1
-              style={{
-                fontSize: "20px",
-                fontWeight: "800",
-                color: "#fff",
-                marginBottom: "8px",
-              }}
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-[#f7f9ff] tracking-tight">
+                Upload files
+              </h1>
+              <p className="text-xs sm:text-sm text-[#8d96aa] mt-1">
+                Upload one or more files and let AI summarize them into clear insights
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-[#8d96aa] hover:text-[#f7f9ff] hover:bg-white/10 transition-colors cursor-pointer"
+              title="Đóng"
             >
-              Tải lên file cuộc họp
-            </h1>
-            <p
-              style={{
-                fontSize: "12px",
-                color: "#8d96aa",
-                maxWidth: "460px",
-                margin: "0 auto",
-                lineHeight: "1.6",
-              }}
-            >
-              Tải lên một hoặc nhiều file ghi âm/ghi hình đã có sẵn để hệ thống
-              phân tích và tạo bản ghi. Tối đa {MAX_SINGLE_FILES} file thường và{" "}
-              {MAX_CHUNKED_FILES} file lớn.
-            </p>
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
           </div>
 
           {/* Thông báo đã lưu */}
           {savedNotification && (
-            <div
-              style={{
-                padding: "12px 16px",
-                background: "rgba(34, 197, 94, 0.1)",
-                color: "#22c55e",
-                borderRadius: "8px",
-                marginBottom: "16px",
-                fontSize: "13px",
-                border: "1px solid rgba(34, 197, 94, 0.25)",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-              }}
-            >
+            <div className="mb-4 p-3 bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs rounded-xl flex items-center gap-2.5">
               <svg
                 width="18"
                 height="18"
                 viewBox="0 0 24 24"
                 fill="none"
-                stroke="#22c55e"
+                stroke="currentColor"
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -1024,29 +1105,19 @@ const UploadPage = () => {
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
                 <polyline points="22 4 12 14.01 9 11.01"></polyline>
               </svg>
-              <span style={{ fontWeight: "600" }}>{savedNotification}</span>
+              <span className="font-semibold">{savedNotification}</span>
             </div>
           )}
 
           {uploadNotice && (
-            <div
-              style={{
-                padding: "12px 16px",
-                background: "rgba(62, 137, 255, 0.1)",
-                color: "#8db7ff",
-                borderRadius: "8px",
-                marginBottom: "16px",
-                fontSize: "13px",
-                border: "1px solid rgba(62, 137, 255, 0.25)",
-              }}
-            >
+            <div className="mb-4 p-3 bg-blue-950/40 border border-blue-500/40 text-blue-300 text-xs rounded-xl">
               {typeof uploadNotice === "string" ? (
                 uploadNotice
               ) : (
                 <>
-                  <div style={{ fontWeight: "600" }}>{uploadNotice.title}</div>
-                  {uploadNotice.names.length > 0 && (
-                    <ul style={{ margin: "8px 0 0", paddingLeft: "18px" }}>
+                  <div className="font-bold">{uploadNotice.title}</div>
+                  {uploadNotice.names?.length > 0 && (
+                    <ul className="mt-1.5 list-disc pl-5 space-y-0.5">
                       {uploadNotice.names.map((name) => (
                         <li key={name}>{name}</li>
                       ))}
@@ -1057,187 +1128,320 @@ const UploadPage = () => {
             </div>
           )}
 
-          {/* Dropzone */}
+          {/* Dropzone Area */}
           {canAddMore && (
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              style={{
-                border: isDragging
-                  ? "2px dashed #3e89ff"
-                  : "2px dashed rgba(255, 255, 255, 0.1)",
-                borderRadius: "16px",
-                padding: "30px 24px",
-                textAlign: "center",
-                background: isDragging
-                  ? "rgba(62, 137, 255, 0.05)"
-                  : "rgba(255, 255, 255, 0.02)",
-                marginBottom: "12px",
-                transition: "all 0.2s ease",
-                cursor: "pointer",
-              }}
               onClick={handleChooseFiles}
+              className={`relative w-full rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center cursor-pointer transition-all duration-200 mb-4 select-none ${
+                isDragging
+                  ? "border-blue-500 bg-blue-950/30"
+                  : "border-[#24324f] hover:border-blue-500/70 bg-[#090f1d] hover:bg-[#0c1326]"
+              }`}
             >
-              <div
-                style={{
-                  width: "48px",
-                  height: "48px",
-                  background: "rgba(62, 137, 255, 0.1)",
-                  borderRadius: "50%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  margin: "0 auto 12px",
-                }}
-              >
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#3e89ff"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="17 8 12 3 7 8"></polyline>
-                  <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-              </div>
-              <h3
-                style={{
-                  fontSize: "15px",
-                  color: "#fff",
-                  margin: "0 0 8px",
-                  fontWeight: "700",
-                }}
-              >
-                Kéo thả file vào đây hoặc nhấn để chọn file
-              </h3>
-              <p
-                style={{
-                  fontSize: "13px",
-                  color: "#8d96aa",
-                  margin: "0 0 20px",
-                }}
-              >
-                Hỗ trợ file thường đến 2GB và file lớn đến 5GB
-              </p>
               <input
                 type="file"
                 accept={MEDIA_UPLOAD_ACCEPT}
                 multiple
-                style={{ display: "none" }}
                 ref={fileInputRef}
                 onChange={handleFileChange}
+                className="hidden"
               />
-              <button
-                className="sr-button sr-button-primary"
-                style={{
-                  minHeight: "40px",
-                  height: "40px",
-                  width: "auto",
-                  padding: "0 24px",
-                  fontSize: "13px",
-                  display: "inline-flex",
-                  gap: "8px",
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleChooseFiles();
-                }}
-              >
+              <div className="w-12 h-12 rounded-2xl bg-[#141e33] border border-[#223352] flex items-center justify-center mx-auto mb-3 text-blue-400 shadow-inner">
                 <svg
-                  width="14"
-                  height="14"
+                  width="22"
+                  height="22"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth="2"
+                  strokeWidth="1.8"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 >
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                   <polyline points="14 2 14 8 20 8"></polyline>
                   <line x1="12" y1="18" x2="12" y2="12"></line>
-                  <line x1="9" y1="15" x2="15" y2="15"></line>
+                  <polyline points="9 15 12 12 15 15"></polyline>
                 </svg>
-                Chọn file
-              </button>
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-[#f7f9ff] mb-1">
+                Click to upload file(s) or drag and drop
+              </h3>
+              <p className="text-[11px] sm:text-xs text-[#8d96aa] flex items-center justify-center gap-1.5 flex-wrap">
+                <span>Maximum document size: 20 MB per file · Audio length: Up to 5 hours · Common types supported</span>
+                <span className="relative group/tooltip inline-flex items-center cursor-help">
+                  <svg className="w-3.5 h-3.5 text-[#8d96aa] hover:text-[#f7f9ff]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                  </svg>
+                  <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/tooltip:block bg-[#162035] text-slate-200 border border-[#263756] text-[10px] py-1 px-2.5 rounded-lg shadow-2xl whitespace-nowrap z-50">
+                    Định dạng: MP4, MKV, MP3, M4A (Tối đa 2GB thường, 5GB file lớn)
+                  </span>
+                </span>
+              </p>
             </div>
           )}
 
-          <div style={{ textAlign: "center", marginBottom: "20px" }}>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-                fontSize: "12px",
-                color: "#8d96aa",
+          {/* Form Field 1: Folder */}
+          <div className="mb-3.5 relative" ref={folderDropdownRef}>
+            <label className="text-xs font-semibold text-[#8d96aa] mb-1.5 block">
+              Folder
+            </label>
+            <div
+              onClick={() => {
+                setFolderDropdownOpen((prev) => !prev);
+                setLanguageDropdownOpen(false);
+                setIsCreatingFolder(false);
+                setFolderSearchText("");
               }}
+              className="w-full bg-[#131b2e] hover:bg-[#18233a] rounded-2xl px-4 py-3 flex items-center justify-between cursor-pointer border border-[#1e2a44] hover:border-blue-500/40 transition select-none"
             >
-              <span
-                style={{
-                  width: "4px",
-                  height: "4px",
-                  background: "#8d96aa",
-                  borderRadius: "50%",
-                }}
-              ></span>
-              Định dạng hỗ trợ: .mp4, .mkv, .mp3, .m4a
-            </span>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-[#1b253b] border border-[#283854] flex items-center justify-center text-blue-400 shrink-0">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </div>
+                <span className="text-sm font-semibold text-[#f7f9ff] truncate">
+                  {selectedFolder.name}
+                </span>
+              </div>
+              <svg className="w-4 h-4 text-[#8d96aa] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>
+              </svg>
+            </div>
+
+            {folderDropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1.5 bg-[#0f1728] rounded-2xl border border-[#1e2a44] shadow-2xl z-50 overflow-hidden">
+                {/* Search folders... */}
+                <div className="p-3 border-b border-[#1e2a44]/80 flex items-center gap-2 bg-[#131b2e]/40">
+                  <input
+                    type="text"
+                    value={folderSearchText}
+                    onChange={(e) => setFolderSearchText(e.target.value)}
+                    placeholder="Search folders..."
+                    className="w-full bg-transparent text-xs text-[#f7f9ff] placeholder-[#64748b] focus:outline-none"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Danh sách folder */}
+                <div className="max-h-52 overflow-y-auto p-1.5 space-y-0.5">
+                  {/* All Notes */}
+                  {(!folderSearchText.trim() ||
+                    "all notes".includes(folderSearchText.toLowerCase()) ||
+                    "tất cả ghi chú".includes(folderSearchText.toLowerCase())) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFolder({ id: null, name: "All Notes" });
+                        setFolderDropdownOpen(false);
+                      }}
+                      className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between hover:bg-[#18233a] rounded-xl transition cursor-pointer ${
+                        selectedFolder.id === null ? "text-[#f7f9ff] font-semibold bg-[#18233a]/60" : "text-[#c2c8d6]"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#8d96aa] shrink-0">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <span className="truncate">All Notes</span>
+                      </div>
+                      {selectedFolder.id === null && (
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#f7f9ff] shrink-0 ml-auto">
+                          <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Folders của user (thụt lề như trong ảnh mẫu) */}
+                  {folders
+                    .filter((f) =>
+                      f.name.toLowerCase().includes(folderSearchText.toLowerCase())
+                    )
+                    .map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedFolder({ id: f.id, name: f.name });
+                          setFolderDropdownOpen(false);
+                        }}
+                        className={`w-full pl-8 pr-3 py-2 text-left text-xs flex items-center justify-between hover:bg-[#18233a] rounded-xl transition cursor-pointer ${
+                          selectedFolder.id === f.id ? "text-[#f7f9ff] font-semibold bg-[#18233a]/60" : "text-[#c2c8d6]"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#8d96aa] shrink-0">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                          </svg>
+                          <span className="truncate">{f.name}</span>
+                        </div>
+                        {selectedFolder.id === f.id && (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#f7f9ff] shrink-0 ml-auto">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        )}
+                      </button>
+                    ))}
+                </div>
+
+                {/* Footer: Create new folder */}
+                <div className="p-2 border-t border-[#1e2a44]/80 bg-[#131b2e]/20">
+                  {!isCreatingFolder ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsCreatingFolder(true);
+                      }}
+                      className="w-full px-2.5 py-2 text-left text-xs font-medium text-[#c2c8d6] hover:text-[#f7f9ff] hover:bg-[#18233a] rounded-xl flex items-center gap-2.5 transition cursor-pointer"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-[#8d96aa]">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        <line x1="12" y1="11" x2="12" y2="17"></line>
+                        <line x1="9" y1="14" x2="15" y2="14"></line>
+                      </svg>
+                      <span>Create new folder</span>
+                    </button>
+                  ) : (
+                    <form
+                      onSubmit={handleCreateFolderSubmit}
+                      className="flex items-center gap-1.5 p-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="text"
+                        value={newFolderName}
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        placeholder="New folder name..."
+                        className="flex-1 bg-[#162035] text-xs text-white px-2.5 py-1.5 rounded-lg border border-[#2b3d60] focus:outline-none focus:border-blue-500"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        disabled={!newFolderName.trim()}
+                        className="px-2.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg disabled:opacity-50 transition cursor-pointer"
+                      >
+                        Create
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingFolder(false);
+                          setNewFolderName("");
+                        }}
+                        className="px-2 py-1.5 text-xs text-[#8d96aa] hover:text-white rounded-lg transition cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
-          {saveableCount >= 2 && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                marginBottom: "12px",
-              }}
-            >
-              <button
-                type="button"
-                onClick={handleSaveAll}
-                disabled={
-                  isSavingAll || savingIds.size > 0 || saveableCount < 2
-                }
-                style={{
-                  background:
-                    saveableCount >= 2 && !isSavingAll
-                      ? "linear-gradient(135deg, #22c55e, #16a34a)"
-                      : "rgba(255,255,255,0.08)",
-                  border: "none",
-                  color:
-                    saveableCount >= 2 && !isSavingAll ? "#fff" : "#576176",
-                  padding: "8px 16px",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  fontWeight: "700",
-                  cursor:
-                    saveableCount >= 2 && !isSavingAll
-                      ? "pointer"
-                      : "not-allowed",
-                }}
-              >
-                {isSavingAll ? "Đang lưu..." : "Lưu tất cả"}
-              </button>
+          {/* Form Field 2: Summarize Language */}
+          <div className="mb-5 relative" ref={langDropdownRef}>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <label className="text-xs font-semibold text-[#8d96aa]">
+                Summarize Language
+              </label>
+              <div className="relative group/lang inline-flex items-center cursor-help">
+                <svg className="w-3.5 h-3.5 text-[#8d96aa] hover:text-[#f7f9ff]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="16" x2="12" y2="12"></line>
+                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/lang:block bg-[#162035] text-slate-200 border border-[#263756] text-[10px] py-1 px-2.5 rounded-lg shadow-2xl whitespace-nowrap z-50">
+                  Ngôn ngữ mô hình AI sẽ dùng để xuất bản tóm tắt và trích xuất nhiệm vụ
+                </span>
+              </div>
             </div>
-          )}
+            <div
+              onClick={() => {
+                setLanguageDropdownOpen((prev) => !prev);
+                setFolderDropdownOpen(false);
+              }}
+              className="w-full bg-[#131b2e] hover:bg-[#18233a] rounded-2xl px-4 py-3 flex items-center justify-between cursor-pointer border border-[#1e2a44] hover:border-blue-500/40 transition select-none"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-[#1b253b] border border-[#283854] flex items-center justify-center text-blue-400 shrink-0">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                  </svg>
+                </div>
+                <span className="text-sm font-semibold text-[#f7f9ff] truncate">
+                  {selectedLanguage}
+                </span>
+              </div>
+              <svg className="w-4 h-4 text-[#8d96aa] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>
+              </svg>
+            </div>
+
+            {languageDropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1.5 bg-[#0f1728] rounded-2xl border border-[#1e2a44] shadow-2xl py-2 z-50 max-h-60 overflow-y-auto">
+                <div className="px-3.5 pt-1 pb-1 text-[11px] font-semibold text-[#8d96aa] tracking-wide select-none">
+                  All
+                </div>
+                <div className="p-1 space-y-0.5">
+                  {LANGUAGES.map((lang) => {
+                    const isSelected = selectedLanguage === lang.label;
+                    return (
+                      <button
+                        key={lang.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedLanguage(lang.label);
+                          setLanguageDropdownOpen(false);
+                        }}
+                        className={`w-full px-3.5 py-2.5 text-left text-xs flex items-center justify-between rounded-xl transition cursor-pointer ${
+                          isSelected
+                            ? "text-[#f7f9ff] bg-[#1a253c] font-semibold"
+                            : "text-[#c2c8d6] hover:bg-[#18233a] hover:text-[#f7f9ff]"
+                        }`}
+                      >
+                        <span className="truncate">{lang.label}</span>
+                        {isSelected && (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#f7f9ff] shrink-0 ml-auto">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* File Queue */}
           {displayQueue.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "12px",
-                marginBottom: "24px",
-              }}
-            >
+            <div className="flex flex-col gap-3 mb-5 max-h-60 overflow-y-auto pr-1">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs font-bold text-[#c2c8d6]">
+                  Danh sách file ({displayQueue.length})
+                </span>
+                {saveableCount >= 2 && (
+                  <button
+                    type="button"
+                    onClick={handleSaveAll}
+                    disabled={isSavingAll || savingIds.size > 0}
+                    className="text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/15 px-2.5 py-1 rounded-lg border border-emerald-500/30 transition cursor-pointer"
+                  >
+                    {isSavingAll ? "Đang lưu..." : "Lưu tất cả"}
+                  </button>
+                )}
+              </div>
+
               {displayQueue.map((item) => {
                 const isDone = item.phase === "success";
                 const isError =
@@ -1261,8 +1465,6 @@ const UploadPage = () => {
                 const isFinalizing = item.phase === "finalizing";
                 const disableRemove =
                   isItemUploading || isFinalizing || isMerging;
-                const progressColor =
-                  item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
 
                 const speedBps = item.speedBps || 0;
                 const uploadedBytes = item.file.size * (item.progress / 100);
@@ -1278,98 +1480,66 @@ const UploadPage = () => {
                 };
 
                 let statusText = "";
-                let statusColor = "#8d96aa";
+                let statusColor = "text-[#8d96aa]";
                 if (item.phase === "idle") {
                   statusText = "Sẵn sàng tải lên";
-                  statusColor = "#8d96aa";
+                  statusColor = "text-[#8d96aa]";
                 } else if (isItemUploading) {
                   statusText = "Đang tải lên";
-                  statusColor = "#3e89ff";
+                  statusColor = "text-blue-400";
                 } else if (isFinalizing) {
                   statusText = "Đang hoàn tất...";
-                  statusColor = "#f59e0b";
+                  statusColor = "text-amber-400";
                 } else if (isPaused) {
                   statusText = "Tạm dừng";
-                  statusColor = "#f59e0b";
+                  statusColor = "text-amber-400";
                 } else if (isNeedsFile) {
-                  statusText = "Cần chọn lại file để tiếp tục";
-                  statusColor = "#f59e0b";
+                  statusText = "Cần chọn lại file";
+                  statusColor = "text-amber-400";
                 } else if (isMerging && isSaveRequested) {
                   statusText = "Đang lưu file...";
-                  statusColor = "#f59e0b";
+                  statusColor = "text-amber-400";
                 } else if (isMerging) {
-                  statusText = "Đã tải lên, đang chuẩn bị file...";
-                  statusColor = "#f59e0b";
+                  statusText = "Đang chuẩn bị file...";
+                  statusColor = "text-amber-400";
                 } else if (isReadyToMerge) {
                   statusText = "Sẵn sàng lưu";
-                  statusColor = "#22c55e";
+                  statusColor = "text-emerald-400";
                 } else if (isDone && !item.saved) {
                   statusText =
                     item.strategy === "chunk"
                       ? "Đã xử lý xong, sẵn sàng lưu"
                       : "Hoàn thành";
-                  statusColor = "#22c55e";
+                  statusColor = "text-emerald-400";
                 } else if (isDone && item.saved) {
                   statusText = "Đã lưu";
-                  statusColor = "#22c55e";
+                  statusColor = "text-emerald-400";
                 } else if (isMergeFailed) {
                   statusText = "Lưu thất bại";
-                  statusColor = "#020202";
+                  statusColor = "text-red-400";
                 } else if (isError || isCanceled) {
                   statusText = isCanceled
                     ? "Đã huỷ"
                     : isInterruptedSingle
                       ? "Upload bị gián đoạn"
                       : "Lỗi";
-                  statusColor = "#ff5c5c";
+                  statusColor = "text-red-400";
                 }
 
                 return (
                   <div
                     key={item.id}
-                    style={{
-                      border: "1px solid rgba(255,255,255,0.05)",
-                      borderRadius: "12px",
-                      padding: "16px",
-                      background: "rgba(255,255,255,0.02)",
-                    }}
+                    className="border border-[#1e2a44] rounded-2xl p-3.5 bg-[#131b2e] transition-all text-xs"
                   >
-                    {/* File info header */}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginBottom: "12px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "12px",
-                          flex: 1,
-                          minWidth: 0,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: "36px",
-                            height: "36px",
-                            flexShrink: 0,
-                            background: "rgba(62,137,255,0.1)",
-                            borderRadius: "8px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-500/25 text-blue-400 flex items-center justify-center shrink-0">
                           <svg
-                            width="18"
-                            height="18"
+                            width="16"
+                            height="16"
                             viewBox="0 0 24 24"
                             fill="none"
-                            stroke="#3e89ff"
+                            stroke="currentColor"
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -1378,407 +1548,166 @@ const UploadPage = () => {
                             <polyline points="14 2 14 8 20 8"></polyline>
                           </svg>
                         </div>
-                        <div style={{ minWidth: 0 }}>
+                        <div className="min-w-0">
                           <div
-                            style={{
-                              fontSize: "14px",
-                              fontWeight: "700",
-                              color: isCanceled || isError ? "#ff5c5c" : "#fff",
-                              marginBottom: "4px",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
+                            className={`font-bold truncate ${
+                              isCanceled || isError ? "text-red-400" : "text-[#f7f9ff]"
+                            }`}
                           >
                             {item.file.name}
                           </div>
-                          <div
-                            style={{
-                              fontSize: "12px",
-                              color: statusColor,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "8px",
-                              flexWrap: "wrap",
-                            }}
-                          >
+                          <div className="text-[11px] text-[#8d96aa] flex items-center gap-1.5 mt-0.5">
                             <span>{formatBytes(item.file.size)}</span>
-                            <span style={{ color: "#576176" }}>-</span>
-                            <span>{statusText}</span>
+                            <span>•</span>
+                            <span className={statusColor}>{statusText}</span>
                             {item.strategy && (
                               <span
-                                style={{
-                                  fontSize: "10px",
-                                  fontWeight: "700",
-                                  letterSpacing: "0.5px",
-                                  padding: "2px 6px",
-                                  borderRadius: "4px",
-                                  background:
-                                    item.strategy === "chunk"
-                                      ? "rgba(245, 158, 11, 0.15)"
-                                      : "rgba(0, 209, 255, 0.15)",
-                                  color:
-                                    item.strategy === "chunk"
-                                      ? "#f59e0b"
-                                      : "#00d1ff",
-                                  border: `1px solid ${item.strategy === "chunk" ? "rgba(245, 158, 11, 0.3)" : "rgba(0, 209, 255, 0.3)"}`,
-                                }}
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                  item.strategy === "chunk"
+                                    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                    : "bg-blue-500/15 text-blue-300 border-blue-500/30"
+                                }`}
                               >
-                                {item.strategy === "chunk"
-                                  ? "File lớn"
-                                  : "File thường"}
+                                {item.strategy === "chunk" ? "File lớn" : "File thường"}
                               </span>
                             )}
                           </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!disableRemove) removeItemFromUI(item);
-                        }}
-                        disabled={disableRemove}
-                        title={
-                          disableRemove
-                            ? "Không thể ẩn khi file đang xử lý"
-                            : "Ẩn khỏi danh sách"
-                        }
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: disableRemove ? "#30384a" : "#576176",
-                          cursor: disableRemove ? "not-allowed" : "pointer",
-                          opacity: disableRemove ? 0.45 : 1,
-                          padding: "4px",
-                          flexShrink: 0,
-                        }}
-                      >
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <line x1="18" y1="6" x2="6" y2="18"></line>
-                          <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                      </button>
-                    </div>
 
-                    {/* Progress bar + Save button */}
-                    {(isError || isCanceled) && !isMergeFailed ? (
-                      <>
-                        <div
-                          style={{
-                            width: "100%",
-                            height: "4px",
-                            background: "rgba(255,62,62,0.2)",
-                            borderRadius: "99px",
-                            overflow: "hidden",
-                            marginBottom: "8px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              background: "#ff5c5c",
-                            }}
-                          ></div>
-                        </div>
-                        <div style={{ fontSize: "11px", color: "#ff5c5c" }}>
-                          <span>{item.error || "Xử lý tải lên thất bại"}</span>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "flex-end",
-                            marginTop: "10px",
-                          }}
-                        >
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Nút thao tác theo trạng thái */}
+                        {isError && (
                           <button
                             type="button"
                             onClick={() => handleRetryFile(item)}
-                            style={{
-                              background: "rgba(62, 137, 255, 0.15)",
-                              border: "1px solid rgba(62, 137, 255, 0.3)",
-                              color: "#3e89ff",
-                              padding: "6px 14px",
-                              borderRadius: "6px",
-                              fontSize: "12px",
-                              fontWeight: "700",
-                              cursor: "pointer",
-                            }}
+                            className="px-2.5 py-1 text-[11px] font-bold text-blue-300 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 rounded-lg transition cursor-pointer"
                           >
                             Thử lại
                           </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "10px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              flex: 1,
-                              height: "4px",
-                              background: "rgba(255,255,255,0.05)",
-                              borderRadius: "99px",
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: `${item.progress}%`,
-                                height: "100%",
-                                background:
-                                  isDone || isReadyToMerge
-                                    ? "#22c55e"
-                                    : progressColor,
-                                transition: "width 0.15s linear",
-                              }}
-                            ></div>
-                          </div>
-                          {/* Nút Lưu */}
-                          {((item.strategy === "chunk" &&
-                            (isReadyToMerge ||
-                              isMerging ||
-                              canRetryMerge ||
-                              (isDone && !item.saved))) ||
-                            (item.strategy !== "chunk" &&
-                              isDone &&
-                              !item.saved)) && (
-                              <button
-                                type="button"
-                                onClick={() => handleSaveFile(item.id)}
-                                disabled={
-                                  isSavingAll ||
-                                  savingIds.has(item.id) ||
-                                  (isMerging && isSaveRequested)
-                                }
-                                style={{
-                                  background:
-                                    isSavingAll ||
-                                      savingIds.has(item.id) ||
-                                      (isMerging && isSaveRequested)
-                                      ? "rgba(255,255,255,0.08)"
-                                      : "linear-gradient(135deg, #22c55e, #16a34a)",
-                                  border: "none",
-                                  color:
-                                    isSavingAll ||
-                                      savingIds.has(item.id) ||
-                                      (isMerging && isSaveRequested)
-                                      ? "#576176"
-                                      : "#fff",
-                                  padding: "6px 16px",
-                                  borderRadius: "6px",
-                                  fontSize: "12px",
-                                  fontWeight: "700",
-                                  cursor:
-                                    isSavingAll ||
-                                      savingIds.has(item.id) ||
-                                      (isMerging && isSaveRequested)
-                                      ? "not-allowed"
-                                      : "pointer",
-                                  flexShrink: 0,
-                                }}
-                              >
-                                {isMerging && isSaveRequested
-                                  ? "Đang lưu file..."
-                                  : savingIds.has(item.id)
-                                    ? "Đang lưu..."
-                                    : canRetryMerge
-                                      ? "Thử lại"
-                                      : "Lưu"}
-                              </button>
-                            )}
-                          {item.strategy === "single" && isItemUploading && (
-                            <div
-                              style={{
-                                display: "flex",
-                                gap: "6px",
-                                flexShrink: 0,
-                              }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleCancelFile(item.id, item.strategy)
-                                }
-                                style={{
-                                  background: "rgba(255, 92, 92, 0.15)",
-                                  border: "1px solid rgba(255, 92, 92, 0.3)",
-                                  color: "#ff5c5c",
-                                  padding: "6px 12px",
-                                  borderRadius: "6px",
-                                  fontSize: "12px",
-                                  fontWeight: "700",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                Huỷ bỏ
-                              </button>
-                            </div>
-                          )}
-                          {item.strategy === "chunk" &&
-                            (isItemUploading || isPaused) && (
-                              <div
-                                style={{
-                                  display: "flex",
-                                  gap: "6px",
-                                  flexShrink: 0,
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    isPaused
-                                      ? handleRetryFile(item)
-                                      : handlePauseFile(item.id, item.strategy)
-                                  }
-                                  style={{
-                                    background: isPaused
-                                      ? "rgba(34, 197, 94, 0.15)"
-                                      : "rgba(245, 158, 11, 0.15)",
-                                    border: isPaused
-                                      ? "1px solid rgba(34, 197, 94, 0.3)"
-                                      : "1px solid rgba(245, 158, 11, 0.3)",
-                                    color: isPaused ? "#22c55e" : "#f59e0b",
-                                    padding: "6px 12px",
-                                    borderRadius: "6px",
-                                    fontSize: "12px",
-                                    fontWeight: "700",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  {isPaused ? "Tiếp tục" : "Tạm dừng"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleCancelFile(item.id, item.strategy)
-                                  }
-                                  style={{
-                                    background: "rgba(255, 92, 92, 0.15)",
-                                    border: "1px solid rgba(255, 92, 92, 0.3)",
-                                    color: "#ff5c5c",
-                                    padding: "6px 12px",
-                                    borderRadius: "6px",
-                                    fontSize: "12px",
-                                    fontWeight: "700",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  Huỷ bỏ
-                                </button>
-                              </div>
-                            )}
-                        </div>
-                        {item.saveError && (
-                          <div style={{ color: "#ff5c5c", marginTop: "8px" }}>
-                            {item.saveError}
-                          </div>
                         )}
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: "11px",
-                            color: "#576176",
-                            marginTop: "8px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "2px",
-                            }}
+
+                        {((item.strategy === "chunk" &&
+                          (isReadyToMerge ||
+                            isMerging ||
+                            canRetryMerge ||
+                            (isDone && !item.saved))) ||
+                          (item.strategy !== "chunk" &&
+                            isDone &&
+                            !item.saved)) && (
+                          <button
+                            type="button"
+                            onClick={() => handleSaveFile(item.id)}
+                            disabled={
+                              isSavingAll ||
+                              savingIds.has(item.id) ||
+                              (isMerging && isSaveRequested)
+                            }
+                            className="px-2.5 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition disabled:opacity-50 cursor-pointer shadow-sm"
                           >
-                            <span>
-                              {item.progress}% hoàn thành
-                              {item.chunkInfo && (
-                                <span
-                                  style={{
-                                    marginLeft: "8px",
-                                    color: "#f59e0b",
-                                  }}
-                                >
-                                  (
-                                  {item.chunkInfo.current < item.chunkInfo.total
-                                    ? "Đang tải lên"
-                                    : "Hoàn tất tải lên"}{" "}
-                                  {item.chunkInfo.current}/
-                                  {item.chunkInfo.total})
-                                </span>
-                              )}
-                            </span>
-                            {isItemUploading && (
-                              <span
-                                style={{ color: "#8d96aa", fontSize: "10px" }}
-                              >
-                                Speed:{" "}
-                                {speedBps > 0
-                                  ? `${formatBytes(speedBps)}/s`
-                                  : "0 MB/s"}{" "}
-                                • Remaining: ~{formatTime(remainingSeconds)}
-                              </span>
-                            )}
-                          </div>
-                          <span>
-                            {formatBytes(uploadedBytes)} /{" "}
-                            {formatBytes(item.file.size)}
-                          </span>
-                        </div>
-                      </>
-                    )}
+                            {isMerging && isSaveRequested
+                              ? "Đang lưu..."
+                              : savingIds.has(item.id)
+                                ? "Đang lưu..."
+                                : canRetryMerge
+                                  ? "Thử lại"
+                                  : "Lưu"}
+                          </button>
+                        )}
+
+                        {item.strategy === "chunk" &&
+                          (isItemUploading || isPaused) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                isPaused
+                                    ? handleRetryFile(item)
+                                    : handlePauseFile(item.id, item.strategy)
+                              }
+                              className={`px-2 py-1 text-[11px] font-bold rounded-lg transition border cursor-pointer ${
+                                isPaused
+                                  ? "text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/30"
+                                  : "text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/30"
+                              }`}
+                            >
+                              {isPaused ? "Tiếp tục" : "Tạm dừng"}
+                            </button>
+                          )}
+
+                        {!disableRemove && (
+                          <button
+                            type="button"
+                            onClick={() => removeItemFromUI(item)}
+                            className="text-[#8d96aa] hover:text-white hover:bg-white/10 p-1.5 rounded-lg transition cursor-pointer"
+                            title="Xóa khỏi danh sách"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <line x1="18" y1="6" x2="6" y2="18"></line>
+                              <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="w-full h-1.5 bg-[#0a0f1d] border border-[#1b253b] rounded-full overflow-hidden mt-1.5">
+                      <div
+                        className={`h-full transition-all duration-150 ${
+                          isDone || isReadyToMerge
+                            ? "bg-emerald-500"
+                            : isError
+                              ? "bg-red-500"
+                              : "bg-blue-500"
+                        }`}
+                        style={{ width: `${item.progress}%` }}
+                      ></div>
+                    </div>
+
+                    {/* Meta progress */}
+                    <div className="flex items-center justify-between text-[10px] text-[#8d96aa] mt-1">
+                      <span>{item.progress}% hoàn thành</span>
+                      {isItemUploading && (
+                        <span>
+                          {speedBps > 0
+                            ? `${formatBytes(speedBps)}/s`
+                            : "0 MB/s"}{" "}
+                          • Còn ~{formatTime(remainingSeconds)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
           )}
 
-          {/* Action buttons */}
-          <div
-            style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}
-          >
+          {/* Bottom Centered Continue Button */}
+          <div className="flex justify-center mt-6">
             <button
-              className="sr-button sr-button-secondary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-              }}
-              onClick={handleCancelAllUploads}
+              type="button"
+              disabled={!canSubmitAiSummary}
+              onClick={handleAiSummarySubmit}
+              className={`px-12 py-3 rounded-full font-bold text-sm tracking-wide transition-all shadow-sm ${
+                canSubmitAiSummary
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 active:scale-95 cursor-pointer"
+                  : "bg-[#131b2e] text-[#556580] cursor-not-allowed border border-[#1e2a44]"
+              }`}
             >
-              Hủy
-            </button>
-            <button
-              className="sr-button sr-button-primary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-              }}
-              disabled={!hasUploadedSuccess || isItemUploading}
-              onClick={() => {
-                navigate("/history");
-              }}
-            >
-              Tiếp tục
+              {isSavingAll
+                ? "Đang lưu file..."
+                : isItemUploading
+                  ? "Đang tải lên..."
+                  : "Tiếp tục"}
             </button>
           </div>
         </div>
