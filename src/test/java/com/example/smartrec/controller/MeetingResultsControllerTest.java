@@ -126,6 +126,8 @@ class MeetingResultsControllerTest {
         assertEquals(List.of("TRANSCRIPT:" + TRANSCRIPT_ID,
                 "SLIDE_OCR:55555555-5555-4555-8555-555555555555"),
                 response.actionItems().get(0).sourceRefs());
+        assertNull(response.actionItems().get(0).assigneeSpeakerId());
+        assertNull(response.actionItems().get(0).assigneeName());
         assertEquals("Gửi bản kế hoạch", response.summary().details().path("decisions").path(0).path("text").asText());
         verify(meetingService).getMeeting(MEETING_ID);
         verify(jobService).getJobForCurrentUser(JOB_ID);
@@ -184,7 +186,7 @@ class MeetingResultsControllerTest {
     }
 
     @Test
-    void readTimeLinksOnlyCitedAttributedFirstPersonTaskToConfirmedSpeaker() {
+    void readTimeLinksOnlyCitedAttributedFirstPersonTaskWithoutRequiringCustomName() {
         when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
         when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
         when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
@@ -196,7 +198,6 @@ class MeetingResultsControllerTest {
         speaker.setId(SPEAKER_SEGMENT_ID);
         speaker.setMeetingId(MEETING_ID);
         speaker.setAiLabel("SPEAKER 1");
-        speaker.setRealName("Lan");
         when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(speaker));
         when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
         when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
@@ -216,14 +217,66 @@ class MeetingResultsControllerTest {
         var result = fullResult.actionItems().get(0);
 
         assertEquals(SPEAKER_SEGMENT_ID, result.assigneeSpeakerId());
-        assertEquals("Lan", result.assigneeName());
+        assertEquals("Speaker 1", result.assigneeName());
         assertEquals("FIRST_PERSON_COMMITMENT", result.assignmentProvenance());
-        assertEquals("Lan", fullResult.transcripts().get(0).speakerLabel());
+        assertEquals("Speaker 1", fullResult.transcripts().get(0).speakerLabel());
+        assertEquals(List.of("TRANSCRIPT:" + TRANSCRIPT_ID), result.sourceRefs());
+        assertNull(item.getAssigneeSpeakerId());
 
-        speaker.setRealName("Lan Nguyen");
+        speaker.setRealName("Văn Quyền");
         var renamedResult = controller.getResults(MEETING_ID, JOB_ID).getBody();
-        assertEquals("Lan Nguyen", renamedResult.transcripts().get(0).speakerLabel());
-        assertEquals("Lan Nguyen", renamedResult.actionItems().get(0).assigneeName());
+        assertEquals("Văn Quyền", renamedResult.transcripts().get(0).speakerLabel());
+        assertEquals("Văn Quyền", renamedResult.actionItems().get(0).assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, renamedResult.actionItems().get(0).assigneeSpeakerId());
+
+        speaker.setRealName(null);
+        var resetResult = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        assertEquals("Speaker 1", resetResult.transcripts().get(0).speakerLabel());
+        assertEquals("Speaker 1", resetResult.actionItems().get(0).assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, resetResult.actionItems().get(0).assigneeSpeakerId());
+        assertEquals(List.of("TRANSCRIPT:" + TRANSCRIPT_ID), resetResult.actionItems().get(0).sourceRefs());
+        assertNull(item.getAssigneeSpeakerId());
+    }
+
+    @Test
+    void persistedSpeakerLinkUsesDefaultNameAndKeepsItsIdAndSourcesAcrossRenames() {
+        UUID sourceId = UUID.randomUUID();
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of());
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        ActionItem item = new ActionItem();
+        item.setId(UUID.randomUUID());
+        item.setMeetingId(MEETING_ID);
+        item.setProcessingJobId(JOB_ID);
+        item.setTaskName("Kiểm thử upload video");
+        item.setAssigneeSpeakerId(SPEAKER_SEGMENT_ID);
+        item.setAssignmentProvenance("FIRST_PERSON_COMMITMENT");
+        item.setStatus("OPEN");
+        item.setSourceRefs(List.of("TRANSCRIPT:" + sourceId));
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of(item));
+
+        var initial = controller.getResults(MEETING_ID, JOB_ID).getBody().actionItems().get(0);
+        assertEquals("Speaker 1", initial.assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, initial.assigneeSpeakerId());
+
+        speaker.setRealName("Văn Quyền");
+        var renamed = controller.getResults(MEETING_ID, JOB_ID).getBody().actionItems().get(0);
+        assertEquals("Văn Quyền", renamed.assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, renamed.assigneeSpeakerId());
+
+        speaker.setRealName(null);
+        var reset = controller.getResults(MEETING_ID, JOB_ID).getBody().actionItems().get(0);
+        assertEquals("Speaker 1", reset.assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, reset.assigneeSpeakerId());
+        assertEquals(initial.sourceRefs(), reset.sourceRefs());
+        assertEquals(SPEAKER_SEGMENT_ID, item.getAssigneeSpeakerId());
+        assertEquals(List.of("TRANSCRIPT:" + sourceId), item.getSourceRefs());
     }
 
     @Test
@@ -405,7 +458,7 @@ class MeetingResultsControllerTest {
     }
 
     @Test
-    void renamedIdentityLinksOnlyTheSupportedFirstPersonItemAmongFivePersistedItems() {
+    void defaultLabelsLinkOnlySupportedFirstPersonItemsAmongFivePersistedItems() {
         UUID speakerThreeId = UUID.randomUUID();
         UUID uploadTranscriptId = UUID.randomUUID();
         UUID boundaryTranscriptId = UUID.randomUUID();
@@ -453,24 +506,32 @@ class MeetingResultsControllerTest {
                 action("Report results", reportTranscriptId));
         when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(items);
 
-        var beforeConfirmation = controller.getResults(MEETING_ID, JOB_ID).getBody();
-        assertNull(beforeConfirmation.actionItems().get(0).assigneeSpeakerId());
-        assertNull(beforeConfirmation.actionItems().get(1).assigneeSpeakerId());
-        assertNull(beforeConfirmation.actionItems().get(2).assigneeSpeakerId());
-        assertNull(beforeConfirmation.actionItems().get(3).assigneeSpeakerId());
-        assertNull(beforeConfirmation.actionItems().get(4).assigneeSpeakerId());
+        var withDefaults = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        assertEquals(speakerThreeId, withDefaults.actionItems().get(0).assigneeSpeakerId());
+        assertEquals("Speaker 3", withDefaults.actionItems().get(0).assigneeName());
+        assertNull(withDefaults.actionItems().get(1).assigneeSpeakerId());
+        assertNull(withDefaults.actionItems().get(1).assigneeName());
+        assertEquals(speakerThreeId, withDefaults.actionItems().get(2).assigneeSpeakerId());
+        assertEquals("Speaker 3", withDefaults.actionItems().get(2).assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, withDefaults.actionItems().get(3).assigneeSpeakerId());
+        assertEquals("Speaker 1", withDefaults.actionItems().get(3).assigneeName());
+        assertEquals(speakerThreeId, withDefaults.actionItems().get(4).assigneeSpeakerId());
+        assertEquals("Speaker 3", withDefaults.actionItems().get(4).assigneeName());
 
-        // A legacy timeline alias identifies the technical speaker but does not
-        // confirm the person's identity. Saving a canonical name does.
+        // A legacy timeline alias does not supply a human name. Renaming only
+        // changes the display name of tasks linked to that stable speaker ID.
         speakerOne.setRealName("Anh Quyền");
         var afterConfirmation = controller.getResults(MEETING_ID, JOB_ID).getBody();
         assertEquals(SPEAKER_SEGMENT_ID, afterConfirmation.actionItems().get(3).assigneeSpeakerId());
         assertEquals("Anh Quyền", afterConfirmation.actionItems().get(3).assigneeName());
         assertEquals("FIRST_PERSON_COMMITMENT", afterConfirmation.actionItems().get(3).assignmentProvenance());
-        assertNull(afterConfirmation.actionItems().get(0).assigneeSpeakerId());
+        assertEquals(speakerThreeId, afterConfirmation.actionItems().get(0).assigneeSpeakerId());
+        assertEquals("Speaker 3", afterConfirmation.actionItems().get(0).assigneeName());
         assertNull(afterConfirmation.actionItems().get(1).assigneeSpeakerId());
-        assertNull(afterConfirmation.actionItems().get(2).assigneeSpeakerId());
-        assertNull(afterConfirmation.actionItems().get(4).assigneeSpeakerId());
+        assertEquals(speakerThreeId, afterConfirmation.actionItems().get(2).assigneeSpeakerId());
+        assertEquals("Speaker 3", afterConfirmation.actionItems().get(2).assigneeName());
+        assertEquals(speakerThreeId, afterConfirmation.actionItems().get(4).assigneeSpeakerId());
+        assertEquals("Speaker 3", afterConfirmation.actionItems().get(4).assigneeName());
 
         speakerOne.setRealName("Quyen Nguyen");
         var afterRename = controller.getResults(MEETING_ID, JOB_ID).getBody();
@@ -479,10 +540,20 @@ class MeetingResultsControllerTest {
                 .filter(item -> SPEAKER_SEGMENT_ID.equals(item.speakerId())).findFirst().orElseThrow().speakerLabel());
         assertEquals(SPEAKER_SEGMENT_ID, afterRename.actionItems().get(3).assigneeSpeakerId());
         assertEquals("Quyen Nguyen", afterRename.actionItems().get(3).assigneeName());
-        assertNull(afterRename.actionItems().get(0).assigneeSpeakerId());
+        assertEquals(speakerThreeId, afterRename.actionItems().get(0).assigneeSpeakerId());
+        assertEquals("Speaker 3", afterRename.actionItems().get(0).assigneeName());
         assertNull(afterRename.actionItems().get(1).assigneeSpeakerId());
-        assertNull(afterRename.actionItems().get(2).assigneeSpeakerId());
-        assertNull(afterRename.actionItems().get(4).assigneeSpeakerId());
+        assertEquals(speakerThreeId, afterRename.actionItems().get(2).assigneeSpeakerId());
+        assertEquals(speakerThreeId, afterRename.actionItems().get(4).assigneeSpeakerId());
+
+        speakerOne.setRealName(null);
+        var afterReset = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        assertEquals("Speaker 1", afterReset.transcripts().stream()
+                .filter(item -> SPEAKER_SEGMENT_ID.equals(item.speakerId())).findFirst().orElseThrow().speakerLabel());
+        assertEquals(SPEAKER_SEGMENT_ID, afterReset.actionItems().get(3).assigneeSpeakerId());
+        assertEquals("Speaker 1", afterReset.actionItems().get(3).assigneeName());
+        assertEquals(withDefaults.actionItems().get(3).sourceRefs(), afterReset.actionItems().get(3).sourceRefs());
+        assertNull(items.get(3).getAssigneeSpeakerId());
     }
 
     @Test

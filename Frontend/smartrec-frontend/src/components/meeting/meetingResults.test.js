@@ -55,6 +55,21 @@ test("speaker rename submits stable ids and refreshes speaker and task result ma
   assert.match(panel, /setStatus\('error'\)[\s\S]*setErrorMessage/);
 });
 
+test("keeps default speaker assignees and unresolved tasks distinct in the task view", () => {
+  const result = mapMeetingResults({ actionItems: [
+    { id: "linked", title: "Complete upload tests", assigneeName: "Speaker 1", assigneeSpeakerId: "speaker-uuid" },
+    { id: "unresolved", title: "Review progress", assigneeName: null, assigneeSpeakerId: null },
+  ] });
+  const tasks = readFileSync(new URL("MeetingTasksTab.jsx", new URL("./", import.meta.url)), "utf8");
+
+  assert.equal(result.actionItems[0].assigneeName, "Speaker 1");
+  assert.equal(result.actionItems[0].assigneeSpeakerId, "speaker-uuid");
+  assert.equal(result.actionItems[1].assigneeName, null);
+  assert.equal(result.actionItems[1].assigneeSpeakerId, null);
+  assert.match(tasks, /task\.assigneeName\s*\|\|\s*'Chưa xác định'/);
+  assert.match(tasks, /Cam kết được liên kết với người nói trong transcript/);
+});
+
 test("maps missing AI sections to empty states without inventing content", () => {
   const result = mapMeetingResults({ meetingId: "m", jobId: "j", actionItems: [] });
   assert.equal(result.summary, null);

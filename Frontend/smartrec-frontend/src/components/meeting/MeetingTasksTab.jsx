@@ -40,7 +40,7 @@ export default function MeetingTasksTab({ tasks = [], transcripts = [], onEviden
                     <dt className="text-[10px] font-bold uppercase text-slate-500">Người phụ trách</dt>
                     <dd className="mt-1 text-slate-300">{task.assigneeName || 'Chưa xác định'}</dd>
                     {task.assigneeName && task.assignmentProvenance === 'FIRST_PERSON_COMMITMENT' && (
-                      <dd className="mt-1 text-[10px] text-sky-300">Cam kết được liên kết với speaker đã xác nhận</dd>
+                      <dd className="mt-1 text-[10px] text-sky-300">Cam kết được liên kết với người nói trong transcript</dd>
                     )}
                   </div>
                   <div>

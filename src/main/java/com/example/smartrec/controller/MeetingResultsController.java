@@ -226,10 +226,7 @@ public class MeetingResultsController {
         }
         MeetingSpeakerIdentityService.Identity assignee = identities.forId(assigneeSpeakerId);
         if (assigneeSpeakerId != null && assignee == null) throw inconsistentData();
-        boolean linkedToConfirmedSpeaker = item.getAssigneeUserId() == null && assignee != null
-                && assignee.confirmed() && ("USER_CONFIRMED".equals(provenance)
-                || "EXPLICIT_NAMED".equals(provenance) || "FIRST_PERSON_COMMITMENT".equals(provenance));
-        if (linkedToConfirmedSpeaker) {
+        if (item.getAssigneeUserId() == null && assignee != null) {
             // The speaker UUID is the durable link. Render its current meeting-scoped
             // name so a later rename updates both Transcript and Action Items.
             assigneeName = assignee.displayName();
@@ -281,7 +278,7 @@ public class MeetingResultsController {
                     transcript.getTextContent());
         }
         MeetingSpeakerIdentityService.Identity identity = identities.forId(speakerId);
-        return explicitCommitment && identity != null && identity.confirmed() ? speakerId : null;
+        return explicitCommitment && identity != null ? speakerId : null;
     }
 
     private BusinessException notFound() {

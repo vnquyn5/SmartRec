@@ -1,6 +1,7 @@
 package com.example.smartrec.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -52,6 +53,24 @@ class MeetingSpeakerServiceImplTest {
         assertEquals("Minh", speaker.getRealName());
         verify(speakerRepository).save(speaker);
         verify(speakerSegmentRepository, never()).saveAll(any());
+        verifyNoInteractions(speakerSegmentRepository);
+    }
+
+    @Test
+    void renameBackToDefaultClearsCustomNameWithoutChangingSpeakerIdentity() {
+        Speaker speaker = speaker(MEETING_ID);
+        speaker.setRealName("Văn Quyền");
+        when(speakerRepository.findById(SPEAKER_ID)).thenReturn(Optional.of(speaker));
+        RenameSpeakerRequest request = new RenameSpeakerRequest();
+        request.setSpeakerId(SPEAKER_ID);
+        request.setNewName("Speaker 1");
+
+        service.renameSpeaker(MEETING_ID, request);
+
+        assertEquals(SPEAKER_ID, speaker.getId());
+        assertEquals("SPEAKER 1", speaker.getAiLabel());
+        assertNull(speaker.getRealName());
+        verify(speakerRepository).save(speaker);
         verifyNoInteractions(speakerSegmentRepository);
     }
 
