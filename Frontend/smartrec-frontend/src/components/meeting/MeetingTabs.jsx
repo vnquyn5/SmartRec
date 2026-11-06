@@ -4,7 +4,7 @@ import MeetingSummaryTab from './MeetingSummaryTab';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 
-export default function MeetingTabs({ speakers = [], mediaRef, onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({ speakers = [], mediaRef, onSaveSpeakers, onSeekSegment, onEvidenceClick, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, results, resultsLoading, resultsError, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('speaker');
 
   // Khai báo các tab theo yêu cầu 
@@ -23,7 +23,7 @@ export default function MeetingTabs({ speakers = [], mediaRef, onSaveSpeakers, o
     {
       id: 'task',
       label: 'Task',
-      count: 3,
+      count: results?.actionItems?.length,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4" />
@@ -82,8 +82,23 @@ export default function MeetingTabs({ speakers = [], mediaRef, onSaveSpeakers, o
 
       {/* Tab Content Display Area */}
       <div className={`flex-1 min-h-0 min-w-0 p-5 bg-[#090f1d] ${activeTab === 'speaker' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-        {activeTab === 'summary' && <MeetingSummaryTab />}
-        {activeTab === 'task' && <MeetingTasksTab />}
+        {activeTab === 'summary' && <MeetingSummaryTab
+          summary={results?.summary}
+          transcripts={results?.transcripts || []}
+          onEvidenceClick={onEvidenceClick}
+          aiStatus={aiStatus}
+          loading={resultsLoading}
+          error={resultsError}
+        />}
+        {activeTab === 'task' && <MeetingTasksTab
+          tasks={results?.actionItems || []}
+          transcripts={results?.transcripts || []}
+          onEvidenceClick={onEvidenceClick}
+          hasSummary={Boolean(results?.summary)}
+          aiStatus={aiStatus}
+          loading={resultsLoading}
+          error={resultsError}
+        />}
         {activeTab === 'speaker' && (
           <div className="h-full min-h-0 flex flex-col gap-4 overflow-hidden">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}

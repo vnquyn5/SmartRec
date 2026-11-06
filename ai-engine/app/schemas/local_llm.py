@@ -63,6 +63,7 @@ class LocalInferenceRequest(ContractModel):
     system_prompt: StrictStr = Field(alias="systemPrompt", min_length=1)
     prompt: StrictStr = Field(min_length=1)
     allowed_source_refs: list[StrictStr] = Field(alias="allowedSourceRefs", min_length=1)
+    evidence: list[ContextEvidence] = Field(min_length=1)
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, alias="maxTokens", ge=1, le=8192)
 
@@ -75,6 +76,7 @@ class ValidateInferenceRequest(ContractModel):
     task_type: Literal["MEETING_ANALYSIS"] = Field(alias="taskType")
     raw_output: StrictStr = Field(alias="rawOutput", min_length=1)
     allowed_source_refs: list[StrictStr] = Field(alias="allowedSourceRefs", min_length=1)
+    evidence: list[ContextEvidence] = Field(min_length=1)
 
 
 class TokenMetadata(ContractModel):

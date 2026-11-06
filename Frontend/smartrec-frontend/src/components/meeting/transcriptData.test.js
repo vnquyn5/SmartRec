@@ -9,10 +9,13 @@ import {
   formatMediaTimeSeconds,
   isTranscriptScrollKey,
   mapTranscriptResults,
+  mapSpeakerManagementSegments,
   mapSpeakerTimeline,
+  normalizeSpeakerDisplayLabel,
   scrollTranscriptRowNearTop,
   shouldAutoScrollTranscriptSegment,
   seekMediaToSeconds,
+  seekMediaWithoutPlayback,
   subscribeTranscriptMedia,
   subscribeSpeakerTimelineMedia,
 } from './transcriptData.js';
@@ -54,6 +57,35 @@ test('maps persisted Results API records, stable ids and real millisecond timest
   assert.equal(result[0].text, 'Trước');
   assert.equal(result[0].startTimeMs / 1000, 0.5);
   assert.equal(formatTranscriptTime(15000), '00:15');
+});
+
+test('speaker management groups by immutable speaker ids rather than mutable names', () => {
+  const beforeRename = mapSpeakerManagementSegments([
+    { speakerId: 'speaker-id-1', speakerLabel: 'SPEAKER 1', speakerIndex: 1, displayName: 'Speaker 1', startTime: 0, endTime: 2 },
+    { speakerId: 'speaker-id-2', speakerLabel: 'SPEAKER 2', speakerIndex: 2, displayName: 'Same display name', startTime: 2, endTime: 3 },
+  ]);
+  const afterRename = mapSpeakerManagementSegments([
+    { speakerId: 'speaker-id-1', speakerLabel: 'SPEAKER 1', speakerIndex: 1, displayName: 'Minh', startTime: 0, endTime: 2 },
+    { speakerId: 'speaker-id-2', speakerLabel: 'SPEAKER 2', speakerIndex: 2, displayName: 'Same display name', startTime: 2, endTime: 3 },
+    { speakerId: null, displayName: 'Speaker chưa xác định', startTime: 3, endTime: 4 },
+  ]);
+
+  assert.deepEqual(afterRename.map(({ id, name }) => ({ id, name })), [
+    { id: 'speaker-id-1', name: 'Minh' },
+    { id: 'speaker-id-2', name: 'Same display name' },
+  ]);
+  assert.deepEqual(afterRename[0].segments.map(({ startSeconds, endSeconds }) => [startSeconds, endSeconds]), [[0, 2]]);
+  assert.deepEqual(beforeRename.map((speaker) => speaker.id), afterRename.map((speaker) => speaker.id));
+});
+
+test('transcript labels follow the updated canonical display name without changing attribution', () => {
+  const [segment] = mapTranscriptResults({ transcripts: [
+    { id: 't1', speakerId: 'speaker-id-1', speakerLabel: 'Minh', attributionStatus: 'ATTRIBUTED',
+      startTimeMs: 0, endTimeMs: 1000, textContent: 'Mình sẽ hoàn thành.' },
+  ] });
+  assert.equal(segment.speakerId, 'speaker-id-1');
+  assert.equal(segment.speaker, 'Minh');
+  assert.equal(segment.attributionStatus, 'ATTRIBUTED');
 });
 
 test('boundary-crossing transcripts map to an explicit ambiguous attribution label', () => {
@@ -109,12 +141,31 @@ test('Speaker Timeline follows the same media clock through playback and backwar
   cleanup();
 });
 
-test('preserves unresolved speaker identity and formats long timestamps', () => {
+test('does not expose speaker ids when an attributed result lacks a display label', () => {
   const [segment] = mapTranscriptResults({ transcripts: [
     { id: 'id', startTimeMs: 3661000, endTimeMs: 3662000, textContent: 'Hello', speakerId: '12345678-abcd' },
   ] });
-  assert.equal(segment.speaker, 'Speaker 12345678');
+  assert.equal(segment.speaker, 'Speaker chưa xác định');
+  assert.equal(segment.speakerId, '12345678-abcd');
   assert.equal(formatTranscriptTime(segment.startTimeMs), '01:01:01');
+});
+
+test('technical speaker tags use the same friendly label in transcript and speaker data', () => {
+  const [segment] = mapTranscriptResults({ transcripts: [
+    { id: 'id', startTimeMs: 1000, endTimeMs: 2000, textContent: 'Hello',
+      speakerId: 'speaker-id', speakerLabel: 'SPEAKER_01' },
+  ] });
+  const [speaker] = mapSpeakerManagementSegments([
+    { speakerId: 'speaker-id', speakerLabel: 'SPEAKER_01', speakerIndex: 2,
+      displayName: 'Speaker 2', startTime: 1, endTime: 2 },
+  ]);
+
+  assert.equal(segment.speaker, 'Speaker 2');
+  assert.equal(speaker.name, 'Speaker 2');
+  assert.equal(speaker.id, 'speaker-id');
+  assert.equal(normalizeSpeakerDisplayLabel('Speaker 1'), 'Speaker 1');
+  assert.equal(normalizeSpeakerDisplayLabel('SPEAKER_00'), 'Speaker 1');
+  assert.equal(normalizeSpeakerDisplayLabel('An'), 'An');
 });
 
 test('empty or malformed transcript results stay empty rather than becoming mock data', () => {
@@ -142,6 +193,24 @@ test('click seek waits for media metadata and does not create another player', a
   media.dispatchEvent(new Event('loadedmetadata'));
   assert.equal(media.currentTime, 15);
   assert.equal(media.playCalls, 1);
+});
+
+test('evidence navigation seeks to the source without starting playback', () => {
+  const media = new FakeMedia(0);
+  assert.equal(seekMediaWithoutPlayback(media, 10.82), true);
+  assert.equal(media.currentTime, 10.82);
+  assert.equal(media.playCalls, 0);
+});
+
+test('evidence navigation waits for metadata and still does not autoplay', () => {
+  const media = new FakeMedia(0);
+  media.readyState = 0;
+  assert.equal(seekMediaWithoutPlayback(media, 15), true);
+  assert.equal(media.currentTime, 0);
+  media.readyState = 1;
+  media.dispatchEvent(new Event('loadedmetadata'));
+  assert.equal(media.currentTime, 15);
+  assert.equal(media.playCalls, 0);
 });
 
 test('timeupdate highlights the segment containing currentTime and seeking backward resyncs', () => {
@@ -252,6 +321,7 @@ test('meeting layout puts Transcript below the single media player and keeps onl
   const meetingTabs = readFileSync(new URL('./MeetingTabs.jsx', import.meta.url), 'utf8');
   const speakerPanel = readFileSync(new URL('./SpeakerManagementPanel.jsx', import.meta.url), 'utf8');
   const detailPage = readFileSync(new URL('../../pages/meeting/MeetingDetailPage.jsx', import.meta.url), 'utf8');
+  const transcriptData = readFileSync(new URL('./transcriptData.js', import.meta.url), 'utf8');
   assert.ok(meetingDetail.indexOf('<MeetingVideoPlayer') < meetingDetail.indexOf('<TranscriptPanel'));
   assert.ok(meetingDetail.indexOf('<TranscriptPanel') < meetingDetail.indexOf('<MeetingTabs'));
   assert.equal((meetingTabs.match(/label: '(AI Summary|Task|Speaker)'/g) || []).length, 3);
@@ -262,7 +332,8 @@ test('meeting layout puts Transcript below the single media player and keeps onl
   assert.match(meetingDetail, /mediaRef=\{mediaRef\}/);
   assert.match(meetingTabs, /mediaRef=\{mediaRef\}/);
   assert.match(speakerPanel, /subscribeSpeakerTimelineMedia\(mediaRef\.current, speakerTimeline/);
-  assert.match(detailPage, /formatMediaTimeSeconds\(value\)/);
+  assert.match(detailPage, /mapSpeakerManagementSegments\(segments\)/);
+  assert.match(transcriptData, /formatMediaTimeSeconds\(segment\.startTime\)/);
   assert.match(speakerPanel, /onSeekSegment\?\.\(Number\(seg\.startSeconds\)\)/);
 });
 
@@ -279,7 +350,7 @@ test('transcript rows are keyboard buttons with a visible focus style and access
   assert.match(panel, /onMouseDown=\{suspendAutoFollow\}/);
   assert.match(panel, /onKeyDown=\{\(event\) => \{ if \(isTranscriptScrollKey\(event\)\) suspendAutoFollow\(\); \}\}/);
   assert.match(panel, /matchMedia\?\.\('\(prefers-reduced-motion: reduce\)'\)\?\.matches === true/);
-  assert.match(panel, /filtered, scrollActiveSegmentIntoView/);
+  assert.match(panel, /filtered, evidenceNavigationVersion, scrollActiveSegmentIntoView/);
   assert.match(panel, /segment\.attributionStatus === 'CROSS_SPEAKER_BOUNDARY'/);
   assert.doesNotMatch(panel, /onScroll=/);
 });

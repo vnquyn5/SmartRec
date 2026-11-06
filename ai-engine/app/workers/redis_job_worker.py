@@ -166,10 +166,15 @@ def send_stage_callback(job_id: str, stage: str, status: str, segments=None, err
     execution_id=None, ai_result: Optional[Dict[str, Any]] = None) -> bool:
     """Gửi payload chuẩn hóa về endpoint POST /jobs/{jobId}/callback của Backend."""
     url = f"{BACKEND_BASE_URL}/jobs/{job_id}/callback"
+    enrichment_marker = error_code if (
+        stage == "OUTPUT"
+        and status == "SUCCESS"
+        and error_code in {"AI_ENRICHMENT_FAILED", "AI_ENRICHMENT_DISABLED"}
+    ) else None
     payload = {
         "stage": stage,
         "status": status,
-        "errorCode": (error_code or "RETRYABLE_PROCESSING_ERROR") if status == "FAILED" else None,
+        "errorCode": (error_code or "RETRYABLE_PROCESSING_ERROR") if status == "FAILED" else enrichment_marker,
         "errorMessage": error_msg,
         "segments": segments
     }
@@ -949,6 +954,7 @@ def process_job(job_id: str):
                 )
             heartbeat.checkpoint()
             ai_result = None
+            ai_enrichment_error_code = None
             if settings.smartrec_llm_enabled:
                 logger.info("[%s] LLM enrichment enabled; requesting AI Router after STT/OCR", job_id)
                 try:
@@ -974,16 +980,34 @@ def process_job(job_id: str):
                         "keeping Core OUTPUT and omitting aiResult",
                         job_id, exc.code, exc.retryable,
                     )
+                    ai_enrichment_error_code = "AI_ENRICHMENT_FAILED"
                 if ai_result is not None:
-                    heartbeat.checkpoint()
-                    _validate_ai_result_response(ai_result, job_id, meeting_id)
+                    try:
+                        heartbeat.checkpoint()
+                        _validate_ai_result_response(ai_result, job_id, meeting_id)
+                    except NonRetryableProcessingError as exc:
+                        logger.warning(
+                            "[%s] AI enrichment response rejected (%s); keeping Core OUTPUT without aiResult",
+                            job_id, exc.error_code,
+                        )
+                        ai_result = None
+                        ai_enrichment_error_code = "AI_ENRICHMENT_FAILED"
             else:
                 logger.info("[%s] LLM enrichment disabled; completing Core OUTPUT without AI Router", job_id)
+                ai_enrichment_error_code = "AI_ENRICHMENT_DISABLED"
             require_stage_callback(
                 job_id,
                 current_stage,
                 "SUCCESS",
                 segments=formatted_segments,
+                error_code=ai_enrichment_error_code,
+                error_msg=(
+                    "Core processing completed, but AI enrichment failed."
+                    if ai_enrichment_error_code == "AI_ENRICHMENT_FAILED"
+                    else "Core processing completed; AI enrichment is disabled."
+                    if ai_enrichment_error_code == "AI_ENRICHMENT_DISABLED"
+                    else None
+                ),
                 execution_id=execution_id,
                 ai_result=ai_result,
             )

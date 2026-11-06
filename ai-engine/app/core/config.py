@@ -1,6 +1,14 @@
+from pathlib import Path
 from typing import Literal, Optional
+
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Import this module before services that read os.environ at module scope.
+# The Docker image does not copy ai-engine/.env; Compose supplies its own env.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
 
 class Settings(BaseSettings):
@@ -21,7 +29,7 @@ class Settings(BaseSettings):
     local_llm_endpoint: Optional[str] = None
     local_llm_model: Optional[str] = None
     local_llm_connect_timeout_seconds: float = 5.0
-    local_llm_timeout_seconds: float = 120.0
+    local_llm_timeout_seconds: float = 180.0
     smartrec_llm_enabled: bool = True
 
     # Pyannote Speaker Diarization Settings
@@ -46,11 +54,7 @@ class Settings(BaseSettings):
     ocr_enable_mkldnn: bool = False
     ocr_cpu_threads: int = 1
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
-    )
+    model_config = SettingsConfigDict(extra="ignore")
 
 
 settings = Settings()

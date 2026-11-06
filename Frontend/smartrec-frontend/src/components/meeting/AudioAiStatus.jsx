@@ -114,6 +114,28 @@ export default function AudioAiStatus({ status, onRetry, onPause, onResume, onCa
     );
   }
 
+  if (status === 'enrichment_failed' || status === 'enrichment_disabled') {
+    const disabled = status === 'enrichment_disabled';
+    return (
+      <div role="status" className="w-full bg-[#0c101d] border border-amber-500/40 rounded-lg p-2.5 shadow-sm flex items-center gap-2.5 font-sans">
+        <div className="w-7 h-7 rounded-md bg-amber-950/50 border border-amber-500/40 flex items-center justify-center text-amber-200 shrink-0">
+          <AlertCircleIcon />
+        </div>
+        <div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-white text-[13px] font-bold">Audio AI</span>
+            <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-amber-950/50 text-amber-200">
+              {disabled ? 'AI chưa bật' : 'AI bổ sung thất bại'}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-300 mt-0.5 leading-tight">
+            Xử lý transcript đã hoàn tất; phần tóm tắt AI chưa khả dụng.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (status === 'failed') {
     return (
       <div className="w-full bg-[#0c101d] border border-[#ef4444]/40 rounded-lg p-2.5 shadow-sm flex items-center justify-between font-sans">

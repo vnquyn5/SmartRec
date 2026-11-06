@@ -297,6 +297,7 @@ export default function SpeakerManagementPanel({
       const payload = initialSpeakers.map(s => ({
         ...s,
         id: s.id,
+        nameAtLoad: s.name || s.originalLabel || '',
         name: (names[s.id] || '').trim()
       }));
 
@@ -363,7 +364,7 @@ export default function SpeakerManagementPanel({
           )}
           {initialSpeakers.map((speaker, index) => {
             const dotColor = DOT_COLORS[index % DOT_COLORS.length];
-            const originalLabel = speaker.originalLabel || `Speaker ${index + 1}`;
+            const originalLabel = speaker.defaultName || `Speaker ${index + 1}`;
             const initials = originalLabel.replace(/[^0-9a-zA-Z]/g, '').slice(0, 2).toUpperCase() || `S${index + 1}`;
             const value = names[speaker.id] !== undefined ? names[speaker.id] : (speaker.name || '');
             const error = errors[speaker.id];

@@ -186,7 +186,7 @@ def test_whispercpp_large_v3_turbo_uses_existing_model_and_keeps_timestamps(
     assert info.language == "vi"
     assert adapter.model_name == "whisper.cpp-large-v3-turbo-q5_0"
     assert adapter.device == "metal"
-    predictor._run.assert_called_once_with(str(audio_path), "vi")
+    predictor._run.assert_called_once_with(str(audio_path), "vi", beam_size=5)
     adapter.unload()
 
 
@@ -222,8 +222,8 @@ def test_whispercpp_auto_device_retries_cpu_after_confirmed_metal_failure(
 
     assert len(segments) == 2
     warning.assert_called_once()
-    predictor._run.assert_any_call(str(audio_path), "vi")
-    predictor._run.assert_any_call(str(audio_path), "vi", force_cpu=True)
+    predictor._run.assert_any_call(str(audio_path), "vi", beam_size=5)
+    predictor._run.assert_any_call(str(audio_path), "vi", force_cpu=True, beam_size=5)
     adapter.unload()
 
 
@@ -247,7 +247,7 @@ def test_whispercpp_explicit_metal_does_not_silently_fallback(
     with pytest.raises(ModelInferenceError, match="WHISPER_CPP_METAL_FAILED:134"):
         adapter.predict(str(audio_path), language="vi")
 
-    adapter._predictor._run.assert_called_once_with(str(audio_path), "vi")
+    adapter._predictor._run.assert_called_once_with(str(audio_path), "vi", beam_size=5)
     adapter.unload()
 
 
@@ -268,6 +268,7 @@ def test_whispercpp_cli_writes_private_json_and_uses_timeout(tmp_path):
     def run(command, **kwargs):
         assert "--no-gpu" in command
         assert "--no-prints" in command
+        assert command[command.index("--beam-size") + 1] == "5"
         assert kwargs["timeout"] == 45
         output_base = Path(command[command.index("--output-file") + 1])
         output_base.with_suffix(".json").write_text(json.dumps(_whispercpp_result()))
@@ -279,6 +280,46 @@ def test_whispercpp_cli_writes_private_json_and_uses_timeout(tmp_path):
     segments, info = predictor._parse(result)
     assert code == 0 and not memory_error
     assert len(segments) == 2 and info.language == "vi"
+
+
+def test_whispercpp_predict_forwards_configured_beam_size(tmp_path):
+    model_path = tmp_path / "model.bin"
+    model_path.write_bytes(b"model")
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    predictor = WhisperCppPredictor(
+        model_path=model_path,
+        executable="whisper-cli",
+        device="cpu",
+        threads=1,
+        timeout_seconds=45,
+        cpu_fallback=False,
+    )
+    predictor._run = MagicMock(return_value=(_whispercpp_result(), "use gpu    = 0", 0, False))
+
+    segments, _ = predictor.predict(str(audio_path), language="vi", beam_size=5)
+
+    predictor._run.assert_called_once_with(str(audio_path), "vi", beam_size=5)
+    assert segments
+
+
+@pytest.mark.parametrize("beam_size", [0, -1, True, 1.5])
+def test_whispercpp_rejects_invalid_beam_size(tmp_path, beam_size):
+    model_path = tmp_path / "model.bin"
+    model_path.write_bytes(b"model")
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    predictor = WhisperCppPredictor(
+        model_path=model_path,
+        executable="whisper-cli",
+        device="cpu",
+        threads=1,
+        timeout_seconds=45,
+        cpu_fallback=False,
+    )
+
+    with pytest.raises(ValueError, match="WHISPER_CPP_BEAM_SIZE_INVALID"):
+        predictor.predict(str(audio_path), beam_size=beam_size)
 
 
 def test_whispercpp_timeout_is_not_misreported_as_empty_transcript(tmp_path):

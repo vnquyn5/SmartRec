@@ -2,6 +2,7 @@ package com.example.smartrec.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -11,10 +12,13 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.test.web.client.response.MockRestResponseCreators;
 import org.springframework.web.client.RestTemplate;
 
 import com.example.smartrec.config.AIEngineConfig;
@@ -69,6 +73,30 @@ class LocalLLMAdapterClientTest {
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, error.getStatus());
         assertEquals("AI_ENGINE_CONFIGURATION_INVALID", error.getCode());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "400,AI_ENGINE_BAD_REQUEST",
+            "401,AI_ENGINE_UNAUTHORIZED",
+            "409,AI_ENGINE_CONFLICT",
+            "422,AI_ENGINE_VALIDATION_FAILED",
+            "502,AI_ENGINE_BAD_GATEWAY",
+            "503,LOCAL_ADAPTER_UNAVAILABLE",
+            "504,LOCAL_ADAPTER_UNAVAILABLE"
+    })
+    void retainsAiEngineHttpFailureCategory(int statusCode, String expectedCode) {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        server.expect(requestTo("http://127.0.0.1:8000/api/v1/internal/llm/prepare"))
+                .andRespond(MockRestResponseCreators.withStatus(HttpStatus.valueOf(statusCode)));
+
+        LocalLLMAdapterClient.AdapterException error = assertThrows(
+                LocalLLMAdapterClient.AdapterException.class,
+                () -> client(restTemplate).prepare(request()));
+
+        assertTrue(error.getMessage().contains(expectedCode));
+        server.verify();
     }
 
     private static LocalLLMAdapterClient client(RestTemplate restTemplate) {

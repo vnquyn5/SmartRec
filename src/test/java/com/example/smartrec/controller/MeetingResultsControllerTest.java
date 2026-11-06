@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -89,7 +91,7 @@ class MeetingResultsControllerTest {
         Speaker speaker = new Speaker();
         speaker.setId(SPEAKER_SEGMENT_ID);
         speaker.setMeetingId(MEETING_ID);
-        speaker.setAiLabel("SPEAKER_01");
+        speaker.setAiLabel("SPEAKER 1");
         when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID)))
                 .thenReturn(List.of(speaker));
         when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.of(summary));
@@ -102,13 +104,16 @@ class MeetingResultsControllerTest {
         item.setStatus("OPEN");
         item.setDueDate(null);
         item.setSourceTranscriptId(TRANSCRIPT_ID);
+        item.setDeadlineRaw("trong tuần tới");
+        item.setSourceRefs(List.of("TRANSCRIPT:" + TRANSCRIPT_ID,
+                "SLIDE_OCR:55555555-5555-4555-8555-555555555555"));
         when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of(item));
 
         var response = controller.getResults(MEETING_ID, JOB_ID).getBody();
 
         assertEquals(JobStatus.COMPLETED, response.jobStatus());
         assertEquals("Đã thống nhất gửi bản kế hoạch.", response.transcripts().get(0).textContent());
-        assertEquals("SPEAKER_01", response.transcripts().get(0).speakerLabel());
+        assertEquals("Speaker 1", response.transcripts().get(0).speakerLabel());
         assertEquals("ATTRIBUTED", response.transcripts().get(0).attributionStatus());
         assertEquals(TRANSCRIPT_ID, response.transcripts().get(0).id());
         assertEquals(MEETING_ID, response.transcripts().get(0).meetingId());
@@ -118,6 +123,9 @@ class MeetingResultsControllerTest {
         assertEquals("Gửi bản kế hoạch", response.actionItems().get(0).title());
         assertEquals("trong tuần tới", response.actionItems().get(0).deadlineRaw());
         assertEquals(TRANSCRIPT_ID, response.actionItems().get(0).sourceTranscriptId());
+        assertEquals(List.of("TRANSCRIPT:" + TRANSCRIPT_ID,
+                "SLIDE_OCR:55555555-5555-4555-8555-555555555555"),
+                response.actionItems().get(0).sourceRefs());
         assertEquals("Gửi bản kế hoạch", response.summary().details().path("decisions").path(0).path("text").asText());
         verify(meetingService).getMeeting(MEETING_ID);
         verify(jobService).getJobForCurrentUser(JOB_ID);
@@ -143,29 +151,210 @@ class MeetingResultsControllerTest {
         assertEquals("CROSS_SPEAKER_BOUNDARY", transcript.attributionStatus());
         assertEquals(17500L, transcript.startTimeMs());
         assertEquals(19000L, transcript.endTimeMs());
-        verifyNoInteractions(speakerRepository);
+        verify(speakerRepository, never()).findAllById(any());
     }
 
     @Test
-    void legacyMajoritySpeakerIsReclassifiedWhenTranscriptCrossesPersistedTurns() {
+    void renameDisplayLabelDoesNotDropCanonicalTranscriptSpeakerId() {
         when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
         when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
         when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
                 TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
                         .processingJobId(JOB_ID).speakerId(SPEAKER_SEGMENT_ID)
-                        .attributionStatus("ATTRIBUTED").startTimeMs(17500L).endTimeMs(19000L)
-                        .textContent("Crosses a diarization boundary").build()));
-        Speaker existing = new Speaker();
-        existing.setId(SPEAKER_SEGMENT_ID);
-        existing.setMeetingId(MEETING_ID);
-        existing.setAiLabel("SPEAKER 4");
-        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(existing));
-        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(existing));
+                        .attributionStatus("ATTRIBUTED").startTimeMs(1000L).endTimeMs(3000L)
+                        .textContent("Attributed after a speaker rename").build()));
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        speaker.setRealName("Minh");
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(speaker));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
         when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
                 com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
-                        .speakerLabel("Speaker 3").startTime(17.5).endTime(18.037).build(),
+                        .speakerLabel("Minh").startTime(1.0).endTime(3.0).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().get(0);
+
+        assertEquals(SPEAKER_SEGMENT_ID, result.speakerId());
+        assertEquals("Minh", result.speakerLabel());
+        assertEquals("ATTRIBUTED", result.attributionStatus());
+    }
+
+    @Test
+    void readTimeLinksOnlyCitedAttributedFirstPersonTaskToConfirmedSpeaker() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(SPEAKER_SEGMENT_ID)
+                        .attributionStatus("ATTRIBUTED").startTimeMs(1000L).endTimeMs(3000L)
+                        .textContent("Mình sẽ hoàn thành việc kết nối giao diện trước ngày 10.").build()));
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        speaker.setRealName("Lan");
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(speaker));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
                 com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
-                        .speakerLabel("Speaker 4").startTime(18.037).endTime(19.0).build()));
+                        .speakerLabel("SPEAKER 1").startTime(1.0).endTime(3.0).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        ActionItem item = new ActionItem();
+        item.setId(UUID.randomUUID());
+        item.setMeetingId(MEETING_ID);
+        item.setProcessingJobId(JOB_ID);
+        item.setTaskName("Kết nối giao diện");
+        item.setStatus("OPEN");
+        item.setSourceRefs(List.of("TRANSCRIPT:" + TRANSCRIPT_ID));
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of(item));
+
+        var fullResult = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        var result = fullResult.actionItems().get(0);
+
+        assertEquals(SPEAKER_SEGMENT_ID, result.assigneeSpeakerId());
+        assertEquals("Lan", result.assigneeName());
+        assertEquals("FIRST_PERSON_COMMITMENT", result.assignmentProvenance());
+        assertEquals("Lan", fullResult.transcripts().get(0).speakerLabel());
+
+        speaker.setRealName("Lan Nguyen");
+        var renamedResult = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        assertEquals("Lan Nguyen", renamedResult.transcripts().get(0).speakerLabel());
+        assertEquals("Lan Nguyen", renamedResult.actionItems().get(0).assigneeName());
+    }
+
+    @Test
+    void userAssignedTaskIsNotReassignedFromFirstPersonEvidence() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(SPEAKER_SEGMENT_ID)
+                        .attributionStatus("ATTRIBUTED").startTimeMs(1000L).endTimeMs(3000L)
+                        .textContent("Mình sẽ hoàn thành việc kiểm thử upload video.").build()));
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        speaker.setRealName("Minh");
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(speaker));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        ActionItem item = new ActionItem();
+        item.setId(UUID.randomUUID());
+        item.setMeetingId(MEETING_ID);
+        item.setProcessingJobId(JOB_ID);
+        item.setTaskName("Upload video tests");
+        item.setAssigneeUserId(UUID.randomUUID());
+        item.setStatus("OPEN");
+        item.setSourceRefs(List.of("TRANSCRIPT:" + TRANSCRIPT_ID));
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of(item));
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().actionItems().get(0);
+
+        assertNull(result.assigneeName());
+        assertNull(result.assigneeSpeakerId());
+        assertNull(result.assignmentProvenance());
+    }
+
+    @Test
+    void explicitNamedAssignmentKeepsSpeakerLinkAndShowsCurrentSpeakerName() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of());
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        speaker.setRealName("Lan Nguyen");
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        ActionItem item = new ActionItem();
+        item.setId(UUID.randomUUID());
+        item.setMeetingId(MEETING_ID);
+        item.setProcessingJobId(JOB_ID);
+        item.setTaskName("Login interface");
+        item.setAssigneeName("Lan");
+        item.setAssigneeSpeakerId(SPEAKER_SEGMENT_ID);
+        item.setAssignmentProvenance("EXPLICIT_NAMED");
+        item.setStatus("OPEN");
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of(item));
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().actionItems().get(0);
+
+        assertEquals("Lan Nguyen", result.assigneeName());
+        assertEquals(SPEAKER_SEGMENT_ID, result.assigneeSpeakerId());
+        assertEquals("EXPLICIT_NAMED", result.assignmentProvenance());
+    }
+
+    @Test
+    void recoversUnresolvedTranscriptLabelFromStrongSingleSpeakerTimelineOverlap() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(null).attributionStatus("UNRESOLVED")
+                        .startTimeMs(15980L).endTimeMs(17880L).textContent("Boundary drift")
+                        .build()));
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Speaker 1").startTime(15.961).endTime(17.868).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().get(0);
+
+        assertEquals(SPEAKER_SEGMENT_ID, result.speakerId());
+        assertEquals("Speaker 1", result.speakerLabel());
+        assertEquals("ATTRIBUTED", result.attributionStatus());
+    }
+
+    @Test
+    void leavesLowCoverageSingleSpeakerTranscriptUnresolved() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(null).attributionStatus("UNRESOLVED")
+                        .startTimeMs(28700L).endTimeMs(33400L).textContent("Mostly outside turns")
+                        .build()));
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Speaker 1").startTime(28.938).endTime(30.220).build(),
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Speaker 1").startTime(31.385).endTime(35.215).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().get(0);
+
+        assertNull(result.speakerId());
+        assertNull(result.speakerLabel());
+        assertEquals("UNRESOLVED", result.attributionStatus());
+    }
+
+    @Test
+    void persistedCrossBoundaryStatusDoesNotReceiveASpeakerFromTheTimeline() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(null)
+                        .attributionStatus("CROSS_SPEAKER_BOUNDARY").startTimeMs(17500L).endTimeMs(19000L)
+                        .textContent("Crosses a diarization boundary").build()));
         when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
         when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
 
@@ -176,6 +365,158 @@ class MeetingResultsControllerTest {
         assertEquals("CROSS_SPEAKER_BOUNDARY", result.attributionStatus());
         assertEquals(17500L, result.startTimeMs());
         assertEquals(19000L, result.endTimeMs());
+    }
+
+    @Test
+    void persistedAttributedSpeakerIdSurvivesTimelineCrossingAfterRename() {
+        UUID secondSpeakerId = UUID.randomUUID();
+        Speaker first = new Speaker();
+        first.setId(SPEAKER_SEGMENT_ID);
+        first.setMeetingId(MEETING_ID);
+        first.setAiLabel("SPEAKER 1");
+        first.setRealName("Minh");
+        Speaker second = new Speaker();
+        second.setId(secondSpeakerId);
+        second.setMeetingId(MEETING_ID);
+        second.setAiLabel("SPEAKER 2");
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                TranscriptResponse.builder().id(TRANSCRIPT_ID).meetingId(MEETING_ID)
+                        .processingJobId(JOB_ID).speakerId(SPEAKER_SEGMENT_ID)
+                        .attributionStatus("ATTRIBUTED").startTimeMs(1000L).endTimeMs(3000L)
+                        .textContent("Persisted canonical speaker attribution").build()));
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID)))
+                .thenReturn(List.of(first));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(first, second));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Minh").startTime(1.0).endTime(2.0).build(),
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("SPEAKER 2").startTime(2.0).endTime(3.0).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().get(0);
+
+        assertEquals(SPEAKER_SEGMENT_ID, result.speakerId());
+        assertEquals("Minh", result.speakerLabel());
+        assertEquals("ATTRIBUTED", result.attributionStatus());
+    }
+
+    @Test
+    void renamedIdentityLinksOnlyTheSupportedFirstPersonItemAmongFivePersistedItems() {
+        UUID speakerThreeId = UUID.randomUUID();
+        UUID uploadTranscriptId = UUID.randomUUID();
+        UUID boundaryTranscriptId = UUID.randomUUID();
+        UUID evidenceTranscriptId = UUID.randomUUID();
+        UUID databaseTranscriptId = UUID.randomUUID();
+        UUID reportTranscriptId = UUID.randomUUID();
+        Speaker speakerOne = new Speaker();
+        speakerOne.setId(SPEAKER_SEGMENT_ID);
+        speakerOne.setMeetingId(MEETING_ID);
+        speakerOne.setAiLabel("SPEAKER 1");
+        Speaker speakerThree = new Speaker();
+        speakerThree.setId(speakerThreeId);
+        speakerThree.setMeetingId(MEETING_ID);
+        speakerThree.setAiLabel("SPEAKER 3");
+
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                transcript(uploadTranscriptId, speakerThreeId, "ATTRIBUTED", 34360L, 42880L,
+                        "Mình nhận nhiệm vụ kiểm thử chức năng upload video và kiểm tra kết quả transcript."),
+                transcript(boundaryTranscriptId, null, "CROSS_SPEAKER_BOUNDARY", 26240L, 34100L,
+                        "Mình sẽ hoàn thành việc kết nối giao diện quản lý cuộc họp với Backend."),
+                transcript(evidenceTranscriptId, speakerThreeId, "ATTRIBUTED", 58120L, 62260L,
+                        "Mình sẽ kiểm thử tính năng bấm vào Evidence để chuyển audio đến đúng thời điểm."),
+                transcript(databaseTranscriptId, SPEAKER_SEGMENT_ID, "ATTRIBUTED", 43160L, 51180L,
+                        "Mình phụ trách thiết kế và tối ưu cơ sở dữ liệu PostgreSQL. Mình sẽ hoàn thành công việc."),
+                transcript(reportTranscriptId, speakerThreeId, "ATTRIBUTED", 62880L, 66940L,
+                        "Mình sẽ báo cáo kết quả vào ngày 14 tháng 11 năm 2026.")));
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID, speakerThreeId)))
+                .thenReturn(List.of(speakerOne, speakerThree));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speakerOne, speakerThree));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Anh Quyền").startTime(43.0).endTime(51.4).build(),
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("SPEAKER 3").startTime(34.3).endTime(42.9).build(),
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("SPEAKER 3").startTime(58.0).endTime(67.0).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        List<ActionItem> items = List.of(
+                action("Upload video testing", uploadTranscriptId),
+                action("Connect meeting UI to Backend", boundaryTranscriptId),
+                action("Test Evidence seek", evidenceTranscriptId),
+                action("Design PostgreSQL", databaseTranscriptId),
+                action("Report results", reportTranscriptId));
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(items);
+
+        var beforeConfirmation = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        assertNull(beforeConfirmation.actionItems().get(0).assigneeSpeakerId());
+        assertNull(beforeConfirmation.actionItems().get(1).assigneeSpeakerId());
+        assertNull(beforeConfirmation.actionItems().get(2).assigneeSpeakerId());
+        assertNull(beforeConfirmation.actionItems().get(3).assigneeSpeakerId());
+        assertNull(beforeConfirmation.actionItems().get(4).assigneeSpeakerId());
+
+        // A legacy timeline alias identifies the technical speaker but does not
+        // confirm the person's identity. Saving a canonical name does.
+        speakerOne.setRealName("Anh Quyền");
+        var afterConfirmation = controller.getResults(MEETING_ID, JOB_ID).getBody();
+        assertEquals(SPEAKER_SEGMENT_ID, afterConfirmation.actionItems().get(3).assigneeSpeakerId());
+        assertEquals("Anh Quyền", afterConfirmation.actionItems().get(3).assigneeName());
+        assertEquals("FIRST_PERSON_COMMITMENT", afterConfirmation.actionItems().get(3).assignmentProvenance());
+        assertNull(afterConfirmation.actionItems().get(0).assigneeSpeakerId());
+        assertNull(afterConfirmation.actionItems().get(1).assigneeSpeakerId());
+        assertNull(afterConfirmation.actionItems().get(2).assigneeSpeakerId());
+        assertNull(afterConfirmation.actionItems().get(4).assigneeSpeakerId());
+
+        speakerOne.setRealName("Quyen Nguyen");
+        var afterRename = controller.getResults(MEETING_ID, JOB_ID).getBody();
+
+        assertEquals("Quyen Nguyen", afterRename.transcripts().stream()
+                .filter(item -> SPEAKER_SEGMENT_ID.equals(item.speakerId())).findFirst().orElseThrow().speakerLabel());
+        assertEquals(SPEAKER_SEGMENT_ID, afterRename.actionItems().get(3).assigneeSpeakerId());
+        assertEquals("Quyen Nguyen", afterRename.actionItems().get(3).assigneeName());
+        assertNull(afterRename.actionItems().get(0).assigneeSpeakerId());
+        assertNull(afterRename.actionItems().get(1).assigneeSpeakerId());
+        assertNull(afterRename.actionItems().get(2).assigneeSpeakerId());
+        assertNull(afterRename.actionItems().get(4).assigneeSpeakerId());
+    }
+
+    @Test
+    void differentLegacyLabelsForOneCanonicalSpeakerDoNotCreateFalseBoundary() {
+        UUID attributedTranscriptId = UUID.randomUUID();
+        UUID unresolvedTranscriptId = UUID.randomUUID();
+        Speaker speaker = new Speaker();
+        speaker.setId(SPEAKER_SEGMENT_ID);
+        speaker.setMeetingId(MEETING_ID);
+        speaker.setAiLabel("SPEAKER 1");
+        speaker.setRealName("Minh");
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(jobResponse(MEETING_ID));
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of(
+                transcript(attributedTranscriptId, SPEAKER_SEGMENT_ID, "ATTRIBUTED", 1000L, 3000L,
+                        "Canonical attribution evidence"),
+                transcript(unresolvedTranscriptId, null, "UNRESOLVED", 1000L, 3000L,
+                        "Legacy label aliases for one speaker")));
+        when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID))).thenReturn(List.of(speaker));
+        when(speakerRepository.findByMeetingId(MEETING_ID)).thenReturn(List.of(speaker));
+        when(speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(MEETING_ID)).thenReturn(List.of(
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Minh").startTime(1.0).endTime(2.0).build(),
+                com.example.smartrec.entity.SpeakerSegment.builder().meetingId(MEETING_ID)
+                        .speakerLabel("Anh Minh").startTime(2.0).endTime(3.0).build()));
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var result = controller.getResults(MEETING_ID, JOB_ID).getBody().transcripts().stream()
+                .filter(item -> unresolvedTranscriptId.equals(item.id())).findFirst().orElseThrow();
+
+        assertEquals(SPEAKER_SEGMENT_ID, result.speakerId());
+        assertEquals("Minh", result.speakerLabel());
+        assertEquals("ATTRIBUTED", result.attributionStatus());
     }
 
     @Test
@@ -217,5 +558,23 @@ class MeetingResultsControllerTest {
                 .meetingId(meetingId)
                 .status(JobStatus.COMPLETED)
                 .build();
+    }
+
+    private TranscriptResponse transcript(
+            UUID id, UUID speakerId, String status, long start, long end, String text) {
+        return TranscriptResponse.builder().id(id).meetingId(MEETING_ID).processingJobId(JOB_ID)
+                .speakerId(speakerId).attributionStatus(status).startTimeMs(start).endTimeMs(end)
+                .textContent(text).build();
+    }
+
+    private ActionItem action(String title, UUID transcriptId) {
+        ActionItem item = new ActionItem();
+        item.setId(UUID.randomUUID());
+        item.setMeetingId(MEETING_ID);
+        item.setProcessingJobId(JOB_ID);
+        item.setTaskName(title);
+        item.setStatus("OPEN");
+        item.setSourceRefs(List.of("TRANSCRIPT:" + transcriptId));
+        return item;
     }
 }

@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../../lib/http/client';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   filterTranscriptSegments,
   formatTranscriptTime,
@@ -13,59 +12,27 @@ import {
 
 const ACTIVE = new Set(['PENDING', 'QUEUED', 'RUNNING', 'PROCESSING', 'RETRYING', 'PAUSE_REQUESTED', 'CANCEL_REQUESTED']);
 
-export default function TranscriptPanel({ meetingId, jobId, jobStatus, mediaRef, onSeek }) {
+const TranscriptPanel = forwardRef(function TranscriptPanel({ meetingId, jobId, jobStatus, mediaRef, onSeek, onEvidenceSeek, results, resultsLoading = false, resultsError = '' }, ref) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSpeaker, setSelectedSpeaker] = useState('All');
-  const [segments, setSegments] = useState([]);
-  const [loading, setLoading] = useState(Boolean(jobId));
-  const [error, setError] = useState('');
+  const segments = useMemo(() => mapTranscriptResults(results || { transcripts: [] }), [results]);
+  const loading = resultsLoading;
+  const error = resultsError;
   const [copyFeedback, setCopyFeedback] = useState('');
   const [activeSegmentId, setActiveSegmentId] = useState(null);
+  const [evidenceNavigationVersion, setEvidenceNavigationVersion] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [autoFollow, setAutoFollow] = useState(true);
   const scrollContainerRef = useRef(null);
   const segmentNodesRef = useRef(new Map());
   const lastAutoScrolledSegmentIdRef = useRef(null);
   const status = String(jobStatus || '').toUpperCase();
-  const [resultStatus, setResultStatus] = useState(status);
-  const effectiveStatus = String(resultStatus || status).toUpperCase();
+  const effectiveStatus = status;
 
   useEffect(() => {
-    let cancelled = false;
-    let timer;
-    setSegments([]);
     setActiveSegmentId(null);
-    setError('');
-    setResultStatus(status);
-    setLoading(Boolean(jobId));
-    if (!meetingId || !jobId) {
-      setLoading(false);
-      return undefined;
-    }
-
-    const load = async () => {
-      try {
-        const response = await api.get(`/meetings/${meetingId}/jobs/${jobId}/results`);
-        if (cancelled) return;
-        if (response?.meetingId !== meetingId || response?.jobId !== jobId) {
-          throw new Error('API trả kết quả không thuộc cuộc họp hoặc Job hiện tại.');
-        }
-        setSegments(mapTranscriptResults(response));
-        setResultStatus(String(response.jobStatus || status).toUpperCase());
-        setError('');
-        setLoading(false);
-        const responseStatus = String(response.jobStatus || status).toUpperCase();
-        if (ACTIVE.has(responseStatus)) timer = window.setTimeout(load, 2500);
-      } catch (requestError) {
-        if (cancelled) return;
-        setError(requestError?.message || 'Không thể tải transcript.');
-        setLoading(false);
-        if (ACTIVE.has(status)) timer = window.setTimeout(load, 2500);
-      }
-    };
-    load();
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [meetingId, jobId, status]);
+    lastAutoScrolledSegmentIdRef.current = null;
+  }, [meetingId, jobId]);
 
   const updateActiveSegment = useCallback((nextId) => {
     setActiveSegmentId((currentId) => currentId === nextId ? currentId : nextId);
@@ -104,7 +71,22 @@ export default function TranscriptPanel({ meetingId, jobId, jobStatus, mediaRef,
 
   useEffect(() => {
     if (autoFollow && activeSegmentId != null) scrollActiveSegmentIntoView();
-  }, [activeSegmentId, autoFollow, filtered, scrollActiveSegmentIntoView]);
+  }, [activeSegmentId, autoFollow, filtered, evidenceNavigationVersion, scrollActiveSegmentIntoView]);
+
+  useImperativeHandle(ref, () => ({
+    navigateToEvidence(transcriptId) {
+      const segment = segments.find((item) => String(item.id) === String(transcriptId));
+      if (!segment) return false;
+      lastAutoScrolledSegmentIdRef.current = null;
+      setSearchTerm('');
+      setSelectedSpeaker('All');
+      setAutoFollow(true);
+      updateActiveSegment(segment.id);
+      setEvidenceNavigationVersion((version) => version + 1);
+      onEvidenceSeek?.(segment.startTimeMs / 1000);
+      return true;
+    },
+  }), [segments, onEvidenceSeek, updateActiveSegment]);
 
   const suspendAutoFollow = () => {
     lastAutoScrolledSegmentIdRef.current = null;
@@ -251,4 +233,6 @@ export default function TranscriptPanel({ meetingId, jobId, jobStatus, mediaRef,
       </div>
     </section>
   );
-}
+});
+
+export default TranscriptPanel;

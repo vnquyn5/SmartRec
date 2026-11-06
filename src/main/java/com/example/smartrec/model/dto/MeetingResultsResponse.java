@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import java.util.List;
 
 import com.example.smartrec.enums.JobStatus;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,8 +35,11 @@ public record MeetingResultsResponse(
             UUID id,
             String title,
             String assigneeName,
+            UUID assigneeSpeakerId,
+            String assignmentProvenance,
             String status,
             Instant dueDate,
             String deadlineRaw,
-            UUID sourceTranscriptId) {}
+            UUID sourceTranscriptId,
+            List<String> sourceRefs) {}
 }

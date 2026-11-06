@@ -3,11 +3,13 @@
 import logging
 import re
 import time
+from copy import deepcopy
 from urllib.parse import urlsplit
 
 import requests
 
 from app.core.config import settings
+from app.schemas.meeting_summary import MeetingSummary, NON_BLANK_PATTERN
 
 
 logger = logging.getLogger("smartrec.local_llm")
@@ -34,14 +36,19 @@ class LocalLLMClient:
         )
 
     def generate(self, prompt: str, system_prompt: str, temperature: float,
-                 max_tokens: int) -> dict:
+                 max_tokens: int, allowed_source_refs: list[str] | None = None) -> dict:
         endpoint = self._validated_endpoint()
         model = self._validated_model()
         started = time.monotonic()
+        output_schema = self._output_schema(allowed_source_refs)
         payload = {
             "model": model,
             "prompt": prompt,
             "system": system_prompt,
+            # Ollama /api/generate accepts a JSON Schema in `format`; this
+            # schema is generated from the same strict Pydantic contract used
+            # to validate output, avoiding a second hand-maintained schema.
+            "format": output_schema,
             "stream": False,
             # A single local summary job can unload its model before the next
             # Celery job starts Pyannote/STT and competes for unified memory.
@@ -71,7 +78,12 @@ class LocalLLMClient:
             logger.warning("Local inference request was rejected with HTTP %s", status_code)
             raise LocalLLMError("LOCAL_MODEL_REQUEST_REJECTED") from exc
         except requests.Timeout as exc:
-            logger.warning("Local inference timed out")
+            elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
+            logger.warning(
+                "Local inference timed out after %dms (configured timeout=%ss)",
+                elapsed_ms,
+                self.timeout_seconds,
+            )
             raise LocalLLMError("LOCAL_MODEL_TIMEOUT") from exc
         except requests.RequestException as exc:
             logger.warning("Local inference transport failed: %s", type(exc).__name__)
@@ -81,8 +93,14 @@ class LocalLLMClient:
 
         if not isinstance(body, dict) or body.get("error"):
             raise LocalLLMError("LOCAL_MODEL_UNAVAILABLE")
-        if body.get("done_reason") == "length":
-            logger.warning("Local model output reached the configured token limit")
+        done_reason = body.get("done_reason")
+        if done_reason == "length":
+            logger.warning(
+                "Local model output reached token limit (input_tokens=%s output_tokens=%s done_reason=%s)",
+                self._token_count(body.get("prompt_eval_count")),
+                self._token_count(body.get("eval_count")),
+                done_reason,
+            )
             raise LocalLLMError("LOCAL_MODEL_TRUNCATED")
         text = body.get("response")
         if not isinstance(text, str) or not text.strip():
@@ -90,6 +108,14 @@ class LocalLLMClient:
 
         prompt_tokens = self._token_count(body.get("prompt_eval_count"))
         output_tokens = self._token_count(body.get("eval_count"))
+        processing_time_ms = max(0, int((time.monotonic() - started) * 1000))
+        logger.info(
+            "Local inference complete (input_tokens=%s output_tokens=%s duration_ms=%d done_reason=%s)",
+            prompt_tokens,
+            output_tokens,
+            processing_time_ms,
+            done_reason,
+        )
         return {
             "text": text,
             "model_identifier": model,
@@ -105,7 +131,8 @@ class LocalLLMClient:
                 if prompt_tokens is not None or output_tokens is not None
                 else "unavailable"
             ),
-            "processing_time_ms": max(0, int((time.monotonic() - started) * 1000)),
+            "processing_time_ms": processing_time_ms,
+            "done_reason": done_reason,
         }
 
     def _validated_endpoint(self) -> str:
@@ -142,3 +169,27 @@ class LocalLLMClient:
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
         return None
+
+    @staticmethod
+    def _output_schema(allowed_source_refs: list[str] | None) -> dict:
+        """Add request-context constraints that Pydantic cannot encode alone."""
+        schema = deepcopy(MeetingSummary.model_json_schema())
+        if not allowed_source_refs:
+            return schema
+
+        # generate_local requires a grounded summary whenever verified source
+        # refs exist; encode that same route-level invariant in the decoder.
+        schema["properties"]["executive_summary"] = {
+            "type": "string",
+            "pattern": NON_BLANK_PATTERN,
+        }
+        schema["properties"]["executive_summary_refs"]["minItems"] = 1
+
+        allowed = list(dict.fromkeys(allowed_source_refs))
+        schema["properties"]["executive_summary_refs"]["items"]["enum"] = allowed
+        for definition in schema.get("$defs", {}).values():
+            for field in definition.get("properties", {}).values():
+                if field.get("type") == "array" and "items" in field:
+                    if field["items"].get("type") == "string":
+                        field["items"]["enum"] = allowed
+        return schema

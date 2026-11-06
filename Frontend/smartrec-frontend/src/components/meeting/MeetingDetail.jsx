@@ -2,7 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import MeetingVideoPlayer from './MeetingVideoPlayer';
 import MeetingTabs from './MeetingTabs';
 import TranscriptPanel from './TranscriptPanel';
-import { seekMediaToSeconds } from './transcriptData';
+import { seekMediaToSeconds, seekMediaWithoutPlayback } from './transcriptData';
 
 export default function MeetingDetail({ 
   meeting,
@@ -23,11 +23,21 @@ export default function MeetingDetail({
   startingProcess,
   retrying,
   speakerError,
-  speakerLoading
+  speakerLoading,
+  results,
+  resultsLoading,
+  resultsError
 }) {
   const mediaRef = useRef(null);
+  const transcriptPanelRef = useRef(null);
   const seekToSegment = useCallback((startTime) => {
     seekMediaToSeconds(mediaRef.current, startTime);
+  }, []);
+  const seekToEvidence = useCallback((startTime) => {
+    seekMediaWithoutPlayback(mediaRef.current, startTime);
+  }, []);
+  const navigateToEvidence = useCallback((transcriptId) => {
+    transcriptPanelRef.current?.navigateToEvidence(transcriptId);
   }, []);
 
   return (
@@ -43,11 +53,16 @@ export default function MeetingDetail({
           durationSeconds={meeting?.durationSeconds}
         />
         <TranscriptPanel
+          ref={transcriptPanelRef}
           meetingId={meeting?.id}
           jobId={jobId}
           jobStatus={jobStatus || aiStatus}
           mediaRef={mediaRef}
           onSeek={seekToSegment}
+          onEvidenceSeek={seekToEvidence}
+          results={results}
+          resultsLoading={resultsLoading}
+          resultsError={resultsError}
         />
       </div>
 
@@ -57,11 +72,15 @@ export default function MeetingDetail({
           speakers={speakers}
           mediaRef={mediaRef}
           onSeekSegment={seekToSegment}
+          onEvidenceClick={navigateToEvidence}
           onSaveSpeakers={onSaveSpeakers}
           aiStatus={aiStatus}
           jobLoading={jobLoading}
           speakerError={speakerError}
           speakerLoading={speakerLoading}
+          results={results}
+          resultsLoading={resultsLoading}
+          resultsError={resultsError}
           aiError={aiError}
           onRetry={onRetry}
           onPause={onPause}

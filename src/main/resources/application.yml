@@ -87,7 +87,7 @@ smartrec:
     validate-path: ${AI_ENGINE_VALIDATE_PATH:/api/v1/internal/llm/validate}
     internal-token: ${smartrec.internal-token}
     connect-timeout: ${AI_ENGINE_CONNECT_TIMEOUT:5000}
-    read-timeout: ${AI_ENGINE_READ_TIMEOUT:130000}
+    read-timeout: ${AI_ENGINE_READ_TIMEOUT:210000}
   ai-router:
     local-max-attempts: ${AI_LOCAL_MAX_ATTEMPTS:2}
     local-retry-backoff-ms: ${AI_LOCAL_RETRY_BACKOFF_MS:100}

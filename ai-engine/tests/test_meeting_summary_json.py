@@ -7,6 +7,8 @@ import pytest
 
 from app.schemas.meeting_summary import (
     SCHEMA_VERSION,
+    NON_BLANK_PATTERN,
+    ISO_DATE_PATTERN,
     ActionExtraction,
     ClassificationExtraction,
     MeetingSummary,
@@ -131,6 +133,53 @@ def test_empty_meeting_summary_is_valid():
     )
     assert result.executive_summary is None
     assert result.action_items == []
+
+
+def test_meeting_summary_json_schema_covers_runtime_field_and_cross_field_rules():
+    schema = MeetingSummary.model_json_schema()
+
+    assert schema["properties"]["executive_summary"]["anyOf"][0]["pattern"] == NON_BLANK_PATTERN
+    assert schema["properties"]["action_items"]["items"]["$ref"].endswith("/ActionItem")
+    action_schema = schema["$defs"]["ActionItem"]["properties"]
+    assert action_schema["deadline"]["anyOf"][0]["pattern"] == ISO_DATE_PATTERN
+    assert action_schema["deadline_raw"]["anyOf"][0]["pattern"] == NON_BLANK_PATTERN
+    assert schema["properties"]["executive_summary"]["anyOf"][0]["pattern"].startswith("^")
+    assert "\\S" not in schema["properties"]["executive_summary"]["anyOf"][0]["pattern"]
+    assert schema["allOf"][0]["anyOf"][0]["properties"]["executive_summary_refs"]["minItems"] == 1
+    assert schema["allOf"][0]["anyOf"][1]["properties"]["executive_summary_refs"]["maxItems"] == 0
+
+
+@pytest.mark.parametrize("deadline", ["2026-11-12T00:00:00Z", "2026-02-30", "11/12/2026"])
+def test_deadline_requires_a_valid_iso_calendar_date(deadline):
+    payload = deepcopy(EMPTY_SUMMARY)
+    payload["action_items"] = [{
+        "title": "Report test results",
+        "assignee": "Hùng",
+        "deadline": deadline,
+        "deadline_raw": None,
+        "source_refs": ["SRC_001"],
+    }]
+    expect_error(
+        to_json(payload),
+        SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
+        model=MeetingSummary,
+        refs={"SRC_001"},
+    )
+
+
+def test_validation_diagnostics_exclude_untrusted_extra_field_name():
+    payload = deepcopy(EMPTY_SUMMARY)
+    secret_field = "PRIVATE_MEETING_SENTINEL"
+    payload[secret_field] = "confidential"
+
+    with pytest.raises(SummaryValidationError) as error:
+        parse(to_json(payload), MeetingSummary, set())
+
+    assert error.value.code == SummaryErrorCode.SCHEMA_VALIDATION_ERROR
+    assert error.value.validation_diagnostics == (
+        {"loc": ["<unknown>"], "type": "extra_forbidden"},
+    )
+    assert secret_field not in str(error.value.validation_diagnostics)
 
 
 def test_balanced_json_code_fence():
@@ -284,3 +333,46 @@ def test_valid_executive_summary_with_reference():
     )
 
     assert result.executive_summary_refs == ["SRC_003"]
+
+
+def test_vietnamese_sprint_fixture_contract_and_evidence_grounding():
+    ref = "TRANSCRIPT:33333333-3333-4333-8333-333333333333"
+    fixture_result = {
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": "Nhóm thống nhất công nghệ cho Sprint 4 và phân công ba công việc.",
+        "executive_summary_refs": [ref],
+        "key_points": [
+            {"text": "Cuộc họp thống nhất công việc Sprint 4 của dự án SmartRec.",
+             "kind": "DISCUSSION", "source_refs": [ref]},
+        ],
+        "decisions": [
+            {"text": "Sử dụng PostgreSQL làm cơ sở dữ liệu.", "source_refs": [ref]},
+            {"text": "Sử dụng React để phát triển giao diện.", "source_refs": [ref]},
+        ],
+        "action_items": [
+            {"title": "Thiết kế cơ sở dữ liệu", "assignee": "Minh", "deadline": None,
+             "deadline_raw": "trước thứ Sáu", "source_refs": [ref]},
+            {"title": "Phát triển giao diện đăng nhập", "assignee": "Lan",
+             "deadline": "2026-11-10", "deadline_raw": None, "source_refs": [ref]},
+            {"title": "Kiểm thử chức năng upload video và báo cáo kết quả", "assignee": "Hùng",
+             "deadline": "2026-11-12", "deadline_raw": None, "source_refs": [ref]},
+        ],
+        "open_issues": [],
+        "next_steps": [
+            {"text": "Kiểm tra tiến độ trong cuộc họp tiếp theo.", "source_refs": [ref]},
+        ],
+        "conflicts": [],
+    }
+
+    result = parse(to_json(fixture_result), MeetingSummary, {ref})
+
+    assert [item.assignee for item in result.action_items] == ["Minh", "Lan", "Hùng"]
+    assert result.action_items[0].deadline is None
+    assert result.action_items[0].deadline_raw == "trước thứ Sáu"
+    assert [item.deadline for item in result.action_items[1:]] == ["2026-11-10", "2026-11-12"]
+    assert [item.text for item in result.decisions] == [
+        "Sử dụng PostgreSQL làm cơ sở dữ liệu.",
+        "Sử dụng React để phát triển giao diện.",
+    ]
+    assert all(set(item.source_refs) == {ref} for item in result.action_items + result.decisions)
+    assert len(result.action_items) == 3

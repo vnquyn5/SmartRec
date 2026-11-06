@@ -5,6 +5,7 @@ import pytest
 import requests
 
 from app.core.config import settings
+from app.schemas.meeting_summary import MeetingSummary
 from app.services.local_llm_client import LocalLLMClient, LocalLLMError
 
 
@@ -44,6 +45,7 @@ def test_posts_ollama_payload_and_returns_token_metadata(monkeypatch):
             "model": MODEL,
             "prompt": "transcript prompt",
             "system": "system rules",
+            "format": MeetingSummary.model_json_schema(),
             "stream": False,
             "keep_alive": 0,
             "options": {"temperature": 0.1, "num_predict": 2048},
@@ -179,3 +181,42 @@ def test_missing_token_counts_remain_null(monkeypatch):
     assert result["output_tokens"] is None
     assert result["total_tokens"] is None
     assert result["token_source"] == "unavailable"
+
+
+def test_structured_output_uses_existing_summary_schema_and_reports_done_reason(monkeypatch):
+    post = Mock(return_value=_response({
+        "response": "{}",
+        "prompt_eval_count": 12,
+        "eval_count": 4,
+        "done_reason": "stop",
+    }))
+    monkeypatch.setattr("app.services.local_llm_client.requests.post", post)
+
+    result = _client().generate("prompt", "system", 0.1, 100)
+
+    assert post.call_args.kwargs["json"]["format"]["properties"].keys() == {
+        "schema_version", "executive_summary", "executive_summary_refs",
+        "key_points", "decisions", "action_items", "open_issues", "next_steps", "conflicts",
+    }
+    assert result["done_reason"] == "stop"
+    assert result["input_tokens"] == 12
+    assert result["output_tokens"] == 4
+
+
+def test_structured_output_schema_includes_verified_reference_constraints(monkeypatch):
+    post = Mock(return_value=_response({"response": "{}"}))
+    monkeypatch.setattr("app.services.local_llm_client.requests.post", post)
+
+    _client().generate(
+        "prompt", "system", 0.1, 100, allowed_source_refs=["S1"]
+    )
+    schema = post.call_args.kwargs["json"]["format"]
+
+    assert schema["properties"]["executive_summary"]["type"] == "string"
+    assert schema["properties"]["executive_summary_refs"]["minItems"] == 1
+    assert schema["properties"]["executive_summary_refs"]["items"]["enum"] == [
+        "S1"
+    ]
+    assert schema["$defs"]["EvidenceItem"]["properties"]["source_refs"]["items"]["enum"] == [
+        "S1"
+    ]

@@ -33,6 +33,78 @@ def test_single_speaker():
     assert result == {0: speaker_id}
 
 
+def test_single_speaker_with_small_timestamp_boundary_drift_is_attributed():
+    speaker_id = uuid4()
+    analysis = analyze_speaker_attribution(
+        [whisper(15.980, 17.880)],
+        [diar(15.961, 17.868, "SPEAKER_00", "Speaker 1")],
+    )[0]
+
+    assert analysis.status == "ATTRIBUTED"
+    assert analysis.speaker_key == "SPEAKER_00"
+    assert align_speakers(
+        [whisper(15.980, 17.880)],
+        [diar(15.961, 17.868, "SPEAKER_00", "Speaker 1")],
+        {"SPEAKER_00": speaker_id},
+    ) == {0: speaker_id}
+
+
+def test_same_speaker_turns_require_ninety_percent_union_coverage():
+    mostly_covered = analyze_speaker_attribution(
+        [whisper(0.05, 1.95)],
+        [diar(0.0, 1.0, "A", "Speaker 1"), diar(1.1, 2.0, "A", "Speaker 1")],
+    )[0]
+    insufficient = analyze_speaker_attribution(
+        [whisper(28.7, 33.4)],
+        [
+            diar(28.938, 30.220, "SPEAKER_00", "Speaker 1"),
+            diar(31.385, 35.215, "SPEAKER_00", "Speaker 1"),
+        ],
+    )[0]
+
+    assert mostly_covered.status == "ATTRIBUTED"
+    assert mostly_covered.speaker_key == "A"
+    assert insufficient.status == "UNRESOLVED"
+    assert insufficient.speaker_key is None
+
+
+def test_distinct_speaker_overlap_is_never_resolved_by_percentage():
+    analysis = analyze_speaker_attribution(
+        [whisper(0.0, 4.0)],
+        [diar(0.0, 3.9, "A", "Speaker 1"), diar(3.9, 4.0, "B", "Speaker 2")],
+    )[0]
+
+    assert analysis.status == "CROSS_SPEAKER_BOUNDARY"
+    assert analysis.speaker_key is None
+
+
+def test_failing_job_segments_recover_strong_matches_and_keep_low_coverage_unknown():
+    transcript_intervals = [
+        (0.800, 4.820), (5.440, 10.120), (10.820, 14.700), (15.980, 17.880),
+        (18.780, 21.280), (22.200, 28.200), (28.700, 33.400), (33.600, 35.200),
+    ]
+    diarization = [
+        diar(1.077, 4.874, "SPEAKER_00", "Speaker 1"),
+        diar(5.600, 10.190, "SPEAKER_00", "Speaker 1"),
+        diar(10.780, 14.797, "SPEAKER_00", "Speaker 1"),
+        diar(15.961, 17.868, "SPEAKER_00", "Speaker 1"),
+        diar(18.745, 21.412, "SPEAKER_00", "Speaker 1"),
+        diar(22.205, 28.347, "SPEAKER_00", "Speaker 1"),
+        diar(28.938, 30.220, "SPEAKER_00", "Speaker 1"),
+        diar(31.385, 35.215, "SPEAKER_00", "Speaker 1"),
+    ]
+
+    result = analyze_speaker_attribution(
+        [whisper(start, end) for start, end in transcript_intervals], diarization,
+    )
+
+    assert [result[index].status for index in range(8)] == [
+        "ATTRIBUTED", "ATTRIBUTED", "ATTRIBUTED", "ATTRIBUTED",
+        "ATTRIBUTED", "ATTRIBUTED", "UNRESOLVED", "ATTRIBUTED",
+    ]
+    assert result[6].speaker_key is None
+
+
 def test_multiple_speakers_by_overlap():
     speaker_1 = uuid4()
     speaker_2 = uuid4()
@@ -224,7 +296,7 @@ def test_persisted_job_9bc97f6a_transcript_segments_are_checked_against_exclusiv
     segments = [whisper(start, end) for start, end in persisted]
     result = analyze_speaker_attribution(segments, diarization)
     assert [result[index].status for index in range(len(persisted))] == [
-        "UNRESOLVED", "CROSS_SPEAKER_BOUNDARY", "UNRESOLVED", "CROSS_SPEAKER_BOUNDARY",
+        "ATTRIBUTED", "CROSS_SPEAKER_BOUNDARY", "UNRESOLVED", "CROSS_SPEAKER_BOUNDARY",
         "CROSS_SPEAKER_BOUNDARY", "CROSS_SPEAKER_BOUNDARY", "UNRESOLVED", "UNRESOLVED",
     ]
     assert result[1].overlap_by_speaker == {

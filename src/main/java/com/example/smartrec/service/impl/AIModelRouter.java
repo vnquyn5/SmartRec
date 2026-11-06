@@ -1,9 +1,12 @@
 package com.example.smartrec.service.impl;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -12,9 +15,10 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.example.smartrec.config.AIModelRouterProperties;
-import com.example.smartrec.entity.Job;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.AIResponse;
@@ -44,6 +48,7 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class AIModelRouter {
+    private static final Logger log = LoggerFactory.getLogger(AIModelRouter.class);
     private static final String TASK_TYPE = "MEETING_ANALYSIS";
     private static final String TASK_NAMESPACE = "smartrec-ai-inference-v1:";
 
@@ -57,16 +62,15 @@ public class AIModelRouter {
 
     private int localFailures;
     private long localCircuitOpenUntilNanos;
+    private Clock clock = Clock.systemUTC();
 
     public AIResponse generate(UUID jobId, UUID executionId) {
-        Job job = jobRepository.findById(jobId)
-                .orElseThrow(() -> new BusinessException(
-                        HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "Không tìm thấy Job cần inference"));
+        JobRepository.ExecutionLeaseView job = requireLiveExecution(jobId, null, executionId);
         return generate(jobId, job.getMeetingId(), executionId);
     }
 
     public AIResponse generate(UUID jobId, UUID meetingId, UUID executionId) {
-        Job job = requireLiveExecution(jobId, meetingId, executionId);
+        requireLiveExecution(jobId, meetingId, executionId);
         JobContext context = contextPayloadService.createJobContext(meetingId, jobId, true);
         verifyContext(context, meetingId, jobId);
 
@@ -87,9 +91,10 @@ public class AIModelRouter {
 
         AdapterException localFailure = null;
         int localAttemptsExecuted = 0;
-        // At most one retry. Keep the same verified prompt and never feed a
-        // failed/raw model response back into the next attempt.
-        int attempts = Math.max(1, Math.min(properties.getLocalMaxAttempts(), 2));
+        long inferenceStartedNanos = System.nanoTime();
+        // Respect the configured finite attempt count. Keep the same verified
+        // prompt and never feed a failed/raw model response into a later attempt.
+        int attempts = Math.max(1, properties.getLocalMaxAttempts());
         for (int attempt = 1; attempt <= attempts; attempt++) {
             if (isLocalCircuitOpen()) {
                 localFailure = new AdapterException("LOCAL_CIRCUIT_OPEN", true);
@@ -106,17 +111,22 @@ public class AIModelRouter {
                         prepared.systemPrompt(),
                         prepared.prompt(),
                         prepared.allowedSourceRefs(),
+                        evidence,
                         0.1,
                         2048));
                 requireLiveExecution(jobId, meetingId, executionId);
                 verifyGeneration(generated, requestId, jobId, meetingId);
-                validateSourceReferences(generated.result(), prepared.allowedSourceRefs());
+                validateSourceReferences(generated.result(), originalSourceRefs(evidence));
                 AIResponse response = toBackendResponse(
                         jobId, meetingId, requestId, generated.provider(), generated.modelIdentifier(),
                         false, null, attempt - 1, generated.processingTimeMs(),
                         generated.tokenMetadata(), generated.result());
                 responseValidator.validate(response);
                 recordLocalSuccess();
+                log.info("Local meeting summary succeeded: attempts={}, processingMs={}, inputTokens={}, outputTokens={}",
+                        localAttemptsExecuted, generated.processingTimeMs(),
+                        generated.tokenMetadata() == null ? null : generated.tokenMetadata().inputTokens(),
+                        generated.tokenMetadata() == null ? null : generated.tokenMetadata().outputTokens());
                 return response;
             } catch (AdapterException ex) {
                 if (!ex.isFallbackEligible()) {
@@ -124,6 +134,15 @@ public class AIModelRouter {
                 }
                 localFailure = ex;
                 recordLocalFailure();
+                log.warn("Local meeting summary attempt {} failed: code={}, elapsedMs={}",
+                        localAttemptsExecuted, ex.getCode(),
+                        Math.max(0, (System.nanoTime() - inferenceStartedNanos) / 1_000_000L));
+                // Retrying an identical prompt after a hard generation timeout
+                // or token-limit truncation repeats the same expensive failure.
+                if ("LOCAL_MODEL_TIMEOUT".equals(ex.getCode())
+                        || "LOCAL_MODEL_TRUNCATED".equals(ex.getCode())) {
+                    break;
+                }
                 if (attempt < attempts) {
                     sleepBeforeRetry(attempt);
                 }
@@ -138,7 +157,7 @@ public class AIModelRouter {
 
         requireLiveExecution(jobId, meetingId, executionId);
         return routeToGemini(
-                jobId, meetingId, executionId, requestId, prepared,
+                jobId, meetingId, executionId, requestId, prepared, evidence,
                 Math.max(0, localAttemptsExecuted - 1), localFailure);
     }
 
@@ -148,6 +167,7 @@ public class AIModelRouter {
             UUID executionId,
             UUID requestId,
             PrepareResponse prepared,
+            List<ContextEvidence> evidence,
             int localRetryCount,
             AdapterException localFailure) {
         try {
@@ -162,9 +182,10 @@ public class AIModelRouter {
                     meetingId,
                     TASK_TYPE,
                     generated.text(),
-                    prepared.allowedSourceRefs()));
+                    prepared.allowedSourceRefs(),
+                    evidence));
             verifyValidation(validated, requestId, jobId, meetingId);
-            validateSourceReferences(validated.result(), prepared.allowedSourceRefs());
+            validateSourceReferences(validated.result(), originalSourceRefs(evidence));
             TokenMetadata metadata = new TokenMetadata(
                     generated.inputTokens(),
                     generated.outputTokens(),
@@ -191,16 +212,16 @@ public class AIModelRouter {
         }
     }
 
-    private Job requireLiveExecution(UUID jobId, UUID meetingId, UUID executionId) {
-        Job job = jobRepository.findById(jobId)
+    private JobRepository.ExecutionLeaseView requireLiveExecution(UUID jobId, UUID meetingId, UUID executionId) {
+        JobRepository.ExecutionLeaseView job = jobRepository.findExecutionLeaseById(jobId)
                 .orElseThrow(() -> new BusinessException(
                         HttpStatus.NOT_FOUND, "AI_JOB_NOT_FOUND", "Không tìm thấy Job cần inference"));
-        if (job.getMeetingId() == null || !job.getMeetingId().equals(meetingId)) {
+        if (job.getMeetingId() == null || (meetingId != null && !job.getMeetingId().equals(meetingId))) {
             throw new BusinessException(
                     HttpStatus.CONFLICT, "AI_MEETING_ID_MISMATCH", "Meeting không thuộc Job yêu cầu");
         }
         if (executionId == null || !executionId.equals(job.getExecutionId())
-                || job.getLeaseExpiresAt() == null || !job.getLeaseExpiresAt().isAfter(Instant.now())
+                || job.getLeaseExpiresAt() == null || !job.getLeaseExpiresAt().isAfter(clock.instant())
                 || (job.getStatus() != JobStatus.PROCESSING && job.getStatus() != JobStatus.RUNNING)) {
             throw new BusinessException(
                     HttpStatus.CONFLICT, "STALE_EXECUTION_CALLBACK",
@@ -233,15 +254,27 @@ public class AIModelRouter {
             throw new BusinessException(
                     HttpStatus.BAD_GATEWAY, "AI_PREPARE_RESPONSE_INVALID", "AI Engine trả contract không hợp lệ");
         }
-        Set<String> expectedRefs = evidence.stream()
-                .map(item -> item.sourceType() + ":" + item.sourceId())
-                .collect(java.util.stream.Collectors.toSet());
-        if (expectedRefs.size() != response.allowedSourceRefs().size()
-                || !expectedRefs.equals(new HashSet<>(response.allowedSourceRefs()))) {
+        List<ContextEvidence> orderedEvidence = evidence.stream()
+                .sorted(Comparator.comparing(
+                                ContextEvidence::startTimeMs,
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(item -> item.sourceId() == null ? "" : item.sourceId().toString()))
+                .toList();
+        List<String> expectedRefs = new ArrayList<>(orderedEvidence.size());
+        for (int index = 0; index < orderedEvidence.size(); index++) {
+            expectedRefs.add("S" + (index + 1));
+        }
+        if (!expectedRefs.equals(response.allowedSourceRefs())) {
             throw new BusinessException(
                     HttpStatus.BAD_GATEWAY, "AI_SOURCE_ALLOWLIST_INVALID",
                     "AI Engine source allowlist không khớp context đã xác minh");
         }
+    }
+
+    private List<String> originalSourceRefs(List<ContextEvidence> evidence) {
+        return evidence.stream()
+                .map(item -> item.sourceType() + ":" + item.sourceId())
+                .toList();
     }
 
     private void verifyGeneration(GenerateResponse response, UUID requestId, UUID jobId, UUID meetingId) {
@@ -295,11 +328,17 @@ public class AIModelRouter {
                                 HttpStatus.BAD_GATEWAY, "AI_SOURCE_REFERENCES_INVALID",
                                 "Source references phải là JSON array");
                     }
+                    Set<String> seen = new HashSet<>();
                     for (JsonNode ref : value) {
                         if (!ref.isTextual() || !allowed.contains(ref.asText())) {
                             throw new BusinessException(
                                     HttpStatus.BAD_GATEWAY, "AI_SOURCE_REFERENCE_UNKNOWN",
                                     "AI Result chứa source reference không thuộc context");
+                        }
+                        if (!seen.add(ref.asText())) {
+                            throw new BusinessException(
+                                    HttpStatus.BAD_GATEWAY, "AI_SOURCE_REFERENCE_DUPLICATE",
+                                    "AI Result chứa source reference bị lặp trong một claim");
                         }
                     }
                 } else {

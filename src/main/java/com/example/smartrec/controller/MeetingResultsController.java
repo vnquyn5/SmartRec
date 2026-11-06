@@ -2,6 +2,8 @@ package com.example.smartrec.controller;
 
 import java.util.List;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -17,7 +19,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.entity.ActionItem;
 import com.example.smartrec.entity.Summary;
-import com.example.smartrec.entity.Speaker;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.MeetingResultsResponse;
@@ -29,9 +30,12 @@ import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.repository.SpeakerRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
+import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.TranscriptService;
+import com.example.smartrec.service.impl.MeetingSpeakerIdentityService;
+import com.example.smartrec.service.impl.ActionItemAssigneeResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import lombok.RequiredArgsConstructor;
@@ -40,6 +44,7 @@ import lombok.RequiredArgsConstructor;
 @RequestMapping("/meetings/{meetingId}/jobs/{jobId}/results")
 @RequiredArgsConstructor
 public class MeetingResultsController {
+    private static final double MIN_SPEAKER_COVERAGE = 0.90;
     private final MeetingService meetingService;
     private final JobService jobService;
     private final TranscriptService transcriptService;
@@ -67,37 +72,41 @@ public class MeetingResultsController {
                 .filter(Objects::nonNull)
                 .distinct()
                 .collect(Collectors.toSet());
-        Map<UUID, String> speakerLabels = new HashMap<>();
         if (!speakerIds.isEmpty()) {
-            speakerRepository.findAllById(speakerIds).forEach(speaker -> {
+            List<com.example.smartrec.entity.Speaker> existingSpeakers = speakerRepository.findAllById(speakerIds);
+            existingSpeakers.forEach(speaker -> {
                 if (!meetingId.equals(speaker.getMeetingId())) {
                     throw inconsistentData();
                 }
-                speakerLabels.put(speaker.getId(),
-                        speaker.getRealName() == null || speaker.getRealName().isBlank()
-                                ? speaker.getAiLabel()
-                                : speaker.getRealName());
             });
+            if (existingSpeakers.size() != speakerIds.size()) throw inconsistentData();
+        }
+        Map<UUID, com.example.smartrec.entity.Speaker> meetingSpeakerById = new HashMap<>();
+        speakerRepository.findByMeetingId(meetingId).forEach(speaker -> meetingSpeakerById.put(speaker.getId(), speaker));
+        if (!speakerIds.isEmpty()) {
+            speakerRepository.findAllById(speakerIds).forEach(speaker -> meetingSpeakerById.putIfAbsent(speaker.getId(), speaker));
+        }
+        List<com.example.smartrec.entity.Speaker> meetingSpeakers = List.copyOf(meetingSpeakerById.values());
+        if (meetingSpeakers.stream().anyMatch(speaker -> !meetingId.equals(speaker.getMeetingId()))) {
+            throw inconsistentData();
         }
         List<com.example.smartrec.entity.SpeakerSegment> speakerTimeline =
                 speakerSegmentRepository.findByMeetingIdOrderByStartTimeAsc(meetingId);
-        Map<String, Speaker> speakersByAiLabel = new HashMap<>();
-        if (!speakerTimeline.isEmpty()) {
-            speakerRepository.findByMeetingId(meetingId).forEach(speaker -> {
-                if (!meetingId.equals(speaker.getMeetingId())) {
-                    throw inconsistentData();
-                }
-                speakersByAiLabel.put(normalizeSpeakerLabel(speaker.getAiLabel()), speaker);
-            });
-        }
+        List<MeetingSpeakerIdentityService.TranscriptEvidence> identityEvidence = persistedTranscripts.stream()
+                .map(item -> new MeetingSpeakerIdentityService.TranscriptEvidence(
+                        item.getMeetingId(), item.getSpeakerId(), item.getAttributionStatus(),
+                        item.getStartTimeMs(), item.getEndTimeMs()))
+                .toList();
+        MeetingSpeakerIdentityService.Mapping identities = MeetingSpeakerIdentityService.resolve(
+                meetingId, meetingSpeakers, speakerTimeline, identityEvidence);
         List<TranscriptResult> transcripts = persistedTranscripts.stream()
-                .map(item -> toTranscriptResult(item, speakerLabels, speakersByAiLabel, speakerTimeline))
+                .map(item -> toTranscriptResult(item, identities))
                 .toList();
 
         Summary summaryEntity = summaryRepository.findByProcessingJobId(jobId).orElse(null);
         SummaryResult summary = summaryEntity == null ? null : toSummary(meetingId, summaryEntity);
         List<ActionItemResult> actionItems = actionItemRepository.findByProcessingJobId(jobId).stream()
-                .map(item -> toActionItem(meetingId, item, summaryEntity))
+                .map(item -> toActionItem(meetingId, jobId, item, identities, persistedTranscripts))
                 .toList();
 
         return ResponseEntity.ok(new MeetingResultsResponse(
@@ -106,70 +115,88 @@ public class MeetingResultsController {
 
     private TranscriptResult toTranscriptResult(
             TranscriptResponse item,
-            Map<UUID, String> persistedSpeakerLabels,
-            Map<String, Speaker> speakersByAiLabel,
-            List<com.example.smartrec.entity.SpeakerSegment> speakerTimeline) {
-        String storedStatus = item.getAttributionStatus() == null
-                ? "ATTRIBUTED" : item.getAttributionStatus();
+            MeetingSpeakerIdentityService.Mapping identities) {
+        String storedStatus = item.getAttributionStatus() == null ? "ATTRIBUTED" : item.getAttributionStatus();
         UUID speakerId = item.getSpeakerId();
-        String speakerLabel = persistedSpeakerLabels.get(speakerId);
+        MeetingSpeakerIdentityService.Identity identity = identities.forId(speakerId);
+        String speakerLabel = identity == null ? null : identity.displayName();
         String attributionStatus = storedStatus;
 
-        if ("CROSS_SPEAKER_BOUNDARY".equals(storedStatus) || "UNRESOLVED".equals(storedStatus)) {
+        if ("CROSS_SPEAKER_BOUNDARY".equals(storedStatus)) {
             speakerId = null;
             speakerLabel = null;
-        } else if (!speakerTimeline.isEmpty()
-                && item.getStartTimeMs() != null && item.getEndTimeMs() != null
-                && item.getEndTimeMs() > item.getStartTimeMs()) {
-            double start = item.getStartTimeMs() / 1000.0;
-            double end = item.getEndTimeMs() / 1000.0;
-            List<com.example.smartrec.entity.SpeakerSegment> overlapping = speakerTimeline.stream()
-                    .filter(turn -> turn.getStartTime() != null && turn.getEndTime() != null
-                            && turn.getStartTime() < end && turn.getEndTime() > start)
-                    .toList();
-            var overlapLabels = overlapping.stream()
-                    .map(turn -> normalizeSpeakerLabel(turn.getSpeakerLabel()))
-                    .filter(label -> !label.isEmpty())
-                    .collect(Collectors.toSet());
-            if (overlapLabels.size() > 1) {
-                attributionStatus = "CROSS_SPEAKER_BOUNDARY";
+        } else if ("UNRESOLVED".equals(storedStatus)) {
+            TimelineAttribution timeline = findTimelineAttribution(item, identities);
+            if (timeline.speakerId() != null && timeline.coverage() >= MIN_SPEAKER_COVERAGE
+                    && !timeline.hasUnmappedOverlap()) {
+                speakerId = timeline.speakerId();
+                identity = identities.forId(speakerId);
+                speakerLabel = identity == null ? null : identity.displayName();
+                attributionStatus = identity == null ? "UNRESOLVED" : "ATTRIBUTED";
+                if (identity == null) speakerId = null;
+            } else {
                 speakerId = null;
                 speakerLabel = null;
-            } else {
-                var containing = overlapping.stream()
-                        .filter(turn -> turn.getStartTime() <= start && end <= turn.getEndTime())
-                        .findFirst();
-                if (containing.isEmpty()) {
-                    attributionStatus = "UNRESOLVED";
-                    speakerId = null;
-                    speakerLabel = null;
-                } else {
-                    Speaker matchedSpeaker = speakersByAiLabel.get(
-                            normalizeSpeakerLabel(containing.get().getSpeakerLabel()));
-                    if (matchedSpeaker == null) {
-                        attributionStatus = "UNRESOLVED";
-                        speakerId = null;
-                        speakerLabel = null;
-                    } else {
-                        attributionStatus = "ATTRIBUTED";
-                        speakerId = matchedSpeaker.getId();
-                        speakerLabel = matchedSpeaker.getRealName() == null
-                                || matchedSpeaker.getRealName().isBlank()
-                                ? matchedSpeaker.getAiLabel() : matchedSpeaker.getRealName();
-                    }
-                }
             }
+        } else if (identity == null) {
+            speakerId = null;
+            speakerLabel = null;
+            attributionStatus = "UNRESOLVED";
         }
 
-        return new TranscriptResult(
-                item.getId(), speakerId, speakerLabel, attributionStatus,
+        return new TranscriptResult(item.getId(), speakerId, speakerLabel, attributionStatus,
                 item.getStartTimeMs(), item.getEndTimeMs(), item.getTextContent(),
                 item.getConfidenceScore(), item.getMeetingId(), item.getProcessingJobId());
     }
 
-    private String normalizeSpeakerLabel(String label) {
-        return label == null ? "" : label.trim().toUpperCase(java.util.Locale.ROOT);
+    private TimelineAttribution findTimelineAttribution(
+            TranscriptResponse item,
+            MeetingSpeakerIdentityService.Mapping identities) {
+        if (item.getStartTimeMs() == null || item.getEndTimeMs() == null
+                || item.getEndTimeMs() <= item.getStartTimeMs()) {
+            return new TimelineAttribution(null, 0.0, false);
+        }
+        double start = item.getStartTimeMs() / 1000.0;
+        double end = item.getEndTimeMs() / 1000.0;
+        Map<UUID, List<double[]>> intervalsBySpeaker = new HashMap<>();
+        boolean hasUnmappedOverlap = false;
+        for (var turn : identities.timeline()) {
+            if (turn.getStartTime() == null || turn.getEndTime() == null
+                    || turn.getStartTime() >= end || turn.getEndTime() <= start) continue;
+            MeetingSpeakerIdentityService.Identity speaker = identities.forTimelineLabel(turn.getSpeakerLabel());
+            if (speaker == null) {
+                hasUnmappedOverlap = true;
+                continue;
+            }
+            intervalsBySpeaker.computeIfAbsent(speaker.speakerId(), ignored -> new ArrayList<>())
+                    .add(new double[]{Math.max(start, turn.getStartTime()), Math.min(end, turn.getEndTime())});
+        }
+        if (intervalsBySpeaker.size() > 1) {
+            return new TimelineAttribution(null, 0.0, hasUnmappedOverlap);
+        }
+        if (hasUnmappedOverlap || intervalsBySpeaker.isEmpty()) {
+            return new TimelineAttribution(null, 0.0, hasUnmappedOverlap);
+        }
+        var entry = intervalsBySpeaker.entrySet().iterator().next();
+        List<double[]> intervals = entry.getValue();
+        intervals.sort(Comparator.comparingDouble(interval -> interval[0]));
+        double covered = 0.0;
+        double coveredStart = intervals.get(0)[0];
+        double coveredEnd = intervals.get(0)[1];
+        for (int index = 1; index < intervals.size(); index++) {
+            double[] interval = intervals.get(index);
+            if (interval[0] <= coveredEnd) coveredEnd = Math.max(coveredEnd, interval[1]);
+            else {
+                covered += coveredEnd - coveredStart;
+                coveredStart = interval[0];
+                coveredEnd = interval[1];
+            }
+        }
+        covered += coveredEnd - coveredStart;
+        return new TimelineAttribution(entry.getKey(), covered / (end - start), false);
     }
+
+    private record TimelineAttribution(UUID speakerId, double coverage, boolean hasUnmappedOverlap) {}
 
     private SummaryResult toSummary(UUID meetingId, Summary summary) {
         if (!meetingId.equals(summary.getMeetingId())) {
@@ -180,58 +207,81 @@ public class MeetingResultsController {
         return new SummaryResult(summary.getExecutiveSummary(), details);
     }
 
-    private ActionItemResult toActionItem(UUID meetingId, ActionItem item, Summary summary) {
+    private ActionItemResult toActionItem(
+            UUID meetingId,
+            UUID jobId,
+            ActionItem item,
+            MeetingSpeakerIdentityService.Mapping identities,
+            List<TranscriptResponse> transcripts) {
         if (!meetingId.equals(item.getMeetingId())) {
             throw inconsistentData();
         }
-        String deadlineRaw = rawDeadline(summary, item);
+        String assigneeName = item.getAssigneeName();
+        UUID assigneeSpeakerId = item.getAssigneeSpeakerId();
+        String provenance = item.getAssignmentProvenance();
+        boolean userConfirmed = item.getAssigneeUserId() != null || "USER_CONFIRMED".equals(provenance);
+        if (!userConfirmed && assigneeSpeakerId == null && (assigneeName == null || assigneeName.isBlank())) {
+            assigneeSpeakerId = resolveFirstPersonAssignee(meetingId, jobId, item, identities, transcripts);
+            if (assigneeSpeakerId != null) provenance = "FIRST_PERSON_COMMITMENT";
+        }
+        MeetingSpeakerIdentityService.Identity assignee = identities.forId(assigneeSpeakerId);
+        if (assigneeSpeakerId != null && assignee == null) throw inconsistentData();
+        boolean linkedToConfirmedSpeaker = item.getAssigneeUserId() == null && assignee != null
+                && assignee.confirmed() && ("USER_CONFIRMED".equals(provenance)
+                || "EXPLICIT_NAMED".equals(provenance) || "FIRST_PERSON_COMMITMENT".equals(provenance));
+        if (linkedToConfirmedSpeaker) {
+            // The speaker UUID is the durable link. Render its current meeting-scoped
+            // name so a later rename updates both Transcript and Action Items.
+            assigneeName = assignee.displayName();
+        }
         return new ActionItemResult(
                 item.getId(),
                 item.getTaskName(),
-                item.getAssigneeName(),
+                assigneeName,
+                assigneeSpeakerId,
+                provenance,
                 item.getStatus(),
                 item.getDueDate(),
-                deadlineRaw,
-                item.getSourceTranscriptId());
+                item.getDeadlineRaw(),
+                item.getSourceTranscriptId(),
+                item.getSourceRefs() == null ? List.of() : List.copyOf(item.getSourceRefs()));
     }
 
-    private String rawDeadline(Summary summary, ActionItem item) {
-        if (summary == null || item.getSourceTranscriptId() == null) {
-            return null;
-        }
-        JsonNode actions = summary.getRawLlmResponse() == null
-                ? null
-                : summary.getRawLlmResponse().path("meetingSummary").path("action_items");
-        if (actions == null || !actions.isArray()) {
-            return null;
-        }
-
-        String expectedRef = "TRANSCRIPT:" + item.getSourceTranscriptId();
-        String matchedDeadline = null;
-        int matchCount = 0;
-        for (JsonNode candidate : actions) {
-            JsonNode refs = candidate.path("source_refs");
-            if (!item.getTaskName().equals(candidate.path("title").asText(null))
-                    || !refs.isArray()
-                    || refs.size() != 1
-                    || !expectedRef.equals(refs.get(0).asText(null))) {
-                continue;
-            }
-            if (++matchCount > 1) {
+    private UUID resolveFirstPersonAssignee(
+            UUID meetingId,
+            UUID jobId,
+            ActionItem item,
+            MeetingSpeakerIdentityService.Mapping identities,
+            List<TranscriptResponse> transcripts) {
+        if (item.getSourceRefs() == null || item.getSourceRefs().isEmpty()) return null;
+        Map<UUID, TranscriptResponse> transcriptsById = transcripts.stream()
+                .collect(Collectors.toMap(TranscriptResponse::getId, transcript -> transcript, (left, right) -> left));
+        Set<UUID> citedIds = new java.util.LinkedHashSet<>();
+        for (String sourceRef : item.getSourceRefs()) {
+            if (sourceRef == null || !sourceRef.startsWith("TRANSCRIPT:")) continue;
+            try {
+                citedIds.add(UUID.fromString(sourceRef.substring("TRANSCRIPT:".length())));
+            } catch (IllegalArgumentException ignored) {
                 return null;
             }
-            matchedDeadline = nonBlankText(candidate.path("deadline_raw"));
-            if (matchedDeadline == null) {
-                matchedDeadline = nonBlankText(candidate.path("deadline"));
-            }
         }
-        return matchedDeadline;
-    }
+        if (citedIds.isEmpty()) return null;
 
-    private String nonBlankText(JsonNode value) {
-        return value != null && value.isTextual() && !value.asText().isBlank()
-                ? value.asText()
-                : null;
+        UUID speakerId = null;
+        boolean explicitCommitment = false;
+        for (UUID transcriptId : citedIds) {
+            TranscriptResponse transcript = transcriptsById.get(transcriptId);
+            if (transcript == null || !meetingId.equals(transcript.getMeetingId())
+                    || !jobId.equals(transcript.getProcessingJobId())
+                    || !"ATTRIBUTED".equals(transcript.getAttributionStatus())
+                    || transcript.getSpeakerId() == null) return null;
+            if (speakerId == null) speakerId = transcript.getSpeakerId();
+            else if (!speakerId.equals(transcript.getSpeakerId())) return null;
+            explicitCommitment |= ActionItemAssigneeResolver.hasExplicitFirstPersonCommitment(
+                    transcript.getTextContent());
+        }
+        MeetingSpeakerIdentityService.Identity identity = identities.forId(speakerId);
+        return explicitCommitment && identity != null && identity.confirmed() ? speakerId : null;
     }
 
     private BusinessException notFound() {

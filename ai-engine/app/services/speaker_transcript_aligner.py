@@ -7,10 +7,29 @@ from typing import Any, Mapping, Optional, Sequence
 from uuid import UUID
 
 
+_MIN_SINGLE_SPEAKER_COVERAGE = 0.90
+
+
 def _field(value: Any, name: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(name)
     return getattr(value, name, None)
+
+
+def _union_duration(intervals: Sequence[tuple[float, float]]) -> float:
+    """Return covered time without double-counting overlapping same-speaker turns."""
+    if not intervals:
+        return 0.0
+    ordered = sorted(intervals)
+    covered = 0.0
+    start, end = ordered[0]
+    for next_start, next_end in ordered[1:]:
+        if next_start <= end:
+            end = max(end, next_end)
+        else:
+            covered += end - start
+            start, end = next_start, next_end
+    return covered + end - start
 
 
 @dataclass(frozen=True)
@@ -51,11 +70,13 @@ def analyze_speaker_attribution(
 
         overlaps = defaultdict(float)
         covered_turns = []
+        overlap_ranges = defaultdict(list)
         for turn_start, turn_end, key, _, _ in validated_timeline:
             overlap = max(0.0, min(end, turn_end) - max(start, turn_start))
             if overlap > 0:
                 overlaps[key] += overlap
                 covered_turns.append((turn_start, turn_end, key))
+                overlap_ranges[key].append((max(start, turn_start), min(end, turn_end)))
 
         word_assignments = []
         words_are_reliable = bool(getattr(segment, "words", None))
@@ -107,10 +128,17 @@ def analyze_speaker_attribution(
                 key for turn_start, turn_end, key, _, _ in validated_timeline
                 if turn_start <= start and end <= turn_end
             }
-            if len(containing) == 1:
-                results[index] = SpeakerAttribution(next(iter(containing)), "ATTRIBUTED", dict(overlaps))
-            elif len(turn_owners) > 1:
+            if len(turn_owners) > 1:
                 results[index] = SpeakerAttribution(None, "CROSS_SPEAKER_BOUNDARY", dict(overlaps))
+            elif len(containing) == 1:
+                results[index] = SpeakerAttribution(next(iter(containing)), "ATTRIBUTED", dict(overlaps))
+            elif end > start and len(turn_owners) == 1:
+                key = next(iter(turn_owners))
+                coverage = _union_duration(overlap_ranges[key]) / (end - start)
+                if coverage >= _MIN_SINGLE_SPEAKER_COVERAGE:
+                    results[index] = SpeakerAttribution(key, "ATTRIBUTED", dict(overlaps))
+                else:
+                    results[index] = SpeakerAttribution(None, "UNRESOLVED", dict(overlaps))
             else:
                 results[index] = SpeakerAttribution(None, "UNRESOLVED", dict(overlaps))
     return results

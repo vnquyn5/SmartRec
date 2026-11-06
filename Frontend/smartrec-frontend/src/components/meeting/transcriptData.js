@@ -1,3 +1,15 @@
+export function normalizeSpeakerDisplayLabel(label) {
+  const value = typeof label === 'string' ? label.trim() : '';
+  if (!value) return null;
+  const rawId = value.match(/^speaker_(\d+)$/i);
+  const displayLabel = value.match(/^speaker[\s-]*(\d+)$/i);
+  const match = rawId || displayLabel;
+  if (!match) return value;
+  const suffix = Number.parseInt(match[1], 10);
+  const number = rawId && Number.isFinite(suffix) ? suffix + 1 : suffix;
+  return `Speaker ${Number.isFinite(number) ? Math.max(1, number) : 1}`;
+}
+
 export function mapTranscriptResults(response) {
   const segments = Array.isArray(response?.transcripts) ? response.transcripts : [];
   return segments
@@ -14,9 +26,45 @@ export function mapTranscriptResults(response) {
         ? 'Multiple speakers'
         : segment.attributionStatus === 'UNRESOLVED'
           ? 'Speaker attribution unavailable'
-          : segment.speakerLabel || (segment.speakerId ? `Speaker ${String(segment.speakerId).slice(0, 8)}` : "Speaker chưa xác định"),
+          : normalizeSpeakerDisplayLabel(segment.speakerLabel) || 'Speaker chưa xác định',
     }))
     .sort((left, right) => left.startTimeMs - right.startTimeMs || left.endTimeMs - right.endTimeMs);
+}
+
+/** Groups speaking intervals by immutable speakerId, never by mutable displayName. */
+export function mapSpeakerManagementSegments(segments = []) {
+  const grouped = new Map();
+  (Array.isArray(segments) ? segments : []).forEach((segment) => {
+    if (!segment?.speakerId || !Number.isFinite(Number(segment.startTime))
+        || !Number.isFinite(Number(segment.endTime)) || Number(segment.endTime) <= Number(segment.startTime)) return;
+    const key = String(segment.speakerId);
+    if (!grouped.has(key)) {
+      const fallbackName = normalizeSpeakerDisplayLabel(segment.speakerLabel) || 'Speaker chưa xác định';
+      grouped.set(key, {
+        id: key,
+        speakerId: key,
+        originalLabel: segment.aiLabel ?? segment.speakerLabel ?? null,
+        defaultName: Number(segment.speakerIndex) > 0
+          ? `Speaker ${Number(segment.speakerIndex)}`
+          : fallbackName,
+        name: segment.displayName || segment.speakerLabel || fallbackName,
+        speakerIndex: Number.isFinite(Number(segment.speakerIndex)) ? Number(segment.speakerIndex) : Number.MAX_SAFE_INTEGER,
+        segments: [],
+      });
+    }
+    grouped.get(key).segments.push({
+      startSeconds: Number(segment.startTime),
+      endSeconds: Number(segment.endTime),
+      start: formatMediaTimeSeconds(segment.startTime),
+      end: formatMediaTimeSeconds(segment.endTime),
+    });
+  });
+  return [...grouped.values()]
+    .map((speaker) => ({
+      ...speaker,
+      segments: speaker.segments.sort((left, right) => left.startSeconds - right.startSeconds),
+    }))
+    .sort((left, right) => left.speakerIndex - right.speakerIndex || left.id.localeCompare(right.id));
 }
 
 export function findActiveTranscriptSegment(segments, currentTimeSeconds) {
@@ -106,6 +154,23 @@ export function seekMediaToSeconds(media, seconds) {
 
   if (media.readyState >= 1) seekAndPlay();
   else media.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+  return true;
+}
+
+export function seekMediaWithoutPlayback(media, seconds) {
+  const target = Number(seconds);
+  if (!media || !Number.isFinite(target) || target < 0 || !media.src) return false;
+
+  const seek = () => {
+    try {
+      media.currentTime = target;
+    } catch {
+      // The media may become unavailable while the timestamp is being selected.
+    }
+  };
+
+  if (media.readyState >= 1) seek();
+  else media.addEventListener('loadedmetadata', seek, { once: true });
   return true;
 }
 

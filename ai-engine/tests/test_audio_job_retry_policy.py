@@ -17,6 +17,12 @@ from app.workers.processing_errors import NonRetryableProcessingError, Retryable
 from app.services.audio_extractor import InvalidMediaError
 
 
+@pytest.fixture(autouse=True)
+def enable_llm_for_worker_tests_by_default(monkeypatch):
+    # Keep local developer .env settings from changing worker unit-test paths.
+    monkeypatch.setattr(redis_job_worker.settings, "smartrec_llm_enabled", True)
+
+
 def _configure_no_speech_worker(tmp_path, monkeypatch, callback, object_key="audio.wav", execution_lost=False):
     class ResourceTrackerStub:
         def __init__(self, **kwargs):
@@ -615,6 +621,22 @@ def test_core_output_success_callback_allows_missing_ai_result(monkeypatch):
     assert "aiResult" not in send_callback.call_args.args[1]
 
 
+def test_output_success_callback_carries_only_known_enrichment_markers(monkeypatch):
+    send_callback = Mock(return_value=True)
+    monkeypatch.setattr(redis_job_worker.callback_client, "send_callback", send_callback)
+
+    assert redis_job_worker.send_stage_callback(
+        "job-ai", "OUTPUT", "SUCCESS", error_code="AI_ENRICHMENT_FAILED"
+    )
+    payload = send_callback.call_args.args[1]
+    assert payload["errorCode"] == "AI_ENRICHMENT_FAILED"
+
+    assert redis_job_worker.send_stage_callback(
+        "job-ai", "OUTPUT", "SUCCESS", error_code="UNRECOGNIZED_ERROR"
+    )
+    assert send_callback.call_args.args[1]["errorCode"] is None
+
+
 def test_worker_skips_ai_router_when_llm_feature_flag_is_disabled(tmp_path, monkeypatch):
     import app.services.stt_job_integration as stt
     events = []
@@ -644,6 +666,7 @@ def test_worker_skips_ai_router_when_llm_feature_flag_is_disabled(tmp_path, monk
     output_success = [e for e in events if e[0] == "OUTPUT" and e[1] == "SUCCESS"]
     assert len(output_success) == 1
     assert output_success[0][2]["ai_result"] is None
+    assert output_success[0][2]["error_code"] == "AI_ENRICHMENT_DISABLED"
 
 
 def test_llm_router_failure_preserves_core_output_success(tmp_path, monkeypatch):
@@ -676,6 +699,7 @@ def test_llm_router_failure_preserves_core_output_success(tmp_path, monkeypatch)
     output_success = [e for e in events if e[0] == "OUTPUT" and e[1] == "SUCCESS"]
     assert len(output_success) == 1
     assert output_success[0][2]["ai_result"] is None
+    assert output_success[0][2]["error_code"] == "AI_ENRICHMENT_FAILED"
 
 
 def test_output_callback_delivery_failure_does_not_report_success(monkeypatch):

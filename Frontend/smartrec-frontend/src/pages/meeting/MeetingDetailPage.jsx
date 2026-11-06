@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 import { api } from "../../lib/http/client";
 import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
-import { formatMediaTimeSeconds } from "../../components/meeting/transcriptData";
+import { mapSpeakerManagementSegments } from "../../components/meeting/transcriptData";
+import { mapMeetingResults } from "../../components/meeting/meetingResults";
 
 const POLL_INTERVAL_MS = 2500;
 const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING", "PROCESSING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
@@ -11,36 +12,8 @@ const FAILURE_STATUSES = new Set(["FAILED", "DLQ", "CANCELLED"]);
 const COMPLETE_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED"]);
 const UNPROCESSED_STATUS = "UNPROCESSED";
 
-function formatTimestamp(value) {
-  return formatMediaTimeSeconds(value);
-}
-
 function groupSegments(segments = []) {
-  const grouped = new Map();
-  segments.forEach((segment) => {
-    if (!segment || !Number.isFinite(Number(segment.startTime)) || !Number.isFinite(Number(segment.endTime))) return;
-    const label = segment.speakerLabel || "Speaker";
-    if (!grouped.has(label)) grouped.set(label, []);
-    grouped.get(label).push({
-      startSeconds: Number(segment.startTime),
-      endSeconds: Number(segment.endTime),
-    });
-  });
-  return [...grouped.entries()]
-    .sort(([labelA], [labelB]) => labelA.localeCompare(labelB, undefined, { numeric: true }))
-    .map(([label, times]) => ({
-      id: label,
-      originalLabel: label,
-      name: label,
-      segments: times
-        .sort((a, b) => a.startSeconds - b.startSeconds)
-        .map(({ startSeconds, endSeconds }) => ({
-          startSeconds,
-          endSeconds,
-          start: formatTimestamp(startSeconds),
-          end: formatTimestamp(endSeconds),
-        })),
-    }));
+  return mapSpeakerManagementSegments(segments);
 }
 
 function apiMessage(error, fallback) {
@@ -63,6 +36,9 @@ export default function MeetingDetailPage() {
   const [pageState, setPageState] = useState("loading");
   const [loadError, setLoadError] = useState("");
   const [speakerError, setSpeakerError] = useState("");
+  const [results, setResults] = useState(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState("");
   const [retrying, setRetrying] = useState(false);
   const [startingProcess, setStartingProcess] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState(false);
@@ -70,6 +46,7 @@ export default function MeetingDetailPage() {
   const activeMeetingIdRef = useRef(null);
   const requestedJobIdsRef = useRef(new Set());
   const meetingSnapshotRef = useRef(null);
+  const resultsSnapshotRef = useRef(null);
 
   const refresh = useCallback(async (isCancelled, { fetchMeeting = true } = {}) => {
     const currentMeeting = fetchMeeting || !meetingSnapshotRef.current
@@ -92,6 +69,10 @@ export default function MeetingDetailPage() {
       setSpeakersMeetingId(null);
       setSpeakerLoading(false);
       setSpeakerError("");
+      resultsSnapshotRef.current = null;
+      setResults(null);
+      setResultsLoading(false);
+      setResultsError("");
       setLoadError("");
       setPageState("unprocessed");
       return { shouldPoll: false };
@@ -130,6 +111,35 @@ export default function MeetingDetailPage() {
     const meetingStatus = String(currentMeeting.status || "").toUpperCase();
     const jobStatus = String(currentJob?.status || "").toUpperCase();
     const status = jobStatus || meetingStatus;
+
+    const resultsJobId = currentJob?.id || currentMeeting.activeJobId;
+    if (!resultsJobId) {
+      resultsSnapshotRef.current = null;
+      setResults(null);
+      setResultsError("");
+      setResultsLoading(false);
+    } else {
+      const hasCurrentResults = resultsSnapshotRef.current?.jobId === resultsJobId;
+      setResultsLoading(!hasCurrentResults);
+      try {
+        const resultPayload = await api.get(`/meetings/${id}/jobs/${resultsJobId}/results`);
+        if (isCancelled()) return { shouldPoll: false };
+        if (resultPayload?.meetingId !== id || resultPayload?.jobId !== resultsJobId) {
+          throw new Error("API trả kết quả không thuộc cuộc họp hoặc Job hiện tại.");
+        }
+        const mappedResults = mapMeetingResults(resultPayload);
+        resultsSnapshotRef.current = mappedResults;
+        setResults(mappedResults);
+        setResultsError("");
+      } catch (error) {
+        if (isCancelled()) return { shouldPoll: false };
+        resultsSnapshotRef.current = null;
+        setResults(null);
+        setResultsError(apiMessage(error, "Không thể tải kết quả AI của cuộc họp."));
+      } finally {
+        if (!isCancelled()) setResultsLoading(false);
+      }
+    }
 
     if (FAILURE_STATUSES.has(status) || (!jobStatus && FAILURE_STATUSES.has(meetingStatus))) {
       setSpeakers([]);
@@ -195,6 +205,10 @@ export default function MeetingDetailPage() {
       setPageState("loading");
       setLoadError("");
       setSpeakerError("");
+      resultsSnapshotRef.current = null;
+      setResults(null);
+      setResultsLoading(false);
+      setResultsError("");
       requestedJobIdsRef.current.clear();
     }
 
@@ -225,6 +239,10 @@ export default function MeetingDetailPage() {
     setRetrying(true);
     setSpeakers([]);
     setSpeakersMeetingId(null);
+    resultsSnapshotRef.current = null;
+    setResults(null);
+    setResultsLoading(false);
+    setResultsError("");
     setPageState("processing");
     try {
       await api.post(`/jobs/${job.id}/retry`);
@@ -272,26 +290,50 @@ export default function MeetingDetailPage() {
 
   const handleSaveSpeakers = async (updatedSpeakers) => {
     if (speakersMeetingId !== id) throw new Error("Dữ liệu người nói không thuộc cuộc họp hiện tại.");
-    for (const speaker of updatedSpeakers) {
-      const nextName = speaker.name?.trim();
-      if (nextName && nextName !== speaker.originalLabel) {
-        await api.put(`/meetings/${id}/speakers/rename`, {
-          speakerLabel: speaker.originalLabel,
-          newName: nextName,
-        });
+    const refreshSpeakerAndResultData = async () => {
+      const [speakerResponse, resultPayload] = await Promise.all([
+        api.get(`/meetings/${id}/speakers`),
+        job?.id ? api.get(`/meetings/${id}/jobs/${job.id}/results`) : Promise.resolve(null),
+      ]);
+      const nextSpeakers = groupSegments(Array.isArray(speakerResponse) ? speakerResponse : []);
+      setSpeakers(nextSpeakers);
+      setSpeakersMeetingId(id);
+      if (resultPayload?.meetingId === id && resultPayload?.jobId === job.id) {
+        const mappedResults = mapMeetingResults(resultPayload);
+        resultsSnapshotRef.current = mappedResults;
+        setResults(mappedResults);
       }
+    };
+    try {
+      for (const speaker of updatedSpeakers) {
+        const nextName = speaker.name?.trim();
+        const currentName = speaker.currentName || speaker.nameAtLoad || '';
+        if (nextName && nextName !== currentName) {
+          await api.put(`/meetings/${id}/speakers/rename`, {
+            speakerId: speaker.speakerId || speaker.id,
+            speakerLabel: speaker.originalLabel,
+            newName: nextName,
+          });
+        }
+      }
+      await refreshSpeakerAndResultData();
+    } catch (error) {
+      // If a multi-speaker save partially reached the server, refresh from server
+      // truth before showing the failure; never present an optimistic success.
+      await refreshSpeakerAndResultData().catch(() => {});
+      throw error;
     }
-    const response = await api.get(`/meetings/${id}/speakers`);
-    setSpeakers(groupSegments(Array.isArray(response) ? response : []));
-    setSpeakersMeetingId(id);
   };
 
   const isCurrentMeeting = meetingId === id && meeting?.id === id;
   const currentSpeakers = isCurrentMeeting && speakersMeetingId === id ? speakers : [];
   const displayState = meetingLoading || !isCurrentMeeting ? "loading" : meetingError ? "error" : pageState;
+  const enrichmentStatus = job?.errorCode === "AI_ENRICHMENT_FAILED"
+    ? "enrichment_failed"
+    : job?.errorCode === "AI_ENRICHMENT_DISABLED" ? "enrichment_disabled" : null;
   const aiStatus = displayState === "completed"
-    ? speakerError ? "completed" : currentSpeakers.length === 0 ? "empty" : "completed"
-    : displayState === "completed-loading-speakers" ? "completed"
+    ? enrichmentStatus || (speakerError ? "completed" : currentSpeakers.length === 0 ? "empty" : "completed")
+    : displayState === "completed-loading-speakers" ? enrichmentStatus || "completed"
       : displayState === "failed" ? "failed"
       : displayState === "paused" ? "paused"
       : displayState === "pause-requested" ? "pause-requested"
@@ -330,6 +372,9 @@ export default function MeetingDetailPage() {
         aiError={displayState === "failed" ? failureMessage : ""}
         speakerError={speakerError}
         speakerLoading={speakerLoading}
+        results={results}
+        resultsLoading={resultsLoading}
+        resultsError={resultsError}
         onRetry={displayState === "failed" ? handleRetry : undefined}
         onPause={job && ["PROCESSING", "RUNNING", "RETRYING", "QUEUED"].includes(String(job.status).toUpperCase()) ? () => handleLifecycleAction(pauseJob, "PAUSE_REQUESTED") : undefined}
         onResume={displayState === "paused" ? () => handleLifecycleAction(resumeJob, "QUEUED") : undefined}

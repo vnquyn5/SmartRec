@@ -58,7 +58,9 @@ class WhisperCppPredictor:
         self.cpu_fallback = cpu_fallback
         self.actual_device = "not_run"
 
-    def _run(self, audio_path: str, language: str, *, force_cpu: bool = False):
+    def _run(
+        self, audio_path: str, language: str, *, force_cpu: bool = False, beam_size: int = 5,
+    ):
         with tempfile.TemporaryDirectory(prefix="smartrec-whispercpp-") as temp_dir:
             base = Path(temp_dir) / "transcription"
             log_path = Path(temp_dir) / "whisper.log"
@@ -67,6 +69,7 @@ class WhisperCppPredictor:
                 "--model", str(self.model_path),
                 "--file", str(Path(audio_path).resolve()),
                 "--language", language,
+                "--beam-size", str(beam_size),
                 "--threads", str(self.threads),
                 "--output-json",
                 "--output-file", str(base),
@@ -160,10 +163,15 @@ class WhisperCppPredictor:
     def predict(self, input_data: Any, **kwargs: Any):
         audio_path = str(input_data)
         language = str(kwargs.get("language") or "vi")
+        beam_size = kwargs.get("beam_size", 5)
+        if not isinstance(beam_size, int) or isinstance(beam_size, bool) or beam_size < 1:
+            raise ValueError("WHISPER_CPP_BEAM_SIZE_INVALID")
         if not Path(audio_path).is_file():
             raise FileNotFoundError("WHISPER_CPP_AUDIO_MISSING")
 
-        result, runtime_log, return_code, retryable_gpu_failure = self._run(audio_path, language)
+        result, runtime_log, return_code, retryable_gpu_failure = self._run(
+            audio_path, language, beam_size=beam_size,
+        )
         actual_device = "cpu" if self.device == "cpu" else "metal"
         if result is None:
             if self.device == "metal":
@@ -175,7 +183,7 @@ class WhisperCppPredictor:
                 "with GPU disabled (exit_code=%s)", return_code,
             )
             result, runtime_log, return_code, _ = self._run(
-                audio_path, language, force_cpu=True,
+                audio_path, language, force_cpu=True, beam_size=beam_size,
             )
             if result is None:
                 raise RuntimeError(f"WHISPER_CPP_CPU_FALLBACK_FAILED:{return_code}")

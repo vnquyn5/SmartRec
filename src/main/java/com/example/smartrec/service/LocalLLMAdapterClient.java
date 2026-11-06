@@ -125,9 +125,15 @@ public class LocalLLMAdapterClient {
             // Response bodies are untrusted; HTTP status remains the safe fallback signal.
         }
         int status = exception.getStatusCode().value();
-        return status == 502 || status == 503 || status == 504
-                ? "LOCAL_ADAPTER_UNAVAILABLE"
-                : "LOCAL_ADAPTER_REJECTED";
+        return switch (status) {
+            case 400 -> "AI_ENGINE_BAD_REQUEST";
+            case 401, 403 -> "AI_ENGINE_UNAUTHORIZED";
+            case 409 -> "AI_ENGINE_CONFLICT";
+            case 422 -> "AI_ENGINE_VALIDATION_FAILED";
+            case 502 -> "AI_ENGINE_BAD_GATEWAY";
+            case 503, 504 -> "LOCAL_ADAPTER_UNAVAILABLE";
+            default -> "LOCAL_ADAPTER_REJECTED";
+        };
     }
 
     private boolean isFallbackEligible(String code) {
