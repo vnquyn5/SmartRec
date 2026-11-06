@@ -350,6 +350,7 @@ def test_generate_rejects_unsupported_assignee_and_inferred_date_safely(monkeypa
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "EVIDENCE_CONSISTENCY_ERROR"
+    assert response.json()["detail"]["origin"] == "MODEL_OUTPUT"
     assert "category=evidence_consistency" in caplog.text
     assert "unsupported_assignee" in caplog.text
     assert "unsupported_absolute_deadline" in caplog.text
@@ -455,6 +456,7 @@ def test_generate_rejects_mismatched_or_malformed_short_id_allowlist_before_infe
 
         assert response.status_code == 502
         assert response.json()["detail"]["code"] == "SOURCE_REFERENCE_ERROR"
+        assert "origin" not in response.json()["detail"]
 
 
 def test_prepare_rejects_duplicate_original_evidence_references(monkeypatch):
@@ -503,5 +505,6 @@ def test_generate_rejects_unknown_and_duplicate_short_citations_with_safe_diagno
         )
         assert response.status_code == 502
         assert response.json()["detail"]["code"] == "SOURCE_REFERENCE_ERROR"
+        assert response.json()["detail"]["origin"] == "MODEL_OUTPUT"
         assert expected_diagnostic in caplog.text
         assert untrusted_id not in caplog.text

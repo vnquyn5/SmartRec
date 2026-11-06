@@ -178,6 +178,39 @@ class AIResultServiceImplTest {
     }
 
     @Test
+    void validatedGeminiResponseUsesExistingSummaryAndActionPersistence() throws Exception {
+        UUID jobId = UUID.randomUUID();
+        UUID meetingId = UUID.randomUUID();
+        Job job = Job.builder().id(jobId).meetingId(meetingId).status(JobStatus.PROCESSING).build();
+        AIResponse response = createResponse(jobId, meetingId, """
+                {"executiveSummary":"Đã thống nhất kế hoạch.","actionItems":[
+                  {"taskName":"Kiểm thử upload video","assigneeName":null,
+                   "dueDate":null,"deadlineRaw":"trước thứ Sáu",
+                   "sourceRefs":["TRANSCRIPT:11111111-1111-4111-8111-111111111111"]}
+                ]}
+                """);
+        response.setProvider("GEMINI");
+        response.setModel("test-gemini");
+        response.setTokenSource("gemini_metadata");
+        response.setFallbackUsed(true);
+        response.setFallbackReason("LOCAL_MODEL_TIMEOUT");
+        when(jobRepository.findByIdForUpdate(jobId)).thenReturn(Optional.of(job));
+        when(summaryRepository.findByProcessingJobId(jobId)).thenReturn(Optional.empty());
+
+        service.saveAIResult(response);
+
+        ArgumentCaptor<Summary> summary = ArgumentCaptor.forClass(Summary.class);
+        ArgumentCaptor<List<ActionItem>> actions = ArgumentCaptor.forClass(List.class);
+        verify(summaryRepository).save(summary.capture());
+        verify(actionItemRepository).saveAll(actions.capture());
+        assertEquals("Đã thống nhất kế hoạch.", summary.getValue().getExecutiveSummary());
+        assertEquals("Kiểm thử upload video", actions.getValue().get(0).getTaskName());
+        assertEquals("trước thứ Sáu", actions.getValue().get(0).getDeadlineRaw());
+        assertEquals(List.of("TRANSCRIPT:11111111-1111-4111-8111-111111111111"),
+                actions.getValue().get(0).getSourceRefs());
+    }
+
+    @Test
     void firstPersonCommitmentLinksOnlyItsUnambiguouslyAttributedSpeaker() throws Exception {
         UUID jobId = UUID.randomUUID();
         UUID meetingId = UUID.randomUUID();

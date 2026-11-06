@@ -193,6 +193,48 @@ class AIModelRouterTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"LOCAL_MODEL_TIMEOUT", "LOCAL_MODEL_UNAVAILABLE", "EVIDENCE_CONSISTENCY_ERROR"})
+    void eligibleLocalFailureUsesValidatedGeminiResult(String errorCode) throws Exception {
+        stubLiveJobContextAndPreparation();
+        when(properties.getGeminiModel()).thenReturn("mock-gemini");
+        when(localClient.generate(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException(errorCode, true));
+        when(geminiFallbackService.generate(any(), any(), any(), any(), any()))
+                .thenReturn(new com.example.smartrec.service.impl.GeminiFallbackClient.GeminiGeneration(
+                        "mocked fallback output", 1L, 2L));
+        var validatedSummary = successfulGeneration().result();
+        when(localClient.validateFallback(any())).thenReturn(new InternalLLMContracts.ValidateResponse(
+                InternalLLMContracts.VERSION, stableRequestId(), JOB_ID, MEETING_ID,
+                "MEETING_ANALYSIS", validatedSummary));
+
+        AIResponse response = router.generate(JOB_ID, EXECUTION_ID);
+
+        assertEquals("GEMINI", response.getProvider());
+        assertEquals(errorCode, response.getFallbackReason());
+        assertEquals("SUCCESS", response.getStatus());
+        verify(localClient).validateFallback(any());
+        verify(responseValidator).validate(response);
+    }
+
+    @Test
+    void geminiEvidenceValidationFailureCannotProduceAResult() {
+        stubLiveJobContextAndPreparation();
+        when(localClient.generate(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("LOCAL_MODEL_TIMEOUT", true));
+        when(geminiFallbackService.generate(any(), any(), any(), any(), any()))
+                .thenReturn(new com.example.smartrec.service.impl.GeminiFallbackClient.GeminiGeneration(
+                        "unsupported output", 1L, 2L));
+        when(localClient.validateFallback(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("EVIDENCE_CONSISTENCY_ERROR", false));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> router.generate(JOB_ID, EXECUTION_ID));
+
+        assertEquals("GEMINI_OUTPUT_VALIDATION_FAILED", error.getCode());
+        verify(responseValidator, never()).validate(any());
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"LOCAL_MODEL_TIMEOUT", "LOCAL_MODEL_TRUNCATED"})
     void deterministicInferenceFailureSkipsUnchangedRetryAndReusesLogicalRequestId(String errorCode) {
         stubLiveJobContextAndPreparation();

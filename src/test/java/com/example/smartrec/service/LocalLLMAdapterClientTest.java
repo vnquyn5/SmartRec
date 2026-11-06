@@ -99,10 +99,63 @@ class LocalLLMAdapterClientTest {
         server.verify();
     }
 
+    @Test
+    void onlyMarkedGenerationEvidenceFailureIsFallbackEligible() {
+        for (String body : List.of(
+                "{\"detail\":{\"code\":\"EVIDENCE_CONSISTENCY_ERROR\",\"origin\":\"MODEL_OUTPUT\"}}",
+                "{\"detail\":{\"code\":\"EVIDENCE_CONSISTENCY_ERROR\"}}",
+                "{}")) {
+            RestTemplate restTemplate = new RestTemplate();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+            server.expect(requestTo("http://127.0.0.1:8000/api/v1/internal/llm/generate"))
+                    .andRespond(MockRestResponseCreators.withStatus(HttpStatus.BAD_GATEWAY)
+                            .contentType(MediaType.APPLICATION_JSON).body(body));
+
+            var error = assertThrows(LocalLLMAdapterClient.AdapterException.class,
+                    () -> client(restTemplate).generate(generateRequest()));
+            assertEquals(body.contains("MODEL_OUTPUT"), error.isFallbackEligible());
+            server.verify();
+        }
+    }
+
+    @Test
+    void markedEvidenceFailureOutsideGenerationIsNotEligible() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        server.expect(requestTo("http://127.0.0.1:8000/api/v1/internal/llm/prepare"))
+                .andRespond(MockRestResponseCreators.withStatus(HttpStatus.BAD_GATEWAY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"detail\":{\"code\":\"EVIDENCE_CONSISTENCY_ERROR\",\"origin\":\"MODEL_OUTPUT\"}}"));
+
+        var error = assertThrows(LocalLLMAdapterClient.AdapterException.class,
+                () -> client(restTemplate).prepare(request()));
+        assertEquals(false, error.isFallbackEligible());
+    }
+
+    @Test
+    void sourceReferenceFailureRequiresGeneratedOutputMarker() {
+        for (boolean marked : List.of(true, false)) {
+            RestTemplate restTemplate = new RestTemplate();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+            String detail = marked
+                    ? "{\"detail\":{\"code\":\"SOURCE_REFERENCE_ERROR\",\"origin\":\"MODEL_OUTPUT\"}}"
+                    : "{\"detail\":{\"code\":\"SOURCE_REFERENCE_ERROR\"}}";
+            server.expect(requestTo("http://127.0.0.1:8000/api/v1/internal/llm/generate"))
+                    .andRespond(MockRestResponseCreators.withStatus(HttpStatus.BAD_GATEWAY)
+                            .contentType(MediaType.APPLICATION_JSON).body(detail));
+
+            var error = assertThrows(LocalLLMAdapterClient.AdapterException.class,
+                    () -> client(restTemplate).generate(generateRequest()));
+            assertEquals(marked, error.isFallbackEligible());
+            server.verify();
+        }
+    }
+
     private static LocalLLMAdapterClient client(RestTemplate restTemplate) {
         AIEngineConfig config = new AIEngineConfig();
         config.setBaseUrl("http://127.0.0.1:8000");
         config.setPreparePath("/api/v1/internal/llm/prepare");
+        config.setGeneratePath("/api/v1/internal/llm/generate");
         config.setInternalToken("local-test-token");
         return new LocalLLMAdapterClient(config, restTemplate, new ObjectMapper());
     }
@@ -116,5 +169,12 @@ class LocalLLMAdapterClientTest {
                 "MEETING_ANALYSIS",
                 List.of(new InternalLLMContracts.ContextEvidence(
                         "TRANSCRIPT", TRANSCRIPT_ID, null, 0L, 1000L, "Synthetic connectivity test.")));
+    }
+
+    private static InternalLLMContracts.GenerateRequest generateRequest() {
+        return new InternalLLMContracts.GenerateRequest(
+                InternalLLMContracts.VERSION, REQUEST_ID, JOB_ID, MEETING_ID,
+                "MEETING_ANALYSIS", "system", "prompt", List.of("S1"),
+                request().evidence(), 0.1, 2048);
     }
 }

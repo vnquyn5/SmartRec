@@ -216,9 +216,26 @@ def generate_local(
         )
         raise HTTPException(status_code=response_status, detail={"code": code}) from exc
 
-    summary = _validated_summary(
-        generated["text"], request.allowed_source_refs, request.evidence
-    )
+    try:
+        summary = _validated_summary(
+            generated["text"], request.allowed_source_refs, request.evidence
+        )
+    except HTTPException as exc:
+        if (
+            exc.status_code == status.HTTP_502_BAD_GATEWAY
+            and isinstance(exc.detail, dict)
+            and exc.detail.get("code") in {
+                SummaryErrorCode.EVIDENCE_CONSISTENCY_ERROR.value,
+                SummaryErrorCode.SOURCE_REFERENCE_ERROR.value,
+            }
+        ):
+            # This marker is issued only after local inference returned output.
+            # Invalid trusted context and fallback /validate never receive it.
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": exc.detail["code"], "origin": "MODEL_OUTPUT"},
+            ) from exc
+        raise
     return LocalInferenceResponse(
         contractVersion="smartrec.local-llm.v1",
         requestId=request.request_id,

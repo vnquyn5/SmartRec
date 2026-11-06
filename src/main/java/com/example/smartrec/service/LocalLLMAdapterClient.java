@@ -102,7 +102,9 @@ public class LocalLLMAdapterClient {
             return response.getBody();
         } catch (HttpStatusCodeException ex) {
             String code = responseCode(ex);
-            throw new AdapterException(code, inferenceRequest && isFallbackEligible(code), ex);
+            boolean eligible = inferenceRequest && (isFallbackEligible(code)
+                    || isGeneratedOutputFailure(code, ex));
+            throw new AdapterException(code, eligible, ex);
         } catch (ResourceAccessException ex) {
             throw new AdapterException(
                     inferenceRequest ? "LOCAL_ADAPTER_UNAVAILABLE" : "AI_ENGINE_UNAVAILABLE",
@@ -139,10 +141,23 @@ public class LocalLLMAdapterClient {
     private boolean isFallbackEligible(String code) {
         return switch (code) {
             case "LOCAL_MODEL_TIMEOUT", "LOCAL_MODEL_UNAVAILABLE", "LOCAL_MODEL_INVALID_RESPONSE",
-                    "LOCAL_MODEL_TRUNCATED", "LOCAL_ADAPTER_UNAVAILABLE", "JSON_PARSE_ERROR", "SCHEMA_VALIDATION_ERROR",
-                    "SOURCE_REFERENCE_ERROR" -> true;
+                    "LOCAL_MODEL_TRUNCATED", "LOCAL_ADAPTER_UNAVAILABLE", "JSON_PARSE_ERROR",
+                    "SCHEMA_VALIDATION_ERROR" -> true;
             default -> false;
         };
+    }
+
+    private boolean isGeneratedOutputFailure(String code, HttpStatusCodeException exception) {
+        if (!("EVIDENCE_CONSISTENCY_ERROR".equals(code) || "SOURCE_REFERENCE_ERROR".equals(code))
+                || exception.getStatusCode().value() != 502) {
+            return false;
+        }
+        try {
+            JsonNode detail = objectMapper.readTree(exception.getResponseBodyAsString()).path("detail");
+            return "MODEL_OUTPUT".equals(detail.path("origin").asText());
+        } catch (JsonProcessingException ignored) {
+            return false;
+        }
     }
 
     public static class AdapterException extends RuntimeException {
