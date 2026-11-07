@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import VideoPlayer from './VideoPlayer';
 import MeetingTabs from './MeetingTabs';
 import MeetingSearchBar from './MeetingSearchBar';
-import PipelineJobStepper from './PipelineJobStepper';
+import RealtimeStepper from './RealtimeStepper';
 import mockSttData from '../../mocks/mock_stt.json';
 import mockSummaryData from '../../mocks/mock_summary.json';
 import mockOcrData from '../../mocks/mock_ocr.json';
@@ -120,7 +120,10 @@ export default function MeetingDetail({
           />
 
           {/* Cụm Realtime Pipeline Stepper */}
-          <PipelineJobStepper
+          <RealtimeStepper
+            jobId={job?.id}
+            meetingId={meeting?.id}
+            initialJob={job}
             currentStage={job?.stage || (aiStatus === 'completed' ? 'OUTPUT' : 'PYANNOTE')}
             jobStatus={job?.status || (aiStatus === 'completed' ? 'COMPLETED' : aiStatus === 'failed' ? 'FAILED' : aiStatus === 'paused' ? 'PAUSED' : 'PROCESSING')}
             errorCode={job?.errorCode}
