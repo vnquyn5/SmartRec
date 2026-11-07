@@ -342,6 +342,7 @@ export default function MeetingDetailPage() {
       {isCurrentMeeting && displayState !== "loading" && <MeetingDetail
         key={id}
         meeting={meeting}
+        job={job}
         fileType={fileType}
         speakers={currentSpeakers}
         aiStatus={aiStatus}

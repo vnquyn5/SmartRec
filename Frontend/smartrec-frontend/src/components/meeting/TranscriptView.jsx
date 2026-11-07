@@ -1,14 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import mockSttData from '../../mocks/mock_stt.json';
-
-
-function timeToSeconds(timeStr) {
-  if (!timeStr) return 0;
-  const parts = String(timeStr).split(':').map((p) => Number(p.trim()) || 0);
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  return Number(timeStr) || 0;
-}
+import { timeToSeconds } from '../../utils/timeFormat';
 
 export default function TranscriptView({ 
   speakers = [],
@@ -23,7 +15,7 @@ export default function TranscriptView({
   const rawList = Array.isArray(mockSttData)
     ? mockSttData
     : (mockSttData?.mock_stt || []);
-// -----------------------------------------------------//
+
   const transcripts = speakers.length > 0
   ? speakers 
       .flatMap ((spk) =>

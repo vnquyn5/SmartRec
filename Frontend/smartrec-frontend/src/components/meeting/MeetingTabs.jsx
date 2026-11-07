@@ -6,11 +6,44 @@ import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
 import TranscriptView from './TranscriptView';
 import AiUsageBadge from './AiUsageBadge';
+import ExplainabilityDrawer from './ExplainabilityDrawer';
+import mockExplainabilityData from '../../mocks/mock_explainability.json';
+import { timeToSeconds } from '../../utils/timeFormat';
 
 export default function MeetingTabs({ fileType = 'video', speakers = [], currentTime = 0, onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('transcript');
   const [speakerNameMap, setSpeakerNameMap] = useState({});
   const [selectedChunk, setSelectedChunk] = useState(null);
+  const [explainabilityOpen, setExplainabilityOpen] = useState(false);
+  const [selectedEvidence, setSelectedEvidence] = useState(null);
+
+  const handleInspectEvidence = (task) => {
+    const evidenceMapping = mockExplainabilityData?.evidence_by_task_index || {};
+    const taskIndex = task?.task_index || 1;
+    const found = evidenceMapping[String(taskIndex)] || {
+      taskIndex,
+      taskContent: task?.content || "",
+      assignee: task?.assignee || "",
+      deadline: task?.deadline || "",
+      timestamp: task?.timestamp || "00:00",
+      timestampSeconds: timeToSeconds(task?.timestamp),
+      sourceText: task?.content ? `Nội dung thảo luận ghi nhận: "${task.content}"` : "",
+      speakerName: task?.assignee || "Người tham gia",
+      heuristicConfidence: 0.85,
+      modelVersion: "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      promptVersion: "sys_task_matrix_prompt_v2.0",
+      contextSurrounding: [
+        {
+          speaker: task?.assignee || "Người tham gia",
+          text: task?.content || "",
+          time: task?.timestamp || "00:00",
+          isKeyEvidence: true,
+        },
+      ],
+    };
+    setSelectedEvidence(found);
+    setExplainabilityOpen(true);
+  };
 
   // Khai báo các tab theo yêu cầu 
   const tabs = [
@@ -117,7 +150,12 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], current
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
         {activeTab === 'summary' && <ExecutiveSummary />}
-        {activeTab === 'task' && <TaskMatrixTable onSeekSegment={onSeekSegment} />}
+        {activeTab === 'task' && (
+          <TaskMatrixTable
+            onSeekSegment={onSeekSegment}
+            onInspectEvidence={handleInspectEvidence}
+          />
+        )}
         {activeTab === 'transcript' && (
           <div className="h-full flex flex-col gap-4">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
@@ -188,6 +226,14 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], current
         )}
         {activeTab === 'slide' && <SlideGallery onSeekSegment={onSeekSegment} />}
       </div>
+
+      {/* Slide-over Explainability Drawer */}
+      <ExplainabilityDrawer
+        isOpen={explainabilityOpen}
+        evidence={selectedEvidence}
+        onClose={() => setExplainabilityOpen(false)}
+        onSeekMedia={onSeekSegment}
+      />
     </div>
   );
 }

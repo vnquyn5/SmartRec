@@ -1,13 +1,6 @@
 import React, { useState } from 'react';
 import mockSummaryData from '../../mocks/mock_summary.json';
-
-function parseTimeToSeconds(timeStr) {
-  if (!timeStr) return 0;
-  const parts = timeStr.split(':').map((p) => Number(p.trim()) || 0);
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  return Number(timeStr) || 0;
-}
+import { timeToSeconds } from '../../utils/timeFormat';
 
 const PRIORITY_OPTIONS = ['High', 'Medium', 'Low'];
 
@@ -17,7 +10,7 @@ const PRIORITY_STYLES = {
   Low: 'border-emerald-500/50 bg-emerald-950/40 text-emerald-300',
 };
 
-export default function TaskMatrixTable({ onSeekSegment }) {
+export default function TaskMatrixTable({ onSeekSegment, onInspectEvidence }) {
   const initialTasks = mockSummaryData?.task || [];
   const [tasks, setTasks] = useState(initialTasks);
 
@@ -38,7 +31,7 @@ export default function TaskMatrixTable({ onSeekSegment }) {
 
   const handleSeek = (timeStr) => {
     if (typeof onSeekSegment === 'function' && timeStr) {
-      onSeekSegment(parseTimeToSeconds(timeStr));
+      onSeekSegment(timeToSeconds(timeStr));
     }
   };
 
@@ -66,7 +59,8 @@ export default function TaskMatrixTable({ onSeekSegment }) {
               <th className="py-3.5 px-4 w-44">Người thực hiện</th>
               <th className="py-3.5 px-4 w-36">Người giám sát</th>
               <th className="py-3.5 px-4 w-36">Hạn chót</th>
-              <th className="py-3.5 px-4 w-36 text-center">Độ ưu tiên</th>
+              <th className="py-3.5 px-4 w-32 text-center">Độ ưu tiên</th>
+              <th className="py-3.5 px-3 w-32 text-center">Minh chứng</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#152037]">
@@ -153,6 +147,20 @@ export default function TaskMatrixTable({ onSeekSegment }) {
                       </option>
                     ))}
                   </select>
+                </td>
+
+                <td className="py-3.5 px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => onInspectEvidence?.(task)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 text-[11px] font-semibold transition cursor-pointer shadow-sm active:scale-95"
+                    title="Xem minh chứng câu thoại gốc trích xuất ra nhiệm vụ này"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+                    </svg>
+                    <span>Minh chứng</span>
+                  </button>
                 </td>
               </tr>
             ))}

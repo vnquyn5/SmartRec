@@ -1,0 +1,112 @@
+{
+  "evidence_by_task_index": {
+    "1": {
+      "taskIndex": 1,
+      "taskContent": "hoan thien dev environtement va cai dat cac cong cu can thiet cho quy trinh phat trien.",
+      "assignee": "dev_team",
+      "responsible": "dev_team_lead",
+      "deadline": "2026-05-10",
+      "timestamp": "13:12",
+      "timestampSeconds": 792,
+      "speakerName": "John Doe",
+      "speakerId": "spk_1",
+      "sourceText": "Dev team cần tập trung hoàn thiện dev environment và cài đặt các công cụ cần thiết cho quy trình phát triển trước ngày 10/05.",
+      "heuristicConfidence": 0.89,
+      "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      "promptVersion": "sys_task_matrix_prompt_v2.0",
+      "jobId": "job-audio-proc-88912",
+      "contextSurrounding": [
+        {
+          "speaker": "Jane Doe",
+          "text": "Chúng ta cần chốt tiến độ thiết lập môi trường để các bạn FE và BE cùng test.",
+          "time": "13:00",
+          "isKeyEvidence": false
+        },
+        {
+          "speaker": "John Doe",
+          "text": "Dev team cần tập trung hoàn thiện dev environment và cài đặt các công cụ cần thiết cho quy trình phát triển trước ngày 10/05.",
+          "time": "13:12",
+          "isKeyEvidence": true
+        },
+        {
+          "speaker": "Michael Johnson",
+          "text": "Tôi đồng ý, việc này là ưu tiên cao nhất của Sprint 4.",
+          "time": "13:25",
+          "isKeyEvidence": false
+        }
+      ]
+    },
+    "2": {
+      "taskIndex": 2,
+      "taskContent": "dong bo du lieu tu he thong cu sang he thong moi va kiem tra tinh chinh xac cua du lieu.",
+      "assignee": "Alex Nguyen",
+      "responsible": "Sarah Lee",
+      "deadline": "2026-02-10",
+      "timestamp": "13:40",
+      "timestampSeconds": 820,
+      "speakerName": "Jane Doe",
+      "speakerId": "spk_2",
+      "sourceText": "Alex Nguyen và Sarah Lee sẽ phụ trách đồng bộ dữ liệu từ hệ thống cũ sang hệ thống mới và kiểm tra tính chính xác của dữ liệu.",
+      "heuristicConfidence": 0.94,
+      "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      "promptVersion": "sys_task_matrix_prompt_v2.0",
+      "jobId": "job-audio-proc-88912",
+      "contextSurrounding": [
+        {
+          "speaker": "Alex Smith",
+          "text": "Dữ liệu khách hàng từ database cũ đã chuẩn bị xong chưa?",
+          "time": "13:30",
+          "isKeyEvidence": false
+        },
+        {
+          "speaker": "Jane Doe",
+          "text": "Alex Nguyen và Sarah Lee sẽ phụ trách đồng bộ dữ liệu từ hệ thống cũ sang hệ thống mới và kiểm tra tính chính xác của dữ liệu.",
+          "time": "13:40",
+          "isKeyEvidence": true
+        },
+        {
+          "speaker": "Alex Smith",
+          "text": "Nhớ backup đầy đủ trước khi thực hiện migration nhé.",
+          "time": "13:52",
+          "isKeyEvidence": false
+        }
+      ]
+    },
+    "3": {
+      "taskIndex": 3,
+      "taskContent": "danh gia lai resource va dieu chinh ke hoach phat trien de dam bao tien do du an.",
+      "assignee": "Michael Johnson",
+      "responsible": "PM Lead",
+      "deadline": "2026-06-15",
+      "timestamp": "14:05",
+      "timestampSeconds": 845,
+      "speakerName": "Michael Johnson",
+      "speakerId": "spk_3",
+      "sourceText": "Chúng ta phải đánh giá lại resource và điều chỉnh kế hoạch phát triển để đảm bảo tiến độ dự án nếu có phát sinh.",
+      "heuristicConfidence": 0.82,
+      "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      "promptVersion": "sys_task_matrix_prompt_v2.0",
+      "jobId": "job-audio-proc-88912",
+      "contextSurrounding": [
+        {
+          "speaker": "John Doe",
+          "text": "Hiện tại nhân sự bên team QA đang hơi mỏng cho đợt release này.",
+          "time": "13:58",
+          "isKeyEvidence": false
+        },
+        {
+          "speaker": "Michael Johnson",
+          "text": "Chúng ta phải đánh giá lại resource và điều chỉnh kế hoạch phát triển để đảm bảo tiến độ dự án nếu có phát sinh.",
+          "time": "14:05",
+          "isKeyEvidence": true
+        },
+        {
+          "speaker": "Jane Doe",
+          "text": "Buổi họp tiếp theo vào thứ Sáu chúng ta sẽ review cụ thể.",
+          "time": "14:18",
+          "isKeyEvidence": false
+        }
+      ]
+    }
+  }
+}
