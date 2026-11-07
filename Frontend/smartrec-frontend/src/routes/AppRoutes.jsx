@@ -16,6 +16,7 @@ import ForgotPasswordPage from "../pages/auth/ForgotPasswordPage";
 import ProfilePage from "../pages/auth/ProfilePage";
 import RealtimeStepperInteractiveTest from "../components/meeting/RealtimeStepperInteractiveTest";
 import ExplainabilityDrawerInteractiveTest from "../components/meeting/ExplainabilityDrawerInteractiveTest";
+import ShareManagementInteractiveTest from "../components/meeting/ShareManagementInteractiveTest";
 
 import { RequireAuth } from "../features/auth/RequireAuth";
 
@@ -31,6 +32,7 @@ const AppRoutes = () => {
       <Route path="/share/:id" element={<GuestMeetingPage />} />
       <Route path="/test/stepper" element={<div className="min-h-screen bg-[#060b17] p-6"><RealtimeStepperInteractiveTest /></div>} />
       <Route path="/test/explainability" element={<div className="min-h-screen bg-[#060b17] p-6"><ExplainabilityDrawerInteractiveTest /></div>} />
+      <Route path="/test/share-modal" element={<div className="min-h-screen bg-[#060b17] p-6"><ShareManagementInteractiveTest /></div>} />
 
       <Route element={<RequireAuth />}>
         <Route element={<DashboardLayout />}>

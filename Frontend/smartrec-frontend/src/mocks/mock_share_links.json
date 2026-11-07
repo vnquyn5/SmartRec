@@ -1,0 +1,46 @@
+{
+  "shares_by_meeting_id": {
+    "default": [
+      {
+        "id": "lnk_active_01",
+        "meetingId": "default",
+        "token": "tok_sec_778192a",
+        "scope": "VIEW_ONLY",
+        "createdAt": "2026-11-01T08:00:00.000Z",
+        "expiresAt": "2026-11-15T08:00:00.000Z",
+        "isRevoked": false,
+        "accessCount": 5,
+        "hasPasscode": true
+      },
+      {
+        "id": "lnk_expired_02",
+        "meetingId": "default",
+        "token": "tok_old_112233b",
+        "scope": "VIEW_ONLY",
+        "createdAt": "2026-10-01T08:00:00.000Z",
+        "expiresAt": "2026-10-15T08:00:00.000Z",
+        "isRevoked": false,
+        "accessCount": 18,
+        "hasPasscode": false
+      },
+      {
+        "id": "lnk_revoked_03",
+        "meetingId": "default",
+        "token": "tok_rev_998877c",
+        "scope": "ALLOW_DOWNLOAD",
+        "createdAt": "2026-10-20T10:00:00.000Z",
+        "expiresAt": "2026-11-20T10:00:00.000Z",
+        "isRevoked": true,
+        "accessCount": 2,
+        "hasPasscode": true
+      }
+    ]
+  },
+  "security_settings_by_meeting_id": {
+    "default": {
+      "isPasscodeProtected": true,
+      "passcodeHint": "6 số",
+      "allowPublicSharing": true
+    }
+  }
+}

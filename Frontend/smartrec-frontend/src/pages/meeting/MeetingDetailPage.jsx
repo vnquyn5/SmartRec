@@ -363,6 +363,7 @@ export default function MeetingDetailPage() {
       {shareOpen && isCurrentMeeting && (
         <ShareMeetingModal
           meeting={meeting}
+          isOwner={meeting?.isOwner !== false}
           onClose={() => setShareOpen(false)}
         />
       )}
