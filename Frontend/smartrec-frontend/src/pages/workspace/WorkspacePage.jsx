@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom";
 import { cancelJob, deleteMeeting, getAllMeetings, getJob, pauseJob, resumeJob, retryJob } from "../../services/meetingService";
 import { PauseIcon, PlayIcon, RefreshIcon } from "../../components/common/icons.jsx";
+import WorkspaceSearchBar from "../../components/workspace/WorkspaceSearchBar";
 import "./WorkspacePage.css";
 
 const POLL_INTERVAL_MS = 2500;
@@ -224,10 +225,13 @@ export default function WorkspacePage() {
         <p className="workspace-description">
           Theo dõi trạng thái xử lý và xem kết quả của các cuộc họp trong không gian của bạn.
         </p>
-        <label className="workspace-search">
-          <span className="sr-only">Tìm cuộc họp</span>
-          <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Tìm theo tên file/cuộc họp" />
-        </label>
+        <div className="w-full max-w-3xl mt-4">
+          <WorkspaceSearchBar
+            meetings={meetings}
+            onSelectMeeting={(id) => navigate(`/meeting/${id}`)}
+            placeholder="Tìm theo tên cuộc họp, file, trạng thái... (Ctrl + K)"
+          />
+        </div>
       </div>
 
       {loading && meetings.length === 0 ? (
