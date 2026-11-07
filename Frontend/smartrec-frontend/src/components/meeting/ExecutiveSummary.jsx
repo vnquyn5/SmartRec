@@ -52,7 +52,7 @@ function resolveTypeConfig(item, index) {
   return TYPE_CONFIG.discussion;
 }
 
-export default function ExecutiveSummary() {
+export default function ExecutiveSummary({ onInspectEvidence }) {
   const summaryList = mockSummaryData?.summary || [];
   const [copied, setCopied] = useState(false);
 
@@ -120,9 +120,29 @@ export default function ExecutiveSummary() {
                   <span>{config.icon}</span>
                   <span className="text-[#38bdf8]">{item.heading}</span>
                 </h4>
-                <span className={`text-[11px] px-2 py-0.5 rounded-md border font-medium shrink-0 ${config.badgeClass}`}>
-                  {config.badge}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-md border font-medium shrink-0 ${config.badgeClass}`}>
+                    {config.badge}
+                  </span>
+                  {onInspectEvidence && (
+                    <button
+                      type="button"
+                      onClick={() => onInspectEvidence({
+                        type: 'summary',
+                        summary_index: index + 1,
+                        heading: item.heading,
+                        content: item.content,
+                      })}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 border border-cyan-500/25 text-[11px] font-semibold transition cursor-pointer shadow-sm active:scale-95"
+                      title="Xem minh chứng trích xuất của mục tóm tắt này"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                      </svg>
+                      <span>Minh chứng</span>
+                    </button>
+                  )}
+                </div>
               </div>
               <p className="text-slate-300 text-xs sm:text-[13px] leading-relaxed pl-6">
                 {item.content}

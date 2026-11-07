@@ -17,31 +17,57 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], current
   const [explainabilityOpen, setExplainabilityOpen] = useState(false);
   const [selectedEvidence, setSelectedEvidence] = useState(null);
 
-  const handleInspectEvidence = (task) => {
+  const handleInspectEvidence = (item) => {
+    if (!item) return;
+
+    // 1. Phân biệt trường hợp mở minh chứng từ AI Summary
+    if (item.type === 'summary' || item.summary_index) {
+      const summaryMapping = mockExplainabilityData?.evidence_by_summary_index || {};
+      const summaryIdx = item.summary_index || 1;
+      const found = summaryMapping[String(summaryIdx)] || {
+        type: 'summary',
+        summaryIndex: summaryIdx,
+        heading: item.heading || 'Tóm tắt',
+        content: item.content || '',
+        timestamp: '00:10',
+        timestampSeconds: 10,
+        speakerName: 'Người phát biểu',
+        sourceText: item.content || '',
+        heuristicConfidence: 0.88,
+        modelVersion: 'SmartRec-LLM-v2.4 (Whisper Large v3)',
+        promptVersion: 'sys_executive_summary_prompt_v2.0',
+      };
+      setSelectedEvidence({ ...found, type: 'summary' });
+      setExplainabilityOpen(true);
+      return;
+    }
+
+    // 2. Phân biệt trường hợp mở minh chứng từ Task Matrix
     const evidenceMapping = mockExplainabilityData?.evidence_by_task_index || {};
-    const taskIndex = task?.task_index || 1;
+    const taskIndex = item?.task_index || item?.taskIndex || 1;
     const found = evidenceMapping[String(taskIndex)] || {
+      type: 'task',
       taskIndex,
-      taskContent: task?.content || "",
-      assignee: task?.assignee || "",
-      deadline: task?.deadline || "",
-      timestamp: task?.timestamp || "00:00",
-      timestampSeconds: timeToSeconds(task?.timestamp),
-      sourceText: task?.content ? `Nội dung thảo luận ghi nhận: "${task.content}"` : "",
-      speakerName: task?.assignee || "Người tham gia",
+      taskContent: item?.content || "",
+      assignee: item?.assignee || "",
+      deadline: item?.deadline || "",
+      timestamp: item?.timestamp || "00:00",
+      timestampSeconds: timeToSeconds(item?.timestamp),
+      sourceText: item?.content ? `Nội dung thảo luận ghi nhận: "${item.content}"` : "",
+      speakerName: item?.assignee || "Người tham gia",
       heuristicConfidence: 0.85,
       modelVersion: "SmartRec-LLM-v2.4 (Whisper Large v3)",
       promptVersion: "sys_task_matrix_prompt_v2.0",
       contextSurrounding: [
         {
-          speaker: task?.assignee || "Người tham gia",
-          text: task?.content || "",
-          time: task?.timestamp || "00:00",
+          speaker: item?.assignee || "Người tham gia",
+          text: item?.content || "",
+          time: item?.timestamp || "00:00",
           isKeyEvidence: true,
         },
       ],
     };
-    setSelectedEvidence(found);
+    setSelectedEvidence({ ...found, type: 'task' });
     setExplainabilityOpen(true);
   };
 
@@ -149,7 +175,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], current
 
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
-        {activeTab === 'summary' && <ExecutiveSummary />}
+        {activeTab === 'summary' && <ExecutiveSummary onInspectEvidence={handleInspectEvidence} />}
         {activeTab === 'task' && (
           <TaskMatrixTable
             onSeekSegment={onSeekSegment}
@@ -231,8 +257,10 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], current
       <ExplainabilityDrawer
         isOpen={explainabilityOpen}
         evidence={selectedEvidence}
+        fileType={fileType}
         onClose={() => setExplainabilityOpen(false)}
         onSeekMedia={onSeekSegment}
+        onSeekSlide={onSeekSegment}
       />
     </div>
   );

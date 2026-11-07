@@ -12,9 +12,18 @@
       "speakerId": "spk_1",
       "sourceText": "Dev team cần tập trung hoàn thiện dev environment và cài đặt các công cụ cần thiết cho quy trình phát triển trước ngày 10/05.",
       "heuristicConfidence": 0.89,
+      "methodology": "SEMANTIC_SIMILARITY",
       "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
       "promptVersion": "sys_task_matrix_prompt_v2.0",
       "jobId": "job-audio-proc-88912",
+      "slideReference": {
+        "slideId": "slide-01",
+        "slideTitle": "Q4 Product Roadmap",
+        "timestamp": "05:12",
+        "timestampSeconds": 312,
+        "ocrRawText": "Backend Refactor: Sprint 3-4 | New API: Sprint 5 | Launch: Dec 15",
+        "tags": ["MILESTONE 3", "TARGET Dec 15"]
+      },
       "contextSurrounding": [
         {
           "speaker": "Jane Doe",
@@ -48,9 +57,18 @@
       "speakerId": "spk_2",
       "sourceText": "Alex Nguyen và Sarah Lee sẽ phụ trách đồng bộ dữ liệu từ hệ thống cũ sang hệ thống mới và kiểm tra tính chính xác của dữ liệu.",
       "heuristicConfidence": 0.94,
+      "methodology": "SEMANTIC_SIMILARITY",
       "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
       "promptVersion": "sys_task_matrix_prompt_v2.0",
       "jobId": "job-audio-proc-88912",
+      "slideReference": {
+        "slideId": "slide-02",
+        "slideTitle": "Q4 Revenue Breakdown",
+        "timestamp": "08:47",
+        "timestampSeconds": 527,
+        "ocrRawText": "Total_Revenue: $2.4M | YoY Growth: +18% | Churn: 3.1%",
+        "tags": ["REVENUE $2.4M", "YOY +18%", "CHURN 3.1%"]
+      },
       "contextSurrounding": [
         {
           "speaker": "Alex Smith",
@@ -84,6 +102,7 @@
       "speakerId": "spk_3",
       "sourceText": "Chúng ta phải đánh giá lại resource và điều chỉnh kế hoạch phát triển để đảm bảo tiến độ dự án nếu có phát sinh.",
       "heuristicConfidence": 0.82,
+      "methodology": "SEMANTIC_SIMILARITY",
       "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
       "promptVersion": "sys_task_matrix_prompt_v2.0",
       "jobId": "job-audio-proc-88912",
@@ -105,6 +124,99 @@
           "text": "Buổi họp tiếp theo vào thứ Sáu chúng ta sẽ review cụ thể.",
           "time": "14:18",
           "isKeyEvidence": false
+        }
+      ]
+    }
+  },
+  "evidence_by_summary_index": {
+    "1": {
+      "summaryIndex": 1,
+      "heading": "1. muc tieu va dinh huong quy 4",
+      "content": "Trong quy 4, muc tieu cua chung ta la tang truong doanh thu 20% so voi quy truoc, giam ty le chuyen doi khach hang moi xuong duoi 5%, va hoan thanh cac muc tieu phat trien san pham theo lich trinh.",
+      "timestamp": "00:12",
+      "timestampSeconds": 12,
+      "speakerName": "John Doe",
+      "speakerId": "spk_1",
+      "sourceText": "Mục tiêu trọng tâm của Q4 là tăng trưởng doanh thu 20%, giảm churn rate và giao sản phẩm đúng cam kết.",
+      "heuristicConfidence": 0.91,
+      "methodology": "SEMANTIC_SIMILARITY",
+      "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      "promptVersion": "sys_executive_summary_prompt_v2.0",
+      "jobId": "job-audio-proc-88912",
+      "slideReference": {
+        "slideId": "slide-01",
+        "slideTitle": "Q4 Product Roadmap",
+        "timestamp": "05:12",
+        "timestampSeconds": 312,
+        "ocrRawText": "Backend Refactor: Sprint 3-4 | New API: Sprint 5 | Launch: Dec 15",
+        "tags": ["MILESTONE 3", "TARGET Dec 15"]
+      },
+      "contextSurrounding": [
+        {
+          "speaker": "John Doe",
+          "text": "Xin chào mọi người, hôm nay chúng ta sẽ thống nhất định hướng Q4.",
+          "time": "00:02",
+          "isKeyEvidence": false
+        },
+        {
+          "speaker": "John Doe",
+          "text": "Mục tiêu trọng tâm của Q4 là tăng trưởng doanh thu 20%, giảm churn rate và giao sản phẩm đúng cam kết.",
+          "time": "00:12",
+          "isKeyEvidence": true
+        }
+      ]
+    },
+    "2": {
+      "summaryIndex": 2,
+      "heading": "2. cac san pham va tinh nang chinh",
+      "content": "chung ta se ra mat cac tinh nang moi nhu tu dong hoa quy trinh, bao cao thoi gian thuc, va tu dong hoa bao cao. nhung tinh nang nay se giup khach hang tiet kiem thoi gian va nang cao hieu suat.",
+      "timestamp": "01:10",
+      "timestampSeconds": 70,
+      "speakerName": "Jane Doe",
+      "speakerId": "spk_2",
+      "sourceText": "Chúng ta sẽ phát triển tính năng tự động hóa quy trình, báo cáo thời gian thực giúp khách hàng tối ưu hiệu suất.",
+      "heuristicConfidence": 0.88,
+      "methodology": "SEMANTIC_SIMILARITY",
+      "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      "promptVersion": "sys_executive_summary_prompt_v2.0",
+      "jobId": "job-audio-proc-88912",
+      "slideReference": {
+        "slideId": "slide-03",
+        "slideTitle": "Project Timeline Overview",
+        "timestamp": "12:30",
+        "timestampSeconds": 750,
+        "ocrRawText": "Kickoff: Nov 1 | Beta: Jan 15 | GA Release: Feb 28",
+        "tags": ["DURATION 16 wks", "GA DATE Feb 28"]
+      },
+      "contextSurrounding": [
+        {
+          "speaker": "Jane Doe",
+          "text": "Chúng ta sẽ phát triển tính năng tự động hóa quy trình, báo cáo thời gian thực giúp khách hàng tối ưu hiệu suất.",
+          "time": "01:10",
+          "isKeyEvidence": true
+        }
+      ]
+    },
+    "3": {
+      "summaryIndex": 3,
+      "heading": "3. loi ich cho khach hang",
+      "content": "dam bao rang khach hang se co trai nghiem tot hon voi san pham cua chung ta, giup ho giam thoi gian va nang cao hieu suat trong cong viec hang ngay.",
+      "timestamp": "01:20",
+      "timestampSeconds": 80,
+      "speakerName": "Jane Doe",
+      "speakerId": "spk_2",
+      "sourceText": "Cam kết mang đến trải nghiệm liền mạch, tiết kiệm thời gian vận hành cho toàn bộ khách hàng doanh nghiệp.",
+      "heuristicConfidence": 0.86,
+      "methodology": "SEMANTIC_SIMILARITY",
+      "modelVersion": "SmartRec-LLM-v2.4 (Whisper Large v3)",
+      "promptVersion": "sys_executive_summary_prompt_v2.0",
+      "jobId": "job-audio-proc-88912",
+      "contextSurrounding": [
+        {
+          "speaker": "Jane Doe",
+          "text": "Cam kết mang đến trải nghiệm liền mạch, tiết kiệm thời gian vận hành cho toàn bộ khách hàng doanh nghiệp.",
+          "time": "01:20",
+          "isKeyEvidence": true
         }
       ]
     }
