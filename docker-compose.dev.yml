@@ -1,0 +1,4 @@
+services:
+  ai-engine:
+    volumes:
+      - ./ai-engine/app:/app/app:ro

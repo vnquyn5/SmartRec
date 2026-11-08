@@ -9,6 +9,8 @@ spring:
   profiles:
     active: dev
 
+  config:
+    import: optional:file:./config/application-local-secrets.properties
   # 1. CSDL PostgreSQL
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/smartrec_db}
