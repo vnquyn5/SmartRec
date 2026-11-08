@@ -14,6 +14,7 @@ class SpeakerSegment(BaseModel):
     segment_id: int = Field(..., description="Chỉ số thứ tự phân đoạn tăng dần")
     speaker: str = Field(..., description="Nhãn người nói thân thiện (ví dụ: Speaker 1, Speaker 2)")
     raw_speaker_id: Optional[str] = Field(None, description="Mã speaker gốc từ pipeline (SPEAKER_00)")
+    source_chunk_index: Optional[int] = Field(None, description="Chunk source when preserving raw long-audio evidence")
     start_seconds: float = Field(..., description="Thời điểm bắt đầu (giây)")
     end_seconds: float = Field(..., description="Thời điểm kết thúc (giây)")
     duration_seconds: float = Field(..., description="Thời lượng phân đoạn (giây)")
@@ -29,8 +30,27 @@ class SpeechActivityInterval(BaseModel):
     duration_seconds: float
 
 
+class SpeakerTurnSmoothingDiagnostic(BaseModel):
+    """Auditable candidate record; diagnostics-only currently never changes identity."""
+
+    pattern: str
+    previous_speaker: Optional[str] = None
+    candidate_speaker: str
+    next_speaker: Optional[str] = None
+    start_seconds: float
+    end_seconds: float
+    duration_ms: float
+    silent_gap_before_ms: Optional[float] = None
+    silent_gap_after_ms: Optional[float] = None
+    raw_overlap_speakers: List[str] = Field(default_factory=list)
+    rapid_change_count: int = 0
+    source_chunk_index: Optional[int] = None
+    resolution_status: str = "PRESERVED"
+    reason_code: str = "INSUFFICIENT_ACOUSTIC_EVIDENCE"
+
+
 class SpeakerSegmentationResponse(BaseModel):
-    """Kết quả phân đoạn giọng nói và VAD từ Task 2.10.2."""
+    """Kết quả phân đoạn giọng nói và VAD từ pipeline, chuẩn hóa để bàn giao cho các module downstream."""
     job_id: Optional[str] = None
     status: str = Field(..., description="SUCCESS | NO_SPEECH_DETECTED | FAILED")
     audio_duration_seconds: float = Field(..., description="Tổng thời lượng audio đầu vào")
@@ -39,6 +59,19 @@ class SpeakerSegmentationResponse(BaseModel):
     total_segments: int = Field(..., description="Tổng số phân đoạn phát biểu")
     unique_speakers: List[str] = Field(default_factory=list, description="Danh sách người nói phát hiện được")
     segments: List[SpeakerSegment] = Field(default_factory=list, description="Danh sách chi tiết các phân đoạn")
+    raw_segments: List[SpeakerSegment] = Field(
+        default_factory=list,
+        description="Raw Pyannote evidence segments, preserved separately from the selected timeline",
+    )
+    timeline_mode: str = Field("raw", description="Selected presentation/alignment timeline mode")
+    timeline_source: str = Field(
+        "raw", description="raw | raw_postprocessed | native | native_exclusive_diagnostics_only | unavailable"
+    )
+    native_exclusive_segments: List[SpeakerSegment] = Field(default_factory=list)
+    smoothed_segments: List[SpeakerSegment] = Field(default_factory=list)
+    smoothing_enabled: bool = False
+    smoothing_max_fragment_ms: Optional[int] = None
+    smoothing_diagnostics: List[SpeakerTurnSmoothingDiagnostic] = Field(default_factory=list)
     vad_intervals: List[SpeechActivityInterval] = Field(
         default_factory=list,
         description="Toàn bộ các khoảng Voice Activity Detection đã hợp nhất"
@@ -91,6 +124,19 @@ class DiarizationExportPayload(BaseModel):
         default_factory=list,
         description="Danh sách tuần tự toàn bộ các segments theo timestamp"
     )
+    raw_timeline: List[SpeakerSegment] = Field(
+        default_factory=list,
+        description="Unmodified raw diarization evidence using the same speaker mapping",
+    )
+    timeline_mode: str = Field("raw", description="raw | exclusive")
+    timeline_source: str = Field(
+        "raw", description="raw | raw_postprocessed | native | native_exclusive_diagnostics_only | unavailable"
+    )
+    native_exclusive_timeline: List[SpeakerSegment] = Field(default_factory=list)
+    smoothed_timeline: List[SpeakerSegment] = Field(default_factory=list)
+    smoothing_enabled: bool = False
+    smoothing_max_fragment_ms: Optional[int] = None
+    smoothing_diagnostics: List[SpeakerTurnSmoothingDiagnostic] = Field(default_factory=list)
     embeddings_status: Optional[str] = Field(
         "NOT_AVAILABLE",
         description="Trạng thái trích xuất embeddings: COMPLETED | PARTIAL | FAILED | NOT_AVAILABLE"

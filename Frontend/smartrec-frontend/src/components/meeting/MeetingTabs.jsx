@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import SlideOcrTab from './SlideOcrTab';
 import MeetingTasksTab from './MeetingTasksTab';
 import MeetingSummaryTab from './MeetingSummaryTab';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
-import TranscriptPanel from './TranscriptPanel';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({ speakers = [], mediaRef, onSaveSpeakers, onSeekSegment, onEvidenceClick, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, results, resultsLoading, resultsError, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
   const [activeTab, setActiveTab] = useState('speaker');
 
   // Khai báo các tab theo yêu cầu 
@@ -25,7 +23,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     {
       id: 'task',
       label: 'Task',
-      count: 3,
+      count: results?.actionItems?.length,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4" />
@@ -43,46 +41,20 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
         </svg>
       ),
     },
-    {
-      id: 'transcript',
-      label: 'Transcript',
-      icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-      ),
-    },
   ];
 
-  // Logic bắt buộc của Leader: Nếu là video thì có tab Slide OCR, nếu audio thì không có
-  if (fileType === 'video') {
-    tabs.push({
-      id: 'slide',
-      label: 'Slide Keyframes & OCR',
-      count: 6,
-      icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="8" y1="6" x2="21" y2="6" />
-          <line x1="8" y1="12" x2="21" y2="12" />
-          <line x1="8" y1="18" x2="21" y2="18" />
-          <line x1="3" y1="6" x2="3.01" y2="6" />
-          <line x1="3" y1="12" x2="3.01" y2="12" />
-          <line x1="3" y1="18" x2="3.01" y2="18" />
-        </svg>
-      ),
-    });
-  }
-
   return (
-    <div className="w-full h-full flex flex-col bg-[#090f1d] border border-[#1b2640] rounded-2xl overflow-hidden shadow-xl">
+    <div className="w-full h-full min-h-0 flex flex-col bg-[#090f1d] border border-[#1b2640] rounded-2xl overflow-hidden shadow-xl">
       {/* Tab Navigation Header chuẩn Figma */}
-      <div className="flex items-center gap-6 px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122] overflow-x-auto">
+      <div role="tablist" aria-label="Meeting detail sections" className="flex items-center gap-6 px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122] overflow-x-auto overflow-y-hidden">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
               className={`py-3.5 flex items-center gap-2 text-xs font-semibold border-b-2 transition-all relative top-[1px] whitespace-nowrap shrink-0 ${
                 isActive
@@ -109,12 +81,26 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
       </div>
 
       {/* Tab Content Display Area */}
-      <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
-        {activeTab === 'summary' && <MeetingSummaryTab />}
-        {activeTab === 'task' && <MeetingTasksTab />}
-        {activeTab === 'transcript' && <TranscriptPanel onSeek={onSeek} />}
+      <div className={`flex-1 min-h-0 min-w-0 p-5 bg-[#090f1d] ${activeTab === 'speaker' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        {activeTab === 'summary' && <MeetingSummaryTab
+          summary={results?.summary}
+          transcripts={results?.transcripts || []}
+          onEvidenceClick={onEvidenceClick}
+          aiStatus={aiStatus}
+          loading={resultsLoading}
+          error={resultsError}
+        />}
+        {activeTab === 'task' && <MeetingTasksTab
+          tasks={results?.actionItems || []}
+          transcripts={results?.transcripts || []}
+          onEvidenceClick={onEvidenceClick}
+          hasSummary={Boolean(results?.summary)}
+          aiStatus={aiStatus}
+          loading={resultsLoading}
+          error={resultsError}
+        />}
         {activeTab === 'speaker' && (
-          <div className="h-full flex flex-col gap-4">
+          <div className="h-full min-h-0 flex flex-col gap-4 overflow-hidden">
             {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex-1">
@@ -154,18 +140,17 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
               </div>
             ) : (
               <>
-                <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-4 py-3">
+                <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-4 py-3 shrink-0">
                   <h2 className="text-sm font-semibold text-white">Người nói</h2>
                   <p className="mt-1 text-xs text-slate-400">
                     {speakers.length} người nói · {speakers.reduce((total, speaker) => total + speaker.segments.length, 0)} đoạn phát ngôn
                   </p>
                 </div>
-                <SpeakerManagementPanel key={speakers.map((speaker) => speaker.id).join('|')} initialSpeakers={speakers} onSave={onSaveSpeakers} onSeekSegment={onSeekSegment} />
+                <SpeakerManagementPanel key={speakers.map((speaker) => speaker.id).join('|')} initialSpeakers={speakers} mediaRef={mediaRef} onSave={onSaveSpeakers} onSeekSegment={onSeekSegment} />
               </>
             )}
           </div>
         )}
-        {activeTab === 'slide' && <SlideOcrTab />}
       </div>
     </div>
   );

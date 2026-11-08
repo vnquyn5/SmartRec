@@ -15,3 +15,7 @@ class NoSpeechDetectedError(NonRetryableProcessingError):
 class RetryableProcessingError(Exception):
     """Transient infrastructure or external-service failure; Celery may retry."""
 
+    def __init__(self, message: str, error_code: str | None = None):
+        super().__init__(message)
+        self.error_code = error_code
+

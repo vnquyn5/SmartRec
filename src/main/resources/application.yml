@@ -53,6 +53,7 @@ minio:
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket-name: ${MINIO_BUCKET:smartrec-media}
+  slide-bucket-name: ${MINIO_SLIDE_BUCKET:smartrec-slides}
   playback-url-expiry-seconds: ${MINIO_PLAYBACK_URL_EXPIRY_SECONDS:900}
 
 app:
@@ -77,9 +78,43 @@ job:
   watchdog-scan-interval-ms: ${JOB_WATCHDOG_SCAN_INTERVAL_MS:30000}
 
 smartrec:
+  llm:
+    enabled: ${SMARTREC_LLM_ENABLED:true}
   ai-engine:
     base-url: ${AI_ENGINE_BASE_URL:http://localhost:8000}
+    prepare-path: ${AI_ENGINE_PREPARE_PATH:/api/v1/internal/llm/prepare}
+    generate-path: ${AI_ENGINE_GENERATE_PATH:/api/v1/internal/llm/generate}
+    validate-path: ${AI_ENGINE_VALIDATE_PATH:/api/v1/internal/llm/validate}
+    internal-token: ${smartrec.internal-token}
+    connect-timeout: ${AI_ENGINE_CONNECT_TIMEOUT:5000}
+    read-timeout: ${AI_ENGINE_READ_TIMEOUT:210000}
+  ai-router:
+    local-max-attempts: ${AI_LOCAL_MAX_ATTEMPTS:2}
+    local-retry-backoff-ms: ${AI_LOCAL_RETRY_BACKOFF_MS:100}
+    local-circuit-failure-threshold: ${AI_LOCAL_CIRCUIT_FAILURE_THRESHOLD:3}
+    local-circuit-open-ms: ${AI_LOCAL_CIRCUIT_OPEN_MS:30000}
+    gemini-fallback-enabled: ${GEMINI_FALLBACK_ENABLED:false}
+    gemini-data-sharing-approved: ${GEMINI_DATA_SHARING_APPROVED:false}
+    gemini-redaction-policy-version: ${GEMINI_REDACTION_POLICY_VERSION:}
+    gemini-api-key: ${GEMINI_API_KEY:}
+    gemini-model: ${GEMINI_MODEL:}
+    gemini-timeout-ms: ${GEMINI_TIMEOUT_MS:30000}
+    gemini-max-attempts: ${GEMINI_MAX_ATTEMPTS:1}
+    gemini-max-requests-per-job: ${GEMINI_MAX_REQUESTS_PER_JOB:0}
+    gemini-max-cost-per-job-usd: ${GEMINI_MAX_COST_PER_JOB_USD:0}
+    gemini-max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:2048}
   internal-token: ${SMARTREC_INTERNAL_TOKEN:}
+
+  stt:
+    request-path: ${STT_REQUEST_PATH:/api/v1/stt}
+    default-model: ${STT_DEFAULT_MODEL:default-stt}
+    default-language: ${STT_DEFAULT_LANGUAGE:vi}
+
+  ai-stt:
+    base-url: ${AI_WORKER_BASE_URL:http://localhost:8000}
+    transcribe-path: ${AI_WORKER_TRANSCRIBE_PATH:/ai/stt/transcribe}
+    model-name: ${AI_STT_MODEL_NAME:faster-whisper-large-v3}
+    model-version: "1.0.0"
 
 google:
   client-id: 341602707586-r5nt4c35p4jvgf1gii86b7459vfgkln0.apps.googleusercontent.com

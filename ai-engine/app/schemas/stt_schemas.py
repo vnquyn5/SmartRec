@@ -3,7 +3,7 @@
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 class TranscriptSegment(BaseModel):
@@ -12,9 +12,23 @@ class TranscriptSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     speakerId: Optional[UUID] = None
+    speakerLabel: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    attributionStatus: str = Field(default="ATTRIBUTED", min_length=1, max_length=40)
     startTimeMs: int = Field(..., ge=0)
     endTimeMs: int = Field(..., ge=0)
     text: str = Field(..., min_length=1)
+
+    @model_serializer(mode="wrap")
+    def serialize_segment(self, handler):
+        """Preserve legacy JSON when speakerLabel is absent."""
+        data = handler(self)
+
+        if data.get("speakerLabel") is None:
+            data.pop("speakerLabel", None)
+        if data.get("attributionStatus") == "ATTRIBUTED":
+            data.pop("attributionStatus", None)
+
+        return data
 
     @model_validator(mode="after")
     def validate_timestamps(self):

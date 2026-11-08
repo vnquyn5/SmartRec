@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { mapSpeakerTimeline, subscribeSpeakerTimelineMedia } from './transcriptData';
 
 function CheckCircleIcon({ className = "w-4 h-4", ...props }) {
   return (
@@ -94,9 +95,13 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
   return (
     <div className={`relative w-full ${isOpen ? 'z-50' : 'z-10'}`} ref={dropdownRef}>
       {/* Dropdown Trigger Box */}
-      <div
+      <button
+        type="button"
         onClick={onToggle}
-        className={`w-full h-9 px-3 bg-[#0c101d] border rounded-lg flex items-center justify-between cursor-pointer select-none transition-all ${
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-label={`Choose display name for ${originalLabel}`}
+        className={`w-full h-9 px-3 bg-[#0c101d] border rounded-lg flex items-center justify-between cursor-pointer select-none transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38bdf8] ${
           isOpen
             ? 'border-[#5452f6] ring-1 ring-[#5452f6]'
             : error
@@ -122,7 +127,7 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
             isOpen ? 'rotate-180 text-[#5452f6]' : ''
           }`}
         />
-      </div>
+      </button>
 
       {error && (
         <p className="text-[11px] text-rose-400 mt-1">{error}</p>
@@ -149,17 +154,20 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
             ĐÃ DÙNG TRONG KHÔNG GIAN LÀM VIỆC
           </div>
 
-          <div className="space-y-0.5 mt-1 max-h-48 overflow-y-auto">
+          <div role="listbox" aria-label="Workspace members" className="space-y-0.5 mt-1 max-h-48 overflow-y-auto">
             {WORKSPACE_MEMBERS.map((member, mIdx) => {
               const isSelected = value?.trim().toLowerCase() === member.name.toLowerCase();
               return (
-                <div
+                <button
                   key={mIdx}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
                   onClick={() => {
                     onChange(member.name);
                     onClose();
                   }}
-                  className={`flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-[#161f38] cursor-pointer transition-colors ${isSelected ? 'bg-[#151c34]' : ''
+                  className={`w-full text-left flex items-center justify-between px-2.5 py-2 rounded-lg hover:bg-[#161f38] cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38bdf8] ${isSelected ? 'bg-[#151c34]' : ''
                     }`}
                 >
                   <div className="flex items-center gap-2.5">
@@ -174,22 +182,23 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
                   {isSelected && (
                     <CheckIcon className="w-3.5 h-3.5 text-[#818cf8]" />
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
 
           {/* Reset Option */}
           <div className="mt-1 pt-1.5 border-t border-[#1b2542]">
-            <div
+            <button
+              type="button"
               onClick={() => {
                 onChange(originalLabel);
                 onClose();
               }}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#161f38] cursor-pointer text-[11px] text-slate-400 hover:text-white transition-colors"
+              className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[#161f38] cursor-pointer text-[11px] text-slate-400 hover:text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
             >
               <span>Đặt lại về mặc định ({originalLabel})</span>
-            </div>
+            </button>
           </div>
         </div>
       )}
@@ -200,7 +209,8 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
 export default function SpeakerManagementPanel({
   initialSpeakers = [],
   onSave,
-  onSeekSegment
+  onSeekSegment,
+  mediaRef,
 }) {
   const [names, setNames] = useState({});
   const [errors, setErrors] = useState({});
@@ -210,6 +220,15 @@ export default function SpeakerManagementPanel({
   const [activeDropdownId, setActiveDropdownId] = useState(null);
   const [expandedSpeakers, setExpandedSpeakers] = useState({});
   const [activeSegmentKey, setActiveSegmentKey] = useState(null);
+  const speakerTimeline = useMemo(() => mapSpeakerTimeline(initialSpeakers), [initialSpeakers]);
+
+  useEffect(() => {
+    if (!mediaRef?.current) {
+      setActiveSegmentKey(null);
+      return undefined;
+    }
+    return subscribeSpeakerTimelineMedia(mediaRef.current, speakerTimeline, setActiveSegmentKey);
+  }, [mediaRef, speakerTimeline]);
 
   useEffect(() => {
     const map = {};
@@ -278,6 +297,7 @@ export default function SpeakerManagementPanel({
       const payload = initialSpeakers.map(s => ({
         ...s,
         id: s.id,
+        nameAtLoad: s.name || s.originalLabel || '',
         name: (names[s.id] || '').trim()
       }));
 
@@ -296,9 +316,9 @@ export default function SpeakerManagementPanel({
   const isEditing = status === 'editing' && hasChanges();
 
   return (
-    <div className="w-full bg-[#0c101d] border border-[#1e2742] rounded-2xl shadow-xl font-sans relative">
+    <div className="w-full min-h-0 flex-1 bg-[#0c101d] border border-[#1e2742] rounded-2xl shadow-xl font-sans relative flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="p-5 border-b border-[#1b2542] flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0f1426]/50">
+      <div className="p-4 border-b border-[#1b2542] flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0f1426]/50 shrink-0">
         <div>
           <h2 className="text-base font-bold text-white tracking-tight">
             Speaker Management
@@ -313,37 +333,38 @@ export default function SpeakerManagementPanel({
         </span>
       </div>
 
-      <div className="p-5 space-y-5">
+      <div className="p-4 min-h-0 flex-1 flex flex-col gap-3 overflow-hidden">
         {/* Status Alerts */}
         {isEditing && (
-          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs">
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs">
             <AlertCircleIcon className="w-4 h-4 shrink-0" />
             <span>You have unsaved changes.</span>
           </div>
         )}
 
         {status === 'success' && (
-          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
             <CheckCircleIcon className="w-4 h-4 shrink-0" />
             <span>✓ Speaker names updated successfully.</span>
           </div>
         )}
 
         {status === 'error' && (
-          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
             <AlertCircleIcon className="w-4 h-4 shrink-0" />
             <span>✕ {errorMessage}</span>
           </div>
         )}
 
         {/* Speaker Rename List Items */}
-        <div className="space-y-4">
+        <div role="region" aria-label="Speaker cards" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-64 focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-[#38bdf8]">
+          <div className="space-y-4">
           {initialSpeakers.length === 0 && (
             <p className="text-sm text-slate-400 py-5 text-center">Chưa có Speaker hoặc đoạn phát ngôn.</p>
           )}
           {initialSpeakers.map((speaker, index) => {
             const dotColor = DOT_COLORS[index % DOT_COLORS.length];
-            const originalLabel = speaker.originalLabel || `Speaker ${index + 1}`;
+            const originalLabel = speaker.defaultName || `Speaker ${index + 1}`;
             const initials = originalLabel.replace(/[^0-9a-zA-Z]/g, '').slice(0, 2).toUpperCase() || `S${index + 1}`;
             const value = names[speaker.id] !== undefined ? names[speaker.id] : (speaker.name || '');
             const error = errors[speaker.id];
@@ -436,10 +457,11 @@ export default function SpeakerManagementPanel({
               </div>
             );
           })}
+          </div>
         </div>
 
         {/* Global Checkbox */}
-        <div className="pt-3 border-t border-[#1a233b]">
+        <div className="shrink-0 pt-3 border-t border-[#1a233b]">
           <label className="flex items-start gap-2.5 cursor-pointer">
             <input
               type="checkbox"
@@ -459,7 +481,7 @@ export default function SpeakerManagementPanel({
         </div>
 
         {/* Footer Actions */}
-        <div className="pt-4 border-t border-[#1a233b] flex items-center justify-end gap-3">
+        <div className="shrink-0 pt-3 border-t border-[#1a233b] flex items-center justify-end gap-3">
           {(isEditing || isSaving || status === 'error') && (
             <button
               type="button"

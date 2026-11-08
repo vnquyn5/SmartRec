@@ -20,7 +20,7 @@ from app.services.audio_extractor import AudioExtractorService, InvalidMediaErro
 from app.schemas.audio_schemas import AudioPipelineRequest
 from app.schemas.diarization_schemas import DiarizationExportPayload
 from app.tracking import ResourceTracker
-from app.services.callback_client import CallbackClient
+from app.services.callback_client import AIInferenceRequestError, CallbackClient
 from app.core.path_security import get_workspace_root, validate_safe_read_path, validate_safe_write_path
 from app.core.path_security import SUPPORTED_MEDIA_INPUT_EXTENSIONS
 from app.workers.processing_errors import (
@@ -65,6 +65,19 @@ def _get_audio_chunker():
         from app.services.audio_chunker import AudioChunker
         audio_chunker = AudioChunker()
     return audio_chunker
+
+
+def _release_diarization_model(job_id: str) -> None:
+    """Free Pyannote before STT/OCR and again during every job cleanup."""
+    if speaker_labeling_service is None or not callable(
+        getattr(speaker_labeling_service, "release_model", None)
+    ):
+        return
+    try:
+        speaker_labeling_service.release_model()
+        logger.info("[%s] Released Pyannote model/device memory", job_id)
+    except Exception:
+        logger.exception("[%s] Failed to release Pyannote model/device memory", job_id)
 
 
 class _PauseAtBoundary(Exception):
@@ -150,25 +163,50 @@ def fetch_job_details(job_id: str) -> dict:
 
 
 def send_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
-    execution_id=None) -> bool:
+    execution_id=None, ai_result: Optional[Dict[str, Any]] = None) -> bool:
     """Gửi payload chuẩn hóa về endpoint POST /jobs/{jobId}/callback của Backend."""
     url = f"{BACKEND_BASE_URL}/jobs/{job_id}/callback"
+    enrichment_marker = error_code if (
+        stage == "OUTPUT"
+        and status == "SUCCESS"
+        and error_code in {"AI_ENRICHMENT_FAILED", "AI_ENRICHMENT_DISABLED"}
+    ) else None
     payload = {
         "stage": stage,
         "status": status,
-        "errorCode": (error_code or "RETRYABLE_PROCESSING_ERROR") if status == "FAILED" else None,
+        "errorCode": (error_code or "RETRYABLE_PROCESSING_ERROR") if status == "FAILED" else enrichment_marker,
         "errorMessage": error_msg,
         "segments": segments
     }
+    if ai_result is not None:
+        payload["aiResult"] = ai_result
     return callback_client.send_callback(url, payload, job_id=job_id, internal_token=INTERNAL_TOKEN,
         execution_id=execution_id)
 
 
 def require_stage_callback(job_id: str, stage: str, status: str, segments=None, error_msg=None, error_code=None,
-    execution_id=None):
+    execution_id=None, ai_result: Optional[Dict[str, Any]] = None):
     if not send_stage_callback(job_id, stage, status, segments=segments, error_msg=error_msg, error_code=error_code,
-        execution_id=execution_id):
+        execution_id=execution_id, ai_result=ai_result):
         raise RetryableProcessingError(f"Backend callback failed for {job_id} {stage} {status}")
+
+
+def _validate_ai_result_response(ai_result: Dict[str, Any], job_id: str, meeting_id: str) -> None:
+    from uuid import UUID
+
+    try:
+        if (
+            str(UUID(str(ai_result.get("jobId")))) != str(UUID(str(job_id)))
+            or str(UUID(str(ai_result.get("meetingId")))) != str(UUID(str(meeting_id)))
+            or str(ai_result.get("status", "")).upper() != "SUCCESS"
+            or not isinstance(ai_result.get("result"), dict)
+        ):
+            raise ValueError("AI result identity or payload is invalid")
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise NonRetryableProcessingError(
+            "VALIDATION_ERROR",
+            "AI Router did not return a valid result for this Job and Meeting",
+        ) from exc
 
 
 def parse_timestamp_to_seconds(val) -> float:
@@ -198,6 +236,43 @@ def _format_timestamp(seconds: float) -> str:
     secs = (ms_total % 60000) // 1000
     ms = ms_total % 1000
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+
+
+def _format_evidence_timeline(segments, speaker_order, audio_duration):
+    formatted = []
+    ordered = sorted(segments, key=lambda item: (item["start"], item["end"], item["global_id"]))
+    for index, segment in enumerate(ordered, start=1):
+        start = round(segment["start"], 3)
+        end = min(round(segment["end"], 3), audio_duration) if audio_duration > 0 else round(segment["end"], 3)
+        if end <= start:
+            continue
+        speaker_index = speaker_order.index(segment["global_id"]) + 1
+        formatted.append({
+            "segment_id": index,
+            "speaker": f"Speaker {speaker_index}",
+            "raw_speaker_id": segment["raw_speaker_id"],
+            "source_chunk_index": segment["source_chunk_index"],
+            "start_seconds": start,
+            "end_seconds": end,
+            "duration_seconds": round(end - start, 3),
+            "start_time": _format_timestamp(start),
+            "end_time": _format_timestamp(end),
+        })
+    return formatted
+
+
+def _selected_smoothing_config():
+    enabled = settings.pyannote_timeline_mode == "exclusive" and settings.pyannote_turn_smoothing_enabled
+    return enabled, settings.pyannote_turn_smoothing_max_fragment_ms if enabled else None
+
+
+def _diarization_artifact_matches_settings(payload):
+    smoothing_enabled, threshold = _selected_smoothing_config()
+    return (
+        payload.timeline_mode == settings.pyannote_timeline_mode
+        and payload.smoothing_enabled == smoothing_enabled
+        and payload.smoothing_max_fragment_ms == threshold
+    )
 
 
 def _atomic_write_json(file_path: str, data_json: str) -> None:
@@ -255,6 +330,10 @@ def _process_chunked_diarization(
         logger.warning(f"[{job_id}] Không thể đọc duration từ clean_wav: {ex}")
         total_audio_duration = float(chunks_manifest.get("duration", 0.0))
     all_raw_segments = []
+    all_raw_evidence_segments = []
+    all_native_exclusive_evidence_segments = []
+    all_smoothed_evidence_segments = []
+    all_smoothing_diagnostics = []
     global_speakers: Dict[str, Dict[str, Any]] = {}
     SIMILARITY_THRESHOLD = 0.70
     def _cosine_sim(v1: np.ndarray, v2: np.ndarray) -> float:
@@ -275,12 +354,22 @@ def _process_chunked_diarization(
         if os.path.exists(chunk_json_path):
             logger.info(f"[{job_id}] Chunk {chunk_idx}/{total_chunks} đã có artifact hợp lệ, nạp lại...")
             chunk_payload = DiarizationExportPayload.model_validate_json(Path(chunk_json_path).read_text(encoding="utf-8"))
+            if not _diarization_artifact_matches_settings(chunk_payload):
+                logger.info(
+                    "[%s] Re-running chunk %s because diarization settings changed (mode=%s smoothing=%s/%s)",
+                    job_id, chunk_idx, chunk_payload.timeline_mode, chunk_payload.smoothing_enabled,
+                    chunk_payload.smoothing_max_fragment_ms,
+                )
+                chunk_payload = None
         else:
+            chunk_payload = None
+        if chunk_payload is None:
             logger.info(f"[{job_id}] Chạy Diarization cho Chunk {chunk_idx}/{total_chunks} ({chunk['start']} -> {chunk['end']})...")
             chunk_payload, _ = _get_speaker_labeling_service().process_and_export(
                 audio_path=chunk_file,
                 output_json_path=chunk_json_path,
-                job_id=job_id
+                job_id=job_id,
+                timeline_mode=settings.pyannote_timeline_mode,
             )
         # Xử lý kết quả chunk nghiêm ngặt (P1 Fix: Không bỏ qua chunk lỗi)
         if chunk_payload.status == "NO_SPEECH_DETECTED":
@@ -292,6 +381,15 @@ def _process_chunked_diarization(
             raise RetryableProcessingError(err_msg)
         chunk_dict = chunk_payload.model_dump()
         chunk_segs = chunk_dict.get("timeline") or chunk_dict.get("segments") or []
+        chunk_raw_segs = chunk_dict.get("raw_timeline") or chunk_segs
+        chunk_native_segs = chunk_dict.get("native_exclusive_timeline") or []
+        chunk_smoothed_segs = chunk_dict.get("smoothed_timeline") or []
+        for item in chunk_dict.get("smoothing_diagnostics") or []:
+            diagnostic = dict(item)
+            diagnostic["start_seconds"] = round(ctx_start + float(diagnostic["start_seconds"]), 3)
+            diagnostic["end_seconds"] = round(ctx_start + float(diagnostic["end_seconds"]), 3)
+            diagnostic["source_chunk_index"] = chunk_idx
+            all_smoothing_diagnostics.append(diagnostic)
         chunk_speakers = chunk_dict.get("speakers") or []
         # Tái sử dụng embedding có sẵn từ chunk_speakers, tránh trích xuất lần hai (P1 Fix: CPU Optimization)
         local_embeddings: Dict[str, np.ndarray] = {}
@@ -302,7 +400,8 @@ def _process_chunked_diarization(
                 local_embeddings[s_label] = np.array(emb, dtype=np.float32)
         # Thu thập danh sách local speaker labels xuất hiện trong timeline chunk
         present_local_speakers = list(dict.fromkeys(
-            s.get("speaker_label") or s.get("speaker") or "SPEAKER_00" for s in chunk_segs
+            (s.get("speaker_label") or s.get("speaker") or "SPEAKER_00")
+            for s in [*chunk_segs, *chunk_raw_segs, *chunk_native_segs, *chunk_smoothed_segs]
         ))
         # Thuật toán ghép cặp 1-1 (P1 Fix: One-to-One Speaker Alignment)
         pair_candidates = []
@@ -353,9 +452,71 @@ def _process_chunked_diarization(
                     "end": clipped_end,
                     "global_id": gid
                 })
+        for seg in chunk_raw_segs:
+            raw_start = seg.get("start_seconds", seg.get("start_time", seg.get("start", 0.0)))
+            raw_end = seg.get("end_seconds", seg.get("end_time", seg.get("end", 0.0)))
+            loc_start = parse_timestamp_to_seconds(raw_start)
+            loc_end = parse_timestamp_to_seconds(raw_end)
+            g_start = round(ctx_start + loc_start, 3)
+            g_end = round(ctx_start + loc_end, 3)
+            if g_end > g_start:
+                loc_label = seg.get("speaker") or seg.get("speaker_label") or "SPEAKER_00"
+                gid = local_to_global.get(loc_label, loc_label)
+                all_raw_evidence_segments.append({
+                    "start": g_start,
+                    "end": g_end,
+                    "global_id": gid,
+                    "raw_speaker_id": seg.get("raw_speaker_id") or loc_label,
+                    "source_chunk_index": chunk_idx,
+                })
+        for source_segments, destination in (
+            (chunk_native_segs, all_native_exclusive_evidence_segments),
+            (chunk_smoothed_segs, all_smoothed_evidence_segments),
+        ):
+            for seg in source_segments:
+                loc_start = parse_timestamp_to_seconds(
+                    seg.get("start_seconds", seg.get("start_time", seg.get("start", 0.0)))
+                )
+                loc_end = parse_timestamp_to_seconds(
+                    seg.get("end_seconds", seg.get("end_time", seg.get("end", 0.0)))
+                )
+                g_start = max(round(ctx_start + loc_start, 3), core_start)
+                g_end = min(round(ctx_start + loc_end, 3), core_end)
+                if g_end > g_start:
+                    loc_label = seg.get("speaker") or seg.get("speaker_label") or "SPEAKER_00"
+                    destination.append({
+                        "start": g_start,
+                        "end": g_end,
+                        "global_id": local_to_global.get(loc_label, loc_label),
+                        "raw_speaker_id": seg.get("raw_speaker_id") or loc_label,
+                        "source_chunk_index": chunk_idx,
+                    })
     # Xử lý trường hợp không có giọng nói sau khi duyệt toàn bộ chunks
     if not all_raw_segments:
         logger.warning(f"[{job_id}] Không phát hiện phân đoạn tiếng nói nào sau khi gộp chunks.")
+        empty_speaker_order = list(dict.fromkeys(
+            item["global_id"] for evidence in (
+                all_native_exclusive_evidence_segments, all_smoothed_evidence_segments
+            ) for item in evidence
+        ))
+        raw_evidence = []
+        for idx, segment in enumerate(sorted(
+            all_raw_evidence_segments, key=lambda item: (item["start"], item["end"], item["global_id"])
+        ), start=1):
+            start = round(segment["start"], 3)
+            end = min(round(segment["end"], 3), total_audio_duration) if total_audio_duration > 0 else round(segment["end"], 3)
+            if end > start:
+                raw_evidence.append({
+                    "segment_id": idx,
+                    "speaker": segment["global_id"],
+                    "raw_speaker_id": segment["raw_speaker_id"],
+                    "source_chunk_index": segment["source_chunk_index"],
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "duration_seconds": round(end - start, 3),
+                    "start_time": _format_timestamp(start),
+                    "end_time": _format_timestamp(end),
+                })
         empty_payload = DiarizationExportPayload(
             status="NO_SPEECH_DETECTED",
             audio_file=os.path.basename(clean_wav),
@@ -365,6 +526,22 @@ def _process_chunked_diarization(
             total_speakers=0,
             speakers=[],
             timeline=[],
+            raw_timeline=raw_evidence,
+            native_exclusive_timeline=_format_evidence_timeline(
+                all_native_exclusive_evidence_segments, empty_speaker_order, total_audio_duration
+            ),
+            smoothed_timeline=_format_evidence_timeline(
+                all_smoothed_evidence_segments, empty_speaker_order, total_audio_duration
+            ),
+            timeline_mode=settings.pyannote_timeline_mode,
+            timeline_source=(
+                "native_exclusive_diagnostics_only"
+                if _selected_smoothing_config()[0]
+                else "native" if settings.pyannote_timeline_mode == "exclusive" else "raw_postprocessed"
+            ),
+            smoothing_enabled=_selected_smoothing_config()[0],
+            smoothing_max_fragment_ms=_selected_smoothing_config()[1],
+            smoothing_diagnostics=all_smoothing_diagnostics,
             error_message="Không phát hiện tiếng nói trong toàn bộ các đoạn audio."
         )
         # [FIX 2]: Xuất file JSON atomic cho nhánh silence
@@ -379,6 +556,18 @@ def _process_chunked_diarization(
     for s in all_raw_segments:
         if s["global_id"] not in speaker_order:
             speaker_order.append(s["global_id"])
+    raw_speaker_order = []
+    for evidence in (
+        all_raw_evidence_segments,
+        all_native_exclusive_evidence_segments,
+        all_smoothed_evidence_segments,
+    ):
+        for s in evidence:
+            if s["global_id"] not in raw_speaker_order:
+                raw_speaker_order.append(s["global_id"])
+    for speaker_id in raw_speaker_order:
+        if speaker_id not in speaker_order:
+            speaker_order.append(speaker_id)
 
     # [FIX 1]: Thu thập khoảng speech THỰC TẾ (chưa lấp khoảng nghỉ) để tính thống kê chính xác
     speaker_raw_intervals: Dict[str, List[tuple[float, float]]] = {
@@ -407,7 +596,9 @@ def _process_chunked_diarization(
             continue
 
         prev = merged_turns[-1]
-        if prev["raw_speaker_id"] == s["global_id"] and (s["start"] - prev["end"]) <= 0.5:
+        if (settings.pyannote_timeline_mode == "raw"
+                and prev["raw_speaker_id"] == s["global_id"]
+                and (s["start"] - prev["end"]) <= 0.5):
             prev["end"] = max(prev["end"], s["end"])
         else:
             merged_turns.append({
@@ -436,6 +627,34 @@ def _process_chunked_diarization(
             "end_time": _format_timestamp(t_end)
         })
 
+    formatted_raw_timeline = []
+    for idx, segment in enumerate(sorted(
+        all_raw_evidence_segments, key=lambda item: (item["start"], item["end"], item["global_id"])
+    ), start=1):
+        t_start = round(segment["start"], 3)
+        t_end = min(round(segment["end"], 3), total_audio_duration) if total_audio_duration > 0 else round(segment["end"], 3)
+        if t_end <= t_start:
+            continue
+        speaker_index = speaker_order.index(segment["global_id"]) + 1
+        formatted_raw_timeline.append({
+            "segment_id": idx,
+            "speaker": f"Speaker {speaker_index}",
+            "raw_speaker_id": segment["raw_speaker_id"],
+            "source_chunk_index": segment["source_chunk_index"],
+            "start_seconds": t_start,
+            "end_seconds": t_end,
+            "duration_seconds": round(t_end - t_start, 3),
+            "start_time": _format_timestamp(t_start),
+            "end_time": _format_timestamp(t_end),
+        })
+
+    formatted_native_exclusive_timeline = _format_evidence_timeline(
+        all_native_exclusive_evidence_segments, speaker_order, total_audio_duration
+    )
+    formatted_smoothed_timeline = _format_evidence_timeline(
+        all_smoothed_evidence_segments, speaker_order, total_audio_duration
+    )
+
     # [FIX 1]: Thống kê speech theo speaker từ RAW intervals (bảo toàn đúng 1.6s, không bị đội lên 2.0s)
     speaker_stats: List[Dict[str, Any]] = []
     for i, g_id in enumerate(speaker_order):
@@ -463,7 +682,19 @@ def _process_chunked_diarization(
         speech_ratio=speech_ratio,
         total_speakers=len(speaker_stats),
         speakers=speaker_stats,
-        timeline=formatted_timeline
+        timeline=formatted_timeline,
+        raw_timeline=formatted_raw_timeline,
+        native_exclusive_timeline=formatted_native_exclusive_timeline,
+        smoothed_timeline=formatted_smoothed_timeline,
+        timeline_mode=settings.pyannote_timeline_mode,
+        timeline_source=(
+            "native_exclusive_diagnostics_only"
+            if _selected_smoothing_config()[0]
+            else "native" if settings.pyannote_timeline_mode == "exclusive" else "raw_postprocessed"
+        ),
+        smoothing_enabled=_selected_smoothing_config()[0],
+        smoothing_max_fragment_ms=_selected_smoothing_config()[1],
+        smoothing_diagnostics=all_smoothing_diagnostics,
     )
 
     # [FIX 2]: Xuất file JSON atomic cho nhánh SUCCESS
@@ -478,7 +709,9 @@ def process_job(job_id: str):
     workspace_dir = os.path.join(str(get_workspace_root()), job_id)
     current_stage = "FFMPEG"
     heartbeat = None
-    preserve_workspace = False
+    # Until the execution lease is granted, this delivery does not own the
+    # shared job workspace (including terminal/duplicate deliveries).
+    preserve_workspace = True
     successful_stages = set()
     try:
         os.makedirs(workspace_dir, exist_ok=True)
@@ -499,6 +732,7 @@ def process_job(job_id: str):
         meeting_id = job_info.get("meetingId")
         logger.info(f"[{job_id}] ========== [BẮT ĐẦU XỬ LÝ JOB: {job_id}] ==========")
         heartbeat_state = heartbeat.checkpoint()
+        preserve_workspace = False
         current_stage = str(heartbeat_state.get("currentStage") or current_stage)
         successful_stages = set(heartbeat_state.get("successfulStages") or [])
         if not meeting_id:
@@ -519,6 +753,7 @@ def process_job(job_id: str):
         storage_client.download_file(
             object_key=object_key,
             destination_path=raw_input_path,
+            allowed_root=workspace_dir,
         )
         # [GUARD 1]: Kiểm định an toàn đường dẫn file đầu vào
         validate_safe_read_path(raw_input_path)
@@ -539,7 +774,7 @@ def process_job(job_id: str):
             job_id=job_id,
             model_name=settings.pyannote_model_id,
             model_version="3.1.0",
-            device=settings.pyannote_device if settings.pyannote_device != "auto" else "cpu",
+            device=settings.pyannote_device,
             scope="thread"
         ):
             # -------------------------------------------------------------
@@ -590,9 +825,20 @@ def process_job(job_id: str):
             # -------------------------------------------------------------
             current_stage = "PYANNOTE"
             diar_json_path = os.path.join(workspace_dir, "03_diarization.json")
+            diar_payload = None
             if "PYANNOTE" in successful_stages and os.path.exists(diar_json_path):
-                diar_payload = DiarizationExportPayload.model_validate_json(Path(diar_json_path).read_text())
-            else:
+                cached_diar_payload = DiarizationExportPayload.model_validate_json(
+                    Path(diar_json_path).read_text()
+                )
+                if _diarization_artifact_matches_settings(cached_diar_payload):
+                    diar_payload = cached_diar_payload
+                else:
+                    logger.info(
+                        "[%s] Re-running PYANNOTE because diarization settings changed (mode=%s smoothing=%s/%s)",
+                        job_id, cached_diar_payload.timeline_mode, cached_diar_payload.smoothing_enabled,
+                        cached_diar_payload.smoothing_max_fragment_ms,
+                    )
+            if diar_payload is None:
                 heartbeat.checkpoint()
                 require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
                 logger.info(f"[{job_id}] >>> Thực thi Stage 3: PYANNOTE...")
@@ -610,7 +856,8 @@ def process_job(job_id: str):
                 if not chunk_res.get("is_chunked"):
                     # File <= 15 phút: Xử lý nguyên khối tiêu chuẩn
                     diar_payload, _ = _get_speaker_labeling_service().process_and_export(
-                        audio_path=clean_wav, output_json_path=diar_json_path, job_id=job_id
+                        audio_path=clean_wav, output_json_path=diar_json_path, job_id=job_id,
+                        timeline_mode=settings.pyannote_timeline_mode,
                     )
                 else:
                     # File > 15 phút: Xử lý đa đoạn (Chunked Diarization)
@@ -627,18 +874,24 @@ def process_job(job_id: str):
                         raise NoSpeechDetectedError(diar_payload.error_message or "Không phát hiện tiếng nói trong audio")
                     error_code = getattr(diar_payload, "error_code", None) or "DIARIZATION_INFERENCE_ERROR"
                     error_message = diar_payload.error_message or diar_payload.status
-                    if error_code in {"INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY", "AUDIO_CORRUPTED", "VALIDATION_ERROR"}:
+                    if error_code in {
+                        "INVALID_AUDIO", "UNSUPPORTED_FORMAT", "AUDIO_EMPTY", "AUDIO_CORRUPTED",
+                        "VALIDATION_ERROR", "EXCLUSIVE_DIARIZATION_UNAVAILABLE", "EXCLUSIVE_DIARIZATION_INVALID",
+                    }:
                         raise NonRetryableProcessingError(error_code, error_message)
                     raise RetryableProcessingError(error_message)
                 heartbeat.checkpoint()
                 require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
+            # Do not keep the shared diarization model resident while loading
+            # Large-v3-Turbo STT or PaddleOCR for the same job.
+            _release_diarization_model(job_id)
             # -------------------------------------------------------------
             # STAGE 4: OUTPUT (Chuẩn hóa segments và gửi về Backend)
             # -------------------------------------------------------------
             current_stage = "OUTPUT"
             heartbeat.checkpoint()
             require_stage_callback(job_id, current_stage, "PROCESSING", execution_id=execution_id)
-            logger.info(f"[{job_id}] >>> Hoàn tất Stage 4: OUTPUT...")
+            logger.info(f"[{job_id}] >>> Bắt đầu Stage 4: OUTPUT...")
             diar_dict = diar_payload.model_dump()
             raw_segments = diar_dict.get("timeline") or diar_dict.get("segments") or []
             # Xác định thời lượng thực tế của file âm thanh để clamp mốc timeline
@@ -677,9 +930,87 @@ def process_job(job_id: str):
                         "endTime": end_time
                     })
             heartbeat.checkpoint()
-            require_stage_callback(job_id, current_stage, "SUCCESS", segments=formatted_segments,
-                execution_id=execution_id)
-            logger.info(f"[{job_id}] ========== [HOÀN TẤT THÀNH CÔNG JOB: {job_id}] ==========")
+            # Lazy import preserves lightweight Celery startup without loading ASR.
+            from app.services.stt_job_integration import run_stt_for_job
+            run_stt_for_job(
+                audio_path=clean_wav, formatted_segments=formatted_segments,
+                meeting_id=meeting_id, job_id=job_id, callback_client=callback_client,
+                backend_base_url=BACKEND_BASE_URL, internal_token=INTERNAL_TOKEN,
+                execution_id=execution_id, checkpoint=heartbeat.checkpoint,
+                checkpoint_path=Path(workspace_dir) / "04_stt_result.json",
+                timeline_mode=settings.pyannote_timeline_mode,
+                smoothing_enabled=_selected_smoothing_config()[0],
+                smoothing_max_fragment_ms=_selected_smoothing_config()[1],
+            )
+            heartbeat.checkpoint()
+            if file_ext in {".mp4", ".mkv"}:
+                from app.services.multimodal_pipeline import publish_job_ocr
+                publish_job_ocr(
+                    meeting_id=meeting_id, job_id=job_id, video_path=raw_input_path,
+                    output_dir=Path(workspace_dir) / f"ocr_{uuid4().hex}",
+                    storage_client=storage_client, callback_client=callback_client,
+                    backend_base_url=BACKEND_BASE_URL, internal_token=INTERNAL_TOKEN,
+                    execution_id=execution_id, checkpoint=heartbeat.checkpoint,
+                )
+            heartbeat.checkpoint()
+            ai_result = None
+            ai_enrichment_error_code = None
+            if settings.smartrec_llm_enabled:
+                logger.info("[%s] LLM enrichment enabled; requesting AI Router after STT/OCR", job_id)
+                try:
+                    ai_result = callback_client.request_ai_result(
+                        BACKEND_BASE_URL,
+                        job_id,
+                        INTERNAL_TOKEN,
+                        execution_id,
+                        timeout_sec=float(os.getenv("AI_ROUTER_REQUEST_TIMEOUT_SECONDS", "900")),
+                    )
+                except AIInferenceRequestError as exc:
+                    if exc.code in {
+                        "EXECUTION_LEASE_LOST",
+                        "STALE_EXECUTION_CALLBACK",
+                        "STALE_JOB_CALLBACK",
+                    }:
+                        raise _ExecutionLost() from exc
+                    # The STT/OCR artifacts are already checkpointed. LLM
+                    # enrichment is optional and may not turn a valid Core job
+                    # into a failed media job.
+                    logger.warning(
+                        "[%s] LLM enrichment failed (%s, retryable=%s); "
+                        "keeping Core OUTPUT and omitting aiResult",
+                        job_id, exc.code, exc.retryable,
+                    )
+                    ai_enrichment_error_code = "AI_ENRICHMENT_FAILED"
+                if ai_result is not None:
+                    try:
+                        heartbeat.checkpoint()
+                        _validate_ai_result_response(ai_result, job_id, meeting_id)
+                    except NonRetryableProcessingError as exc:
+                        logger.warning(
+                            "[%s] AI enrichment response rejected (%s); keeping Core OUTPUT without aiResult",
+                            job_id, exc.error_code,
+                        )
+                        ai_result = None
+                        ai_enrichment_error_code = "AI_ENRICHMENT_FAILED"
+            else:
+                logger.info("[%s] LLM enrichment disabled; completing Core OUTPUT without AI Router", job_id)
+                ai_enrichment_error_code = "AI_ENRICHMENT_DISABLED"
+            require_stage_callback(
+                job_id,
+                current_stage,
+                "SUCCESS",
+                segments=formatted_segments,
+                error_code=ai_enrichment_error_code,
+                error_msg=(
+                    "Core processing completed, but AI enrichment failed."
+                    if ai_enrichment_error_code == "AI_ENRICHMENT_FAILED"
+                    else "Core processing completed; AI enrichment is disabled."
+                    if ai_enrichment_error_code == "AI_ENRICHMENT_DISABLED"
+                    else None
+                ),
+                execution_id=execution_id,
+                ai_result=ai_result,
+            )
     except _ExecutionLost:
         preserve_workspace = True
         logger.info("[%s] Bỏ qua task vì execution lease đã thuộc worker khác hoặc Job terminal", job_id)
@@ -695,6 +1026,7 @@ def process_job(job_id: str):
         control = heartbeat._send() if heartbeat else {}
         current_stage = control.get("currentStage") or current_stage
         require_stage_callback(job_id, current_stage, "CANCELLED", execution_id=execution_id)
+        preserve_workspace = False
         logger.info("[%s] Job cancelled safely at stage boundary %s", job_id, current_stage)
         return {"status": "CANCELLED", "stage": current_stage}
     except NonRetryableProcessingError as e:
@@ -714,6 +1046,10 @@ def process_job(job_id: str):
             )
         return {"status": "FAILED", "stage": current_stage, "errorCode": e.error_code, "errorMessage": str(e)}
     except Exception as e:
+        # Backend retains successfulStages for resume. Keep their artifacts
+        # when Celery retries instead of turning a transient failure into
+        # WORKSPACE_LOST on the next delivery.
+        preserve_workspace = True
         if heartbeat and heartbeat._execution_lost.is_set():
             preserve_workspace = True
             logger.info("[%s] Bỏ qua exception vì execution lease đã mất", job_id)
@@ -721,11 +1057,13 @@ def process_job(job_id: str):
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
         try:
             require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e),
-                error_code="RETRYABLE_PROCESSING_ERROR", execution_id=execution_id)
+                error_code=getattr(e, "error_code", None) or "RETRYABLE_PROCESSING_ERROR",
+                execution_id=execution_id)
         except RetryableProcessingError:
             logger.exception("Failed to report worker failure to Backend")
         raise RetryableProcessingError(str(e)) from e
     finally:
+        _release_diarization_model(job_id)
         if heartbeat:
             heartbeat.stop()
         try:

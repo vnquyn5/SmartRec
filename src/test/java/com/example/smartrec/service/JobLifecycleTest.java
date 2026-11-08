@@ -2,6 +2,7 @@ package com.example.smartrec.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -19,7 +20,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
 import com.example.smartrec.entity.Job;
@@ -31,6 +31,7 @@ import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.enums.PipelineStage;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
+import com.example.smartrec.model.dto.AIResponse;
 import com.example.smartrec.repository.JobRepository;
 import com.example.smartrec.repository.JobDispatchOutboxRepository;
 import com.example.smartrec.repository.JobStageRepository;
@@ -48,6 +49,7 @@ class JobLifecycleTest {
     @Mock private SpeakerSegmentRepository speakerSegmentRepository;
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
+    @Mock private AIResultService aiResultService;
     @InjectMocks private JobServiceImpl service;
 
     private UUID jobId;
@@ -88,6 +90,21 @@ class JobLifecycleTest {
         assertEquals(JobStatus.PROCESSING, response.getStatus());
         org.junit.jupiter.api.Assertions.assertTrue(response.isExecutionAllowed());
         org.junit.jupiter.api.Assertions.assertTrue(job.getLastHeartbeatAt().isAfter(old));
+    }
+
+    @Test
+    void expiredExecutionCannotRenewItsOwnLease() {
+        UUID ownerExecutionId = UUID.randomUUID();
+        job.setExecutionId(ownerExecutionId);
+        job.setLeaseExpiresAt(Instant.now().minusSeconds(1));
+        when(mediaFileRepository.findById(job.getMediaFileId())).thenReturn(Optional.empty());
+        when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of());
+
+        var response = service.workerHeartbeat(jobId, ownerExecutionId);
+
+        assertFalse(response.isExecutionAllowed());
+        assertEquals(ownerExecutionId, job.getExecutionId());
+        org.junit.jupiter.api.Assertions.assertTrue(job.getLeaseExpiresAt().isBefore(Instant.now()));
     }
 
     @Test
@@ -139,9 +156,9 @@ class JobLifecycleTest {
         job.setLastHeartbeatAt(Instant.now().minusSeconds(180));
         JobStage stage = JobStage.builder().jobId(jobId).stage(PipelineStage.FFMPEG)
                 .status(JobStageStatus.PROCESSING).build();
-        when(jobRepository.findByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
+        when(jobRepository.findIdsByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
                 JobStatus.RETRYING, JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED), PageRequest.of(0, 100)))
-                .thenReturn(new PageImpl<>(List.of(job)));
+                .thenReturn(List.of(jobId));
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.FFMPEG)).thenReturn(Optional.of(stage));
         when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of(stage));
 
@@ -265,12 +282,13 @@ class JobLifecycleTest {
         JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
                 .status(JobStageStatus.PROCESSING).build();
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT)).thenReturn(Optional.of(output));
-        when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of(output));
 
         service.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
                 .executionId(executionId)
                 .stage(PipelineStage.OUTPUT)
                 .status(JobStageStatus.SUCCESS)
+                .aiResult(AIResponse.builder().jobId(jobId).meetingId(meetingId)
+                        .taskType("MEETING_ANALYSIS").status("SUCCESS").build())
                 .segments(List.of())
                 .build());
 
@@ -278,6 +296,55 @@ class JobLifecycleTest {
         assertEquals(JobStageStatus.CANCELLED, output.getStatus());
         verify(speakerSegmentRepository, never()).deleteByMeetingId(meetingId);
         verify(speakerSegmentRepository, never()).saveAll(any());
+        org.mockito.Mockito.verifyNoInteractions(aiResultService);
+    }
+
+    @Test
+    void outputSuccessPersistsWhitelistedEnrichmentFailureWithoutFailingCoreJob() {
+        UUID executionId = UUID.randomUUID();
+        job.setCurrentStage(PipelineStage.OUTPUT);
+        job.setExecutionId(executionId);
+        job.setLeaseExpiresAt(Instant.now().plusSeconds(60));
+        JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.PROCESSING).build();
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT)).thenReturn(Optional.of(output));
+
+        service.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId)
+                .stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.SUCCESS)
+                .errorCode("AI_ENRICHMENT_FAILED")
+                .errorMessage("untrusted callback text is ignored")
+                .build());
+
+        assertEquals(JobStatus.COMPLETED, job.getStatus());
+        assertEquals("AI_ENRICHMENT_FAILED", job.getErrorCode());
+        assertEquals("Core processing completed, but AI enrichment failed.", job.getErrorMessage());
+        assertEquals(JobStageStatus.SUCCESS, output.getStatus());
+        org.mockito.Mockito.verifyNoInteractions(aiResultService);
+    }
+
+    @Test
+    void outputSuccessDoesNotPersistUnrecognizedEnrichmentErrorCodes() {
+        UUID executionId = UUID.randomUUID();
+        job.setCurrentStage(PipelineStage.OUTPUT);
+        job.setExecutionId(executionId);
+        job.setLeaseExpiresAt(Instant.now().plusSeconds(60));
+        JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.PROCESSING).build();
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT)).thenReturn(Optional.of(output));
+
+        service.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId)
+                .stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.SUCCESS)
+                .errorCode("INTERNAL_AUTH_NOT_CONFIGURED")
+                .errorMessage("not an enrichment status marker")
+                .build());
+
+        assertEquals(JobStatus.COMPLETED, job.getStatus());
+        assertNull(job.getErrorCode());
+        assertNull(job.getErrorMessage());
     }
 
     @Test
@@ -302,9 +369,9 @@ class JobLifecycleTest {
         job.setLastHeartbeatAt(Instant.now().minusSeconds(180));
         JobStage stage = JobStage.builder().jobId(jobId).stage(PipelineStage.FFMPEG)
                 .status(JobStageStatus.PROCESSING).build();
-        when(jobRepository.findByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
+        when(jobRepository.findIdsByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
                 JobStatus.RETRYING, JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED), PageRequest.of(0, 100)))
-                .thenReturn(new PageImpl<>(List.of(job)));
+                .thenReturn(List.of(jobId));
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.FFMPEG)).thenReturn(Optional.of(stage));
         service.markStaleJobsFailed();
 
@@ -321,9 +388,9 @@ class JobLifecycleTest {
                 .status(JobStageStatus.PROCESSING).build();
         JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
                 .status(JobStageStatus.PENDING).build();
-        when(jobRepository.findByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
+        when(jobRepository.findIdsByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
                 JobStatus.RETRYING, JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED), PageRequest.of(0, 100)))
-                .thenReturn(new PageImpl<>(List.of(job)));
+                .thenReturn(List.of(jobId));
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.FFMPEG)).thenReturn(Optional.of(current));
         when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of(current, output));
 
@@ -348,9 +415,9 @@ class JobLifecycleTest {
                 .status(JobStageStatus.PROCESSING).build();
         JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
                 .status(JobStageStatus.PENDING).build();
-        when(jobRepository.findByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
+        when(jobRepository.findIdsByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
                 JobStatus.RETRYING, JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED), PageRequest.of(0, 100)))
-                .thenReturn(new PageImpl<>(List.of(job)));
+                .thenReturn(List.of(jobId));
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.PYANNOTE)).thenReturn(Optional.of(pyannote));
         when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of(ffmpeg, webrtc, pyannote, output));
 
@@ -364,6 +431,21 @@ class JobLifecycleTest {
         assertEquals("WORKER_LOST", pyannote.getErrorCode());
         assertEquals(JobStageStatus.SKIPPED, output.getStatus());
         assertEquals(MeetingStatus.FAILED, meeting.getStatus());
+    }
+
+    @Test
+    void watchdogKeepsJobWithLiveLeaseEvenWhenHeartbeatTimestampLooksOld() {
+        job.setExecutionId(UUID.randomUUID());
+        job.setLeaseExpiresAt(Instant.now().plusSeconds(30));
+        job.setLastHeartbeatAt(Instant.now().minusSeconds(180));
+        when(jobRepository.findIdsByStatusInOrderByUpdatedAtAsc(List.of(JobStatus.PROCESSING, JobStatus.RUNNING,
+                JobStatus.RETRYING, JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED), PageRequest.of(0, 100)))
+                .thenReturn(List.of(jobId));
+
+        service.markStaleJobsFailed();
+
+        assertEquals(JobStatus.PROCESSING, job.getStatus());
+        assertNull(job.getErrorCode());
     }
 
     @Test

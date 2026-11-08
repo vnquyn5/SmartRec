@@ -28,6 +28,73 @@ SmartRec/
 
 ## 🚀 Run Instructions (Hướng dẫn chạy dự án)
 
+
+### Cấu hình AI Models trước khi chạy Docker
+
+SmartRec sử dụng faster-whisper large-v3 để nhận dạng tiếng nói.
+Model được lưu bên ngoài repository và mount vào Docker ở chế độ chỉ đọc.
+
+**Cấu trúc thư mục:**
+
+~~~text
+<SMARTREC_MODELS_DIR>/
+└── faster-whisper-large-v3/
+    ├── model.bin
+    ├── config.json
+    ├── tokenizer.json
+    └── ...
+~~~
+
+`SMARTREC_MODELS_DIR` phải trỏ đến thư mục cha chứa `faster-whisper-large-v3`.
+
+**macOS / Linux:**
+
+~~~bash
+export SMARTREC_MODELS_DIR="$HOME/smartrec-models"
+~~~
+
+**Windows PowerShell:**
+
+~~~powershell
+$env:SMARTREC_MODELS_DIR = "D:\\smartrec-models"
+~~~
+
+Docker Compose sử dụng cấu hình:
+
+- Model path trong container: `/models/faster-whisper-large-v3`
+- Biến môi trường: `WHISPER_MODEL_PATH`
+- Volume mount: read-only (`:ro`)
+- Model weights không được đóng gói vào Docker image.
+
+**Các biến môi trường liên quan:**
+
+- `SMARTREC_INTERNAL_TOKEN`: Bắt buộc, phải khớp với Backend.
+- `HF_TOKEN`: Cần thiết khi truy cập các model Pyannote gated trên Hugging Face.
+- `DIARIZATION_DEVICE`: Có thể cấu hình `auto`, `cpu`, `cuda` hoặc `mps`.
+
+Có thể cấu hình các biến trong môi trường hoặc file `.env` cục bộ.
+
+Không commit `.env`, credentials, API tokens hoặc model weights lên GitHub.
+
+**Chạy Docker CPU:**
+
+~~~bash
+docker compose up -d --build
+~~~
+
+**Chạy Docker NVIDIA GPU:**
+
+Yêu cầu NVIDIA GPU, driver và NVIDIA Container Toolkit tương thích.
+GPU image được xây dựng cho nền tảng Linux AMD64.
+
+~~~bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+~~~
+
+Lưu ý: Docker GPU build thành công không đồng nghĩa với việc đã xác minh NVIDIA inference thực tế.
+
+---
+
 ### Bước 1: Chạy Môi trường Hạ tầng (Docker)
 Cần khởi động các dịch vụ hỗ trợ trước khi chạy Backend.
 ```bash

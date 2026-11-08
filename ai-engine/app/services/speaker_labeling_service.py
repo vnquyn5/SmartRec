@@ -20,9 +20,14 @@ logger = logging.getLogger("smartrec.speaker_labeling")
 
 class SpeakerLabelingService:
     """
+
     Dịch vụ ánh xạ nhãn người nói (Speaker 1, Speaker 2...), trích xuất embedding
     và xuất kết quả JSON chuẩn hóa an toàn tuyệt đối cho downstream AI modules.
     """
+
+    def release_model(self) -> None:
+        """Release shared Pyannote weights after the diarization stage."""
+        diarization_runtime.reset()
 
     def generate_speaker_labels(
         self,
@@ -35,7 +40,7 @@ class SpeakerLabelingService:
         mapping: Dict[str, str] = {}
         speaker_idx = 1
 
-        sorted_segments = sorted(raw_segments, key=lambda s: (s.start_seconds, s.end_seconds))
+        sorted_segments = sorted(raw_segments, key=lambda s: (s.start_seconds, s.end_seconds, s.speaker))
 
         for seg in sorted_segments:
             raw_spk = seg.speaker
@@ -60,8 +65,52 @@ class SpeakerLabelingService:
         """
         audio_name = Path(audio_file_path).name
         embeddings_map = speaker_embeddings or {}
+        sorted_raw_segments = sorted(
+            segmentation_res.raw_segments or segmentation_res.segments,
+            key=lambda s: (s.start_seconds, s.end_seconds, s.speaker),
+        )
+        sorted_selected_segments = sorted(
+            segmentation_res.segments,
+            key=lambda s: (s.start_seconds, s.end_seconds, s.speaker),
+        )
+        sorted_native_exclusive_segments = sorted(
+            segmentation_res.native_exclusive_segments,
+            key=lambda s: (s.start_seconds, s.end_seconds, s.speaker),
+        )
+        sorted_smoothed_segments = sorted(
+            segmentation_res.smoothed_segments,
+            key=lambda s: (s.start_seconds, s.end_seconds, s.speaker),
+        )
+        label_mapping = self.generate_speaker_labels(
+            sorted_raw_segments + sorted_native_exclusive_segments
+            + sorted_smoothed_segments + sorted_selected_segments
+        )
 
-        if segmentation_res.status != "SUCCESS" or not segmentation_res.segments:
+        def to_export_timeline(source_segments, include_embeddings):
+            timeline = []
+            for index, seg in enumerate(source_segments, start=1):
+                timeline.append(SpeakerSegment(
+                    segment_id=index,
+                    speaker=label_mapping[seg.speaker],
+                    raw_speaker_id=seg.raw_speaker_id or seg.speaker,
+                    source_chunk_index=seg.source_chunk_index,
+                    start_seconds=seg.start_seconds,
+                    end_seconds=seg.end_seconds,
+                    duration_seconds=seg.duration_seconds,
+                    start_time=seg.start_time,
+                    end_time=seg.end_time,
+                    embedding=embeddings_map.get(seg.raw_speaker_id or seg.speaker) if include_embeddings else None,
+                ))
+            return timeline
+
+        raw_timeline = to_export_timeline(sorted_raw_segments, include_embeddings=False)
+        native_exclusive_timeline = to_export_timeline(
+            sorted_native_exclusive_segments, include_embeddings=False
+        )
+        smoothed_timeline = to_export_timeline(sorted_smoothed_segments, include_embeddings=False)
+        timeline_segments = to_export_timeline(sorted_selected_segments, include_embeddings=True)
+
+        if segmentation_res.status != "SUCCESS" or not timeline_segments:
             return DiarizationExportPayload(
                 job_id=segmentation_res.job_id,
                 audio_file=audio_name,
@@ -70,43 +119,28 @@ class SpeakerLabelingService:
                 speech_duration_seconds=segmentation_res.speech_duration_seconds,
                 speech_ratio=segmentation_res.speech_ratio,
                 total_speakers=0,
-                speaker_mapping={},
+                speaker_mapping=label_mapping,
                 speakers=[],
                 timeline=[],
+                raw_timeline=raw_timeline,
+                native_exclusive_timeline=native_exclusive_timeline,
+                smoothed_timeline=smoothed_timeline,
+                timeline_mode=segmentation_res.timeline_mode,
+                timeline_source=segmentation_res.timeline_source,
+                smoothing_enabled=segmentation_res.smoothing_enabled,
+                smoothing_max_fragment_ms=segmentation_res.smoothing_max_fragment_ms,
+                smoothing_diagnostics=segmentation_res.smoothing_diagnostics,
                 embeddings_status="NOT_AVAILABLE",
                 error_code=segmentation_res.error_code,
-                error_message=segmentation_res.error_message
+                error_message=segmentation_res.error_message,
             )
 
-        sorted_raw_segments = sorted(
-            segmentation_res.segments,
-            key=lambda s: (s.start_seconds, s.end_seconds)
-        )
-
-        label_mapping = self.generate_speaker_labels(sorted_raw_segments)
-
-        timeline_segments: List[SpeakerSegment] = []
-        for seg in sorted_raw_segments:
-            friendly_label = label_mapping[seg.speaker]
-            spk_emb = embeddings_map.get(seg.speaker)
-
-            timeline_segments.append(SpeakerSegment(
-                segment_id=seg.segment_id,
-                speaker=friendly_label,
-                raw_speaker_id=seg.speaker,
-                start_seconds=seg.start_seconds,
-                end_seconds=seg.end_seconds,
-                duration_seconds=seg.duration_seconds,
-                start_time=seg.start_time,
-                end_time=seg.end_time,
-                embedding=spk_emb
-            ))
-
-        for idx, seg in enumerate(timeline_segments, start=1):
-            seg.segment_id = idx
-
         speakers_dict: Dict[str, Dict[str, Any]] = {}
-        for raw_spk, friendly_label in label_mapping.items():
+        selected_raw_speakers = dict.fromkeys(
+            seg.raw_speaker_id or seg.speaker for seg in timeline_segments
+        )
+        for raw_spk in selected_raw_speakers:
+            friendly_label = label_mapping[raw_spk]
             speakers_dict[friendly_label] = {
                 "raw_speaker_id": raw_spk,
                 "segments": [],
@@ -163,6 +197,14 @@ class SpeakerLabelingService:
             speaker_mapping=label_mapping,
             speakers=speakers_list,
             timeline=timeline_segments,
+            raw_timeline=raw_timeline,
+            native_exclusive_timeline=native_exclusive_timeline,
+            smoothed_timeline=smoothed_timeline,
+            timeline_mode=segmentation_res.timeline_mode,
+            timeline_source=segmentation_res.timeline_source,
+            smoothing_enabled=segmentation_res.smoothing_enabled,
+            smoothing_max_fragment_ms=segmentation_res.smoothing_max_fragment_ms,
+            smoothing_diagnostics=segmentation_res.smoothing_diagnostics,
             embeddings_status=emb_status
         )
 
@@ -225,12 +267,23 @@ class SpeakerLabelingService:
         audio_path: Union[str, Path],
         output_json_path: Optional[Union[str, Path]] = None,
         job_id: Optional[str] = None,
-        speaker_embeddings: Optional[Dict[str, List[float]]] = None
+        speaker_embeddings: Optional[Dict[str, List[float]]] = None,
+        num_speakers: Optional[int] = None,
+        min_speakers: Optional[int] = None,
+        max_speakers: Optional[int] = None,
+        timeline_mode: Optional[str] = None,
     ) -> Tuple[DiarizationExportPayload, Optional[Path]]:
         """
         Quy trình trọn gói: VAD/Segmentation -> Sinh Embeddings -> Labeling -> JSON File Export.
         """
-        seg_res = speaker_diarization_service.segment_speech(audio_path, job_id=job_id)
+        seg_res = speaker_diarization_service.segment_speech(
+            audio_path,
+            job_id=job_id,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+            timeline_mode=timeline_mode,
+        )
 
         effective_embeddings = speaker_embeddings
         embeddings_error_msg = None

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from app.services.whisper_asr_service import WhisperASRService
-from app.services.speaker_transcript_aligner import align_speakers
+from app.services.speaker_transcript_aligner import align_speakers, analyze_speaker_attribution
 from app.services.transcript_parser import build_transcript_payload
 
 
@@ -116,3 +116,38 @@ def test_stt_pipeline_to_backend_json(tmp_path):
         word_timestamps=True,
     )
     adapter.unload.assert_called_once()
+
+
+def test_speaker_alignment_uses_text_bearing_word_boundaries_when_segment_crosses_turn():
+    """Reliable word timing can split crossing text without stretching either speaker interval."""
+    whisper_segment = SimpleNamespace(
+        start=0.0,
+        end=10.0,
+        text="Nội dung cuộc họp.",
+        words=[
+            SimpleNamespace(start=8.0, end=9.0, word="Nội dung "),
+            SimpleNamespace(start=9.0, end=10.0, word="cuộc họp."),
+        ],
+    )
+
+    diarization_timeline = [
+        SimpleNamespace(
+            start_seconds=0.0,
+            end_seconds=8.0,
+            raw_speaker_id="SPEAKER_00",
+            speaker="Speaker A",
+        ),
+        SimpleNamespace(
+            start_seconds=8.0,
+            end_seconds=10.0,
+            raw_speaker_id="SPEAKER_01",
+            speaker="Speaker B",
+        ),
+    ]
+
+    attribution = analyze_speaker_attribution([whisper_segment], diarization_timeline)[0]
+    assert attribution.status == "WORD_LEVEL_SPLIT"
+    assert attribution.word_assignments == (
+        (8.0, 9.0, "Nội dung ", "SPEAKER_01"),
+        (9.0, 10.0, "cuộc họp.", "SPEAKER_01"),
+    )

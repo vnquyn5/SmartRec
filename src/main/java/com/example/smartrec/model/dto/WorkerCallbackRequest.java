@@ -22,4 +22,5 @@ public class WorkerCallbackRequest {
     private String errorCode;
     private String errorMessage;
     private List<SpeakerSegmentResponse> segments;
+    private AIResponse aiResult;
 }

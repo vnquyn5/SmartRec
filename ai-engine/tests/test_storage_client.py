@@ -119,3 +119,69 @@ def test_object_connection_error(storage):
 
     with pytest.raises(RetryableProcessingError):
         storage.object_exists("audio.mp3")
+
+
+def test_download_with_allowed_workspace(storage, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    destination = workspace / "audio.mp4"
+
+    result = storage.download_file(
+        "meeting/audio.mp4",
+        str(destination),
+        allowed_root=workspace,
+    )
+
+    assert result == str(destination)
+    storage.client.fget_object.assert_called_once()
+
+
+def test_download_rejects_destination_outside_workspace(storage, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    destination = tmp_path / "outside.mp4"
+
+    with pytest.raises(PermissionError):
+        storage.download_file(
+            "meeting/audio.mp4",
+            str(destination),
+            allowed_root=workspace,
+        )
+
+    storage.client.fget_object.assert_not_called()
+
+
+def test_download_rejects_path_traversal(storage, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    destination = workspace / ".." / "outside.mp4"
+
+    with pytest.raises(PermissionError):
+        storage.download_file(
+            "meeting/audio.mp4",
+            str(destination),
+            allowed_root=workspace,
+        )
+
+    storage.client.fget_object.assert_not_called()
+
+
+def test_download_rejects_symlink_outside_workspace(storage, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    link = workspace / "linked"
+    link.symlink_to(outside, target_is_directory=True)
+
+    destination = link / "audio.mp4"
+
+    with pytest.raises(PermissionError):
+        storage.download_file(
+            "meeting/audio.mp4",
+            str(destination),
+            allowed_root=workspace,
+        )
+
+    storage.client.fget_object.assert_not_called()

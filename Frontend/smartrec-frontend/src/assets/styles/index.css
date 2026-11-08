@@ -1340,6 +1340,51 @@ a {
   padding: 28px 32px 48px;
 }
 
+/* Meeting Details owns the space below the global header on desktop. The
+   page itself stays fixed while its transcript and speaker lists scroll. */
+@media (min-width: 1280px) {
+  .dashboard-shell.meeting-details-shell {
+    grid-template-rows: minmax(0, 1fr);
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .meeting-details-shell .dashboard-main,
+  .meeting-details-shell .meeting-details-content {
+    min-height: 0;
+  }
+
+  .meeting-details-shell .topbar {
+    flex-shrink: 0;
+  }
+
+  .meeting-details-content {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 14px 20px 16px;
+  }
+
+  .meeting-details-page {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 1279px) {
+  .meeting-details-content {
+    overflow: visible;
+  }
+
+  .meeting-details-page {
+    height: auto;
+    overflow: visible;
+  }
+}
+
 .dashboard-welcome-row {
   display: flex;
   align-items: flex-start;
