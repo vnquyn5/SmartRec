@@ -55,17 +55,6 @@ const MAX_CHUNKED_FILES = 3;
 const SINGLE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
 const CHUNKED_UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024;
 
-const LANGUAGES = [
-  { id: "auto", label: "Auto" },
-  { id: "vi", label: "Vietnamese (Tiếng Việt)" },
-  { id: "fr", label: "French (Français)" },
-  { id: "en", label: "English (English)" },
-  { id: "ja", label: "Japanese (日本語)" },
-  { id: "ko", label: "Korean (한국어)" },
-  { id: "es", label: "Spanish (Español)" },
-  { id: "de", label: "Deutsch (German)" },
-  { id: "zh", label: "Chinese (中文)" },
-];
 
 const getFileIdentity = (file) =>
   `${file.name}-${file.size}-${file.lastModified}`;
@@ -105,18 +94,15 @@ const UploadPage = () => {
   const isSavingAllRef = useRef(false);
   const queue = singleUploadState.items;
 
-  // State cho giao diện mới (Folder & Summarize Language)
+  // State cho giao diện Folder
   const [selectedFolder, setSelectedFolder] = useState({ id: null, name: "All Notes" });
   const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
   const [folders, setFolders] = useState([]);
   const [folderSearchText, setFolderSearchText] = useState("");
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  const [selectedLanguage, setSelectedLanguage] = useState("English (English)");
-  const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
 
   const folderDropdownRef = useRef(null);
-  const langDropdownRef = useRef(null);
 
   const handleCreateFolderSubmit = async (e) => {
     e?.preventDefault();
@@ -147,9 +133,6 @@ const UploadPage = () => {
     const handleClickOutside = (e) => {
       if (folderDropdownRef.current && !folderDropdownRef.current.contains(e.target)) {
         setFolderDropdownOpen(false);
-      }
-      if (langDropdownRef.current && !langDropdownRef.current.contains(e.target)) {
-        setLanguageDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -1185,15 +1168,14 @@ const UploadPage = () => {
             </div>
           )}
 
-          {/* Form Field 1: Folder */}
-          <div className="mb-3.5 relative" ref={folderDropdownRef}>
+          {/* Form Field: Folder */}
+          <div className="mb-5 relative" ref={folderDropdownRef}>
             <label className="text-xs font-semibold text-[#8d96aa] mb-1.5 block">
               Folder
             </label>
             <div
               onClick={() => {
                 setFolderDropdownOpen((prev) => !prev);
-                setLanguageDropdownOpen(false);
                 setIsCreatingFolder(false);
                 setFolderSearchText("");
               }}
@@ -1346,82 +1328,7 @@ const UploadPage = () => {
             )}
           </div>
 
-          {/* Form Field 2: Summarize Language */}
-          <div className="mb-5 relative" ref={langDropdownRef}>
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <label className="text-xs font-semibold text-[#8d96aa]">
-                Summarize Language
-              </label>
-              <div className="relative group/lang inline-flex items-center cursor-help">
-                <svg className="w-3.5 h-3.5 text-[#8d96aa] hover:text-[#f7f9ff]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="16" x2="12" y2="12"></line>
-                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                </svg>
-                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/lang:block bg-[#162035] text-slate-200 border border-[#263756] text-[10px] py-1 px-2.5 rounded-lg shadow-2xl whitespace-nowrap z-50">
-                  Ngôn ngữ mô hình AI sẽ dùng để xuất bản tóm tắt và trích xuất nhiệm vụ
-                </span>
-              </div>
-            </div>
-            <div
-              onClick={() => {
-                setLanguageDropdownOpen((prev) => !prev);
-                setFolderDropdownOpen(false);
-              }}
-              className="w-full bg-[#131b2e] hover:bg-[#18233a] rounded-2xl px-4 py-3 flex items-center justify-between cursor-pointer border border-[#1e2a44] hover:border-blue-500/40 transition select-none"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-[#1b253b] border border-[#283854] flex items-center justify-center text-blue-400 shrink-0">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="2" y1="12" x2="22" y2="12"></line>
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-                  </svg>
-                </div>
-                <span className="text-sm font-semibold text-[#f7f9ff] truncate">
-                  {selectedLanguage}
-                </span>
-              </div>
-              <svg className="w-4 h-4 text-[#8d96aa] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>
-              </svg>
-            </div>
 
-            {languageDropdownOpen && (
-              <div className="absolute top-full left-0 right-0 mt-1.5 bg-[#0f1728] rounded-2xl border border-[#1e2a44] shadow-2xl py-2 z-50 max-h-60 overflow-y-auto">
-                <div className="px-3.5 pt-1 pb-1 text-[11px] font-semibold text-[#8d96aa] tracking-wide select-none">
-                  All
-                </div>
-                <div className="p-1 space-y-0.5">
-                  {LANGUAGES.map((lang) => {
-                    const isSelected = selectedLanguage === lang.label;
-                    return (
-                      <button
-                        key={lang.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedLanguage(lang.label);
-                          setLanguageDropdownOpen(false);
-                        }}
-                        className={`w-full px-3.5 py-2.5 text-left text-xs flex items-center justify-between rounded-xl transition cursor-pointer ${
-                          isSelected
-                            ? "text-[#f7f9ff] bg-[#1a253c] font-semibold"
-                            : "text-[#c2c8d6] hover:bg-[#18233a] hover:text-[#f7f9ff]"
-                        }`}
-                      >
-                        <span className="truncate">{lang.label}</span>
-                        {isSelected && (
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#f7f9ff] shrink-0 ml-auto">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                          </svg>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
 
           {/* File Queue */}
           {displayQueue.length > 0 && (
