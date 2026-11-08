@@ -603,7 +603,7 @@ export default function FileManagerPage() {
   };
 
   const openMeetingDetail = (meeting) => {
-    navigate(`/meeting/${meeting.id}`, { state: { meeting } });
+    navigate(`/meeting/${meeting.id}`, { state: { meeting, from: "/history" } });
   };
 
   const visibleBytes = data.content.reduce(

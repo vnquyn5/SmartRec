@@ -1,5 +1,5 @@
 import React from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import BrandLink from "./BrandLink";
 
@@ -148,7 +148,25 @@ const icons = {
 
 const Sidebar = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout } = useAuth();
+
+  const isMeetingRoute = location.pathname.startsWith("/meeting/");
+  const isFromWorkspace = location.state?.from === "/workspace";
+
+  const isItemActive = (to) => {
+    if (to === "/history") {
+      // Khi nhấn tại file ở danh sách, nhảy sang cuộc họp nhưng sidebar vẫn giữ "Danh sách cuộc họp" active
+      return location.pathname === "/history" || (isMeetingRoute && !isFromWorkspace);
+    }
+    if (to === "/workspace") {
+      return location.pathname === "/workspace" || (isMeetingRoute && isFromWorkspace);
+    }
+    if (to === "/") {
+      return location.pathname === "/";
+    }
+    return location.pathname.startsWith(to);
+  };
 
   const handleLogout = async () => {
     await logout(); // Xoá token, đặt status = unauthenticated
@@ -161,19 +179,20 @@ const Sidebar = () => {
         <BrandLink />
 
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                `sidebar-link${isActive ? " is-active" : ""}`
-              }
-            >
-              {icons[item.icon]}
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+          {navItems.map((item) => {
+            const active = isItemActive(item.to);
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/"}
+                className={`sidebar-link${active ? " is-active" : ""}`}
+              >
+                {icons[item.icon]}
+                <span>{item.label}</span>
+              </NavLink>
+            );
+          })}
         </nav>
       </div>
 

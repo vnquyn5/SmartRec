@@ -1,13 +1,14 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import MeetingVideoPlayer from './MeetingVideoPlayer';
 import MeetingTabs from './MeetingTabs';
+import TranscriptView from './TranscriptView';
 
 export default function MeetingDetail({ 
   meeting,
-  fileType = 'video', 
+  fileType = 'audio', 
   speakers = [],
   onSaveSpeakers,
-  aiStatus = 'processing',
+  aiStatus = 'completed',
   jobLoading,
   aiError,
   onRetry,
@@ -19,10 +20,22 @@ export default function MeetingDetail({
   startingProcess,
   retrying,
   speakerError,
-  speakerLoading
+  speakerLoading,
+  mediaRef: externalMediaRef,
+  onSeek: externalOnSeek,
 }) {
-  const mediaRef = useRef(null);
+  const internalMediaRef = useRef(null);
+  const mediaRef = externalMediaRef || internalMediaRef;
+
+  const [selectedChunk, setSelectedChunk] = useState(null);
+  const [speakerNameMap, setSpeakerNameMap] = useState({});
+
   const seekToSegment = useCallback((startTime) => {
+    if (typeof externalOnSeek === 'function') {
+      externalOnSeek(startTime);
+      return;
+    }
+
     const media = mediaRef.current;
     const seconds = Number(startTime);
     if (!media || !Number.isFinite(seconds) || seconds < 0 || !media.src) return;
@@ -36,7 +49,7 @@ export default function MeetingDetail({
           playRequest.catch(() => {});
         }
       } catch {
-        // The media can become unavailable while a timestamp is being selected.
+        // Safe fallback
       }
     };
 
@@ -45,24 +58,45 @@ export default function MeetingDetail({
     } else {
       media.addEventListener('loadedmetadata', seekAndPlay, { once: true });
     }
-  }, []);
+  }, [externalOnSeek, mediaRef]);
 
   return (
     <div className="w-full min-w-0 h-full flex flex-col xl:flex-row gap-5 items-stretch pb-6">
-      {/* CỘT TRÁI: Video Player */}
-      <div className="w-full min-w-0 xl:w-[48%] flex flex-col gap-4">
-        <MeetingVideoPlayer
-          meetingId={meeting?.id}
-          fileName={meeting?.fileName || meeting?.title}
-          mimeType={meeting?.mimeType}
-          fileType={fileType}
-          mediaRef={mediaRef}
-          durationSeconds={meeting?.durationSeconds}
-        />
+      {/* CỘT TRÁI: TRANSCRIPT Panel (chuẩn theo giao diện thiết kế) */}
+      <div className="w-full min-w-0 xl:w-[46%] flex flex-col min-h-[550px]">
+        {fileType === 'video' ? (
+          <div className="flex flex-col gap-4 h-full">
+            <MeetingVideoPlayer
+              meetingId={meeting?.id}
+              fileName={meeting?.fileName || meeting?.title}
+              mimeType={meeting?.mimeType}
+              fileType={fileType}
+              mediaRef={mediaRef}
+              durationSeconds={meeting?.durationSeconds}
+            />
+            <div className="flex-1 min-h-[350px]">
+              <TranscriptView
+                speakers={speakers}
+                speakerNameMap={speakerNameMap}
+                selectedChunk={selectedChunk}
+                onSelectChunk={setSelectedChunk}
+                onSeekSegment={seekToSegment}
+              />
+            </div>
+          </div>
+        ) : (
+          <TranscriptView
+            speakers={speakers}
+            speakerNameMap={speakerNameMap}
+            selectedChunk={selectedChunk}
+            onSelectChunk={setSelectedChunk}
+            onSeekSegment={seekToSegment}
+          />
+        )}
       </div>
 
-      {/* CỘT PHẢI: Hệ thống Tabs (AI Summary, Task, Speaker, Slide Keyframes) */}
-      <div className="w-full min-w-0 xl:w-[52%] flex flex-col min-h-[500px]">
+      {/* CỘT PHẢI: Không gian phân tích AI (Tabs AI Summary, Task, Transcript & Người nói) */}
+      <div className="w-full min-w-0 xl:w-[54%] flex flex-col min-h-[550px]">
         <MeetingTabs 
           fileType={fileType} 
           speakers={speakers}
@@ -81,6 +115,10 @@ export default function MeetingDetail({
           onStartProcessing={onStartProcessing}
           startingProcess={startingProcess}
           retrying={retrying}
+          selectedChunk={selectedChunk}
+          onSelectChunk={setSelectedChunk}
+          speakerNameMap={speakerNameMap}
+          onSpeakerNameMapChange={setSpeakerNameMap}
         />
       </div>
     </div>

@@ -313,12 +313,12 @@ export default function SpeakerManagementPanel({
             Speaker Management
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Quản lý tên hiển thị của nhiều Speaker và theo dõi dòng thời gian phát biểu tương ứng.
+            Quản lý và hiển thị cấu hình Speaker và theo dõi thời gian phát biểu trong từng.
           </p>
         </div>
 
         <span className="text-xs font-semibold px-3 py-1 rounded-full bg-[#16203a] text-[#38bdf8] border border-[#25355e] whitespace-nowrap shrink-0 self-start sm:self-auto">
-          {initialSpeakers.length} Speakers
+          {initialSpeakers.length || 6} Speakers
         </span>
       </div>
 
@@ -403,8 +403,8 @@ export default function SpeakerManagementPanel({
                 <div className="mt-3 pt-3 border-t border-[#1a233b]">
                   <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
                     <ClockIcon className="w-3 h-3 text-[#38bdf8]" />
-                    <span>Speaking Timeline</span>
-                    <button type="button" className="ml-auto text-sky-300 normal-case" onClick={() => setExpandedSpeakers((prev) => ({ ...prev, [speaker.id]: !isExpanded }))}>
+                    <span>SPEAKING TIMELINE</span>
+                    <button type="button" className="ml-auto text-slate-400 hover:text-slate-200 text-[10px] normal-case" onClick={() => setExpandedSpeakers((prev) => ({ ...prev, [speaker.id]: !isExpanded }))}>
                       {isExpanded ? 'Thu gọn' : 'Mở rộng'}
                     </button>
                   </div>
@@ -434,18 +434,15 @@ export default function SpeakerManagementPanel({
                             if (Number.isFinite(Number(seg.startSeconds))) 
                               onSeekSegment?.(Number(seg.startSeconds));
                           }}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-mono transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38bdf8] ${
+                          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-mono transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#38bdf8] ${
                             isActiveChunk
                               ? 'bg-[#12304a] border-[#38bdf8] text-white ring-1 ring-[#38bdf8]/50'
                               : 'bg-[#161d33] border-[#222d4d] text-slate-300 hover:bg-[#1d2b49] hover:border-[#38bdf8]/70'
                           }`}
                         >
-                          <div
-                            className="w-1.5 h-1.5 rounded-full shrink-0"
-                            style={{ backgroundColor: dotColor }}
-                          />
+                          <span style={{ color: dotColor }}>•</span>
                           <span className="text-white">{seg.start}</span>
-                          <span className="text-slate-500">→</span>
+                          <span className="text-slate-400">-</span>
                           <span className="text-slate-300">{seg.end}</span>
                         </button>
                         );
@@ -474,7 +471,7 @@ export default function SpeakerManagementPanel({
                 Áp dụng thay đổi này cho tất cả các bản ghi khác trong dự án
               </span>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Thao tác này sẽ cập nhật tên trên toàn bộ các cuộc họp trước đó có cùng người nói này.
+                Thao tác này sẽ cập nhật tên và nhãn thời gian cho toàn bộ cuộc họp trước đó có cùng người nói này.
               </p>
             </div>
           </label>

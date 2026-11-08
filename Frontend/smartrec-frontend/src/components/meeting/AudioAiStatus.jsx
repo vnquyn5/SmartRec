@@ -93,20 +93,24 @@ export default function AudioAiStatus({ status, onRetry, onPause, onResume, onCa
 
   if (status === 'completed' || status === 'empty') {
     return (
-      <div className="w-full bg-[#0c101d] border border-[#10b981]/40 rounded-lg p-2.5 shadow-sm flex items-center justify-between font-sans">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-md bg-[#064e3b] border border-[#10b981]/50 flex items-center justify-center text-[#34d399] shrink-0 shadow-sm">
-            <CheckCircleIcon />
+      <div className="w-full bg-[#081f18]/80 border border-[#10b981]/40 rounded-xl p-3.5 shadow-sm flex items-center justify-between font-sans">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-[#064e3b] border border-[#10b981]/50 flex items-center justify-center text-[#34d399] shrink-0 shadow-sm">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+            </svg>
           </div>
           <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-white text-[13px] font-bold">Audio AI</span>
-              <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-[#064e3b] text-[#34d399]">
-                Hoàn tất
+            <div className="flex items-center gap-2">
+              <span className="text-white text-xs font-bold">Audio AI</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-[#064e3b] text-[#34d399] border border-[#10b981]/40">
+                HOÀN TẤT
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5 leading-tight">
-              {status === 'empty' ? 'Đã xử lý xong. Không phát hiện đoạn hội thoại nào.' : 'Đã nhận diện thành công các Speaker và đoạn hội thoại trong cuộc họp.'}
+            <p className="text-xs text-slate-300 mt-1 leading-tight">
+              {status === 'empty' ? 'Đã xử lý xong. Không phát hiện đoạn hội thoại nào.' : 'Đã nhận diện thành công các Speaker và tạo nhãn thời gian trong cuộc họp.'}
             </p>
           </div>
         </div>

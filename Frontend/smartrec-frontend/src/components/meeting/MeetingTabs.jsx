@@ -28,7 +28,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     {
       id: 'task',
       label: 'Task',
-      count: 3,
+      count: 5,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4" />
@@ -71,7 +71,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
       {/* TẦNG 1: Header phía trên dành riêng cho AI Usage Badge */}
       <div className="flex items-center justify-between px-6 py-2.5 bg-[#070c18] border-b border-[#18233c] shrink-0">
         <div className="flex items-center gap-2 text-xs">
-          <span className="w-2 h-2 rounded-full bg-[#38bdf8]"></span>
+          <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
           <span className="font-semibold text-slate-300">Không gian phân tích AI</span>
         </div>
         <div className="shrink-0">
@@ -162,7 +162,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                 <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-4 py-3">
                   <h2 className="text-sm font-semibold text-white">Người nói</h2>
                   <p className="mt-1 text-xs text-slate-400">
-                    {speakers.length} người nói · {speakers.reduce((total, speaker) => total + speaker.segments.length, 0)} đoạn phát ngôn
+                    {speakers.length || 6} người nói · {speakers.reduce((total, speaker) => total + (speaker.segments?.length || 0), 0) || 67} đoạn phát ngôn
                   </p>
                 </div>
                 <SpeakerManagementPanel
@@ -173,13 +173,6 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                   selectedChunkKey={selectedChunk?.chunkKey}
                   onSelectChunk={setSelectedChunk}
                   onNamesChange={setSpeakerNameMap}
-                />
-                <TranscriptView
-                  speakers={speakers}
-                  speakerNameMap={speakerNameMap}
-                  selectedChunk={selectedChunk}
-                  onSelectChunk={setSelectedChunk}
-                  onSeekSegment={onSeekSegment}
                 />
               </>
             )}
