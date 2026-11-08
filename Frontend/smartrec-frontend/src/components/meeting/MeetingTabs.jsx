@@ -84,6 +84,8 @@ export default function MeetingTabs({ speakers = [], mediaRef, onSaveSpeakers, o
       <div className={`flex-1 min-h-0 min-w-0 p-5 bg-[#090f1d] ${activeTab === 'speaker' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {activeTab === 'summary' && <MeetingSummaryTab
           summary={results?.summary}
+          llmProvider={results?.llmProvider}
+          fallbackUsed={results?.llmFallbackUsed}
           transcripts={results?.transcripts || []}
           onEvidenceClick={onEvidenceClick}
           aiStatus={aiStatus}

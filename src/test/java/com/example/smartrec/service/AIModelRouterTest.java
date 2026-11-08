@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -193,6 +194,44 @@ class AIModelRouterTest {
         verify(geminiFallbackService, never()).generate(any(), any(), any(), any(), any());
     }
 
+    @Test
+    void exhaustedFastApiModelRepairRoutesToGeminiWithoutRepeatingLocalGeneration() {
+        stubLiveJobContextAndPreparation();
+        when(properties.getLocalMaxAttempts()).thenReturn(2);
+        when(localClient.generate(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("EVIDENCE_CONSISTENCY_ERROR", true, true, null));
+        when(geminiFallbackService.generate(any(), any(), any(), any(), any()))
+                .thenThrow(new GeminiFallbackService.GeminiFallbackDeniedException(
+                        "GEMINI_FALLBACK_NOT_CONFIGURED"));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> router.generate(JOB_ID, EXECUTION_ID));
+
+        assertEquals("GEMINI_FALLBACK_DENIED", error.getCode());
+        verify(localClient, times(1)).generate(any());
+        verify(geminiFallbackService, times(1)).generate(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void localModelFailureDuringRepairDoesNotRepeatFastApiRepairSequence() {
+        stubLiveJobContextAndPreparation();
+        when(properties.getLocalMaxAttempts()).thenReturn(2);
+        when(localClient.generate(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("LOCAL_MODEL_TIMEOUT", true, true, null));
+        when(geminiFallbackService.generate(any(), any(), any(), any(), any()))
+                .thenThrow(new GeminiFallbackService.GeminiFallbackDeniedException(
+                        "GEMINI_FALLBACK_NOT_CONFIGURED"));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> router.generate(JOB_ID, EXECUTION_ID));
+
+        assertEquals("GEMINI_FALLBACK_DENIED", error.getCode());
+        verify(localClient, times(1)).generate(any());
+        verify(geminiFallbackService, times(1)).generate(any(), any(), any(), any(), any());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"LOCAL_MODEL_TIMEOUT", "LOCAL_MODEL_UNAVAILABLE", "EVIDENCE_CONSISTENCY_ERROR"})
     void eligibleLocalFailureUsesValidatedGeminiResult(String errorCode) throws Exception {
@@ -232,6 +271,41 @@ class AIModelRouterTest {
                 () -> router.generate(JOB_ID, EXECUTION_ID));
 
         assertEquals("GEMINI_EVIDENCE_CONSISTENCY_FAILED", error.getCode());
+        verify(responseValidator, never()).validate(any());
+    }
+
+    @Test
+    void geminiInvalidJsonCannotProduceAResult() {
+        stubLiveJobContextAndPreparation();
+        when(localClient.generate(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("LOCAL_MODEL_TIMEOUT", true));
+        when(geminiFallbackService.generate(any(), any(), any(), any(), any()))
+                .thenReturn(new com.example.smartrec.service.impl.GeminiFallbackClient.GeminiGeneration(
+                        "{", 1L, 2L));
+        when(localClient.validateFallback(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("JSON_PARSE_ERROR", false));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> router.generate(JOB_ID, EXECUTION_ID));
+
+        assertEquals("GEMINI_JSON_INVALID", error.getCode());
+        verify(responseValidator, never()).validate(any());
+    }
+
+    @Test
+    void geminiTruncationCannotProduceAResult() {
+        stubLiveJobContextAndPreparation();
+        when(localClient.generate(any())).thenThrow(
+                new LocalLLMAdapterClient.AdapterException("LOCAL_MODEL_TIMEOUT", true));
+        when(geminiFallbackService.generate(any(), any(), any(), any(), any()))
+                .thenThrow(new com.example.smartrec.service.impl.GeminiFallbackClient.GeminiProviderException(
+                        "GEMINI_OUTPUT_TRUNCATED", false));
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> router.generate(JOB_ID, EXECUTION_ID));
+
+        assertEquals("GEMINI_OUTPUT_TRUNCATED", error.getCode());
+        verify(localClient, never()).validateFallback(any());
         verify(responseValidator, never()).validate(any());
     }
 

@@ -1,8 +1,8 @@
 """Internal prompt preparation, local-only inference and output validation."""
 
 import hmac
-import json
 import logging
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, status
@@ -29,11 +29,11 @@ from app.services.meeting_summary_prompt import (
     build_meeting_summary_prompt,
     build_meeting_summary_system_prompt,
 )
-from app.services.meeting_summary_normalization import normalize_summary_from_evidence
+from app.services.local_llm_debug import capture_local_llm_failure
+from app.services.meeting_summary_pipeline import normalize_and_validate_local_summary
 from app.services.meeting_summary_references import (
     EvidenceReferenceError,
     build_evidence_reference_map,
-    expand_summary_references,
     verify_short_reference_allowlist,
 )
 
@@ -41,6 +41,7 @@ from app.services.meeting_summary_references import (
 logger = logging.getLogger("smartrec.internal_llm")
 router = APIRouter(prefix="/internal/llm", tags=["Internal LLM"])
 local_llm_client = LocalLLMClient()
+MAX_LOCAL_OUTPUT_ATTEMPTS = 2
 
 
 def _authenticate(x_internal_token: str | None) -> None:
@@ -59,31 +60,7 @@ def _require_llm_enabled() -> None:
 
 def _validated_summary(raw_output: str, refs: list[str], evidence=None) -> MeetingSummary:
     try:
-        reference_map = verify_short_reference_allowlist(evidence or (), refs)
-        compact_summary = validate_summary_output(
-            raw_output, MeetingSummary, set(reference_map.allowed_short_refs)
-        )
-        expanded = expand_summary_references(
-            compact_summary.model_dump(mode="json"), reference_map
-        )
-        expanded = normalize_summary_from_evidence(
-            expanded, list(reference_map.ordered_evidence)
-        )
-        summary = validate_summary_output(
-            json.dumps(expanded, ensure_ascii=False),
-            MeetingSummary,
-            reference_map.allowed_original_refs,
-            reference_map.ordered_evidence,
-        )
-        if reference_map.allowed_original_refs and summary.executive_summary is None:
-            raise SummaryValidationError(
-                SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
-                "A summary is required when verified source evidence is available",
-                validation_diagnostics=(
-                    {"loc": [], "type": "value_error"},
-                ),
-            )
-        return summary
+        return normalize_and_validate_local_summary(raw_output, refs, evidence or [])
     except EvidenceReferenceError as exc:
         diagnostic = {"loc": ["source_refs"], "type": "evidence_reference_mapping"}
         logger.warning(
@@ -131,6 +108,49 @@ def _validated_summary(raw_output: str, refs: list[str], evidence=None) -> Meeti
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"code": exc.code.value},
         ) from exc
+
+
+def _safe_validation_hints(exc: HTTPException) -> list[str]:
+    """Return only validator field paths and error types for a bounded repair."""
+    cause = exc.__cause__
+    diagnostics = getattr(cause, "validation_diagnostics", ())
+    hints: list[str] = []
+    for item in diagnostics:
+        location = item.get("loc", ()) if isinstance(item, dict) else ()
+        error_type = item.get("type", "validation_error") if isinstance(item, dict) else "validation_error"
+        safe_location = ".".join(
+            str(part) for part in location
+            if isinstance(part, (str, int)) and re.fullmatch(r"[A-Za-z0-9_-]+", str(part))
+        )
+        safe_type = str(error_type)
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_type):
+            safe_type = "validation_error"
+        hints.append(f"{safe_location or 'summary'}:{safe_type}")
+    if not hints:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        code = str(detail.get("code", "validation_error"))
+        hints.append(f"summary:{code if re.fullmatch(r'[A-Za-z0-9_-]+', code) else 'validation_error'}")
+    return hints[:32]
+
+
+def _repair_prompt(original_prompt: str, failure: HTTPException) -> str:
+    hints = ", ".join(_safe_validation_hints(failure))
+    return (
+        f"{original_prompt}\n\n"
+        "REPAIR INSTRUCTIONS: The previous JSON failed deterministic validation. "
+        "Regenerate the complete JSON from the evidence above. Keep every claim tied "
+        "to its exact source reference. Include each explicit assignment once; use "
+        "null for an assignee or deadline unless the evidence states it. Do not add "
+        "tasks, names, dates, decisions, or references that are not stated. Return "
+        f"only JSON. Validation fields/types to correct: {hints}."
+    )
+
+
+def _sum_metadata(attempts: list[dict], key: str):
+    values = [attempt.get(key) for attempt in attempts]
+    if not values or any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+        return None
+    return sum(values)
 
 
 @router.post("/prepare", response_model=PrepareInferenceResponse)
@@ -203,44 +223,85 @@ def generate_local(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"code": SummaryErrorCode.SOURCE_REFERENCE_ERROR.value},
         ) from exc
-    try:
-        generated = local_llm_client.generate(
-            prompt=request.prompt,
-            system_prompt=request.system_prompt,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            allowed_source_refs=request.allowed_source_refs,
-        )
-    except LocalLLMError as exc:
-        logger.warning("Local inference rejected: %s", exc.code)
-        code = exc.code
-        response_status = (
-            status.HTTP_503_SERVICE_UNAVAILABLE
-            if code in {"LOCAL_MODEL_NOT_CONFIGURED", "LOCAL_MODEL_UNAVAILABLE", "LOCAL_MODEL_TIMEOUT"}
-            else status.HTTP_502_BAD_GATEWAY
-        )
-        raise HTTPException(status_code=response_status, detail={"code": code}) from exc
+    generated_attempts: list[dict] = []
+    generated = None
+    summary = None
+    last_validation_error = None
+    for attempt_index in range(MAX_LOCAL_OUTPUT_ATTEMPTS):
+        prompt = request.prompt if attempt_index == 0 else _repair_prompt(request.prompt, last_validation_error)
+        try:
+            generated = local_llm_client.generate(
+                prompt=prompt,
+                system_prompt=request.system_prompt,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                allowed_source_refs=request.allowed_source_refs,
+            )
+        except LocalLLMError as exc:
+            logger.warning("Local inference rejected: %s", exc.code)
+            code = exc.code
+            response_status = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if code in {"LOCAL_MODEL_NOT_CONFIGURED", "LOCAL_MODEL_UNAVAILABLE", "LOCAL_MODEL_TIMEOUT"}
+                else status.HTTP_502_BAD_GATEWAY
+            )
+            if generated_attempts:
+                # A prior output already failed validation and this was the
+                # single permitted repair call. Mark the completed repair
+                # attempt so Spring does not repeat the whole local sequence.
+                last_output = generated_attempts[-1]
+                capture_local_llm_failure(
+                    job_id=request.job_id,
+                    raw_output=last_output["text"],
+                    allowed_source_refs=request.allowed_source_refs,
+                    evidence=request.evidence,
+                    failure_code=code,
+                )
+                raise HTTPException(
+                    status_code=response_status,
+                    detail={"code": code, "origin": "MODEL_OUTPUT"},
+                ) from exc
+            raise HTTPException(status_code=response_status, detail={"code": code}) from exc
+        generated_attempts.append(generated)
+        try:
+            summary = _validated_summary(
+                generated["text"], request.allowed_source_refs, request.evidence
+            )
+            break
+        except HTTPException as exc:
+            last_validation_error = exc
+            if attempt_index + 1 < MAX_LOCAL_OUTPUT_ATTEMPTS:
+                logger.info(
+                    "Retrying local summary after deterministic validation failure: attempt=%d code=%s",
+                    attempt_index + 2,
+                    exc.detail.get("code", "UNKNOWN") if isinstance(exc.detail, dict) else "UNKNOWN",
+                )
+                continue
 
-    try:
-        summary = _validated_summary(
-            generated["text"], request.allowed_source_refs, request.evidence
+    if summary is None:
+        assert generated is not None and last_validation_error is not None
+        exc = last_validation_error
+        failure_code = (
+            exc.detail.get("code", "UNKNOWN")
+            if isinstance(exc.detail, dict)
+            else "UNKNOWN"
         )
-    except HTTPException as exc:
-        if (
-            exc.status_code == status.HTTP_502_BAD_GATEWAY
-            and isinstance(exc.detail, dict)
-            and exc.detail.get("code") in {
-                SummaryErrorCode.EVIDENCE_CONSISTENCY_ERROR.value,
-                SummaryErrorCode.SOURCE_REFERENCE_ERROR.value,
-            }
-        ):
-            # This marker is issued only after local inference returned output.
-            # Invalid trusted context and fallback /validate never receive it.
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"code": exc.detail["code"], "origin": "MODEL_OUTPUT"},
-            ) from exc
-        raise
+        capture_local_llm_failure(
+            job_id=request.job_id,
+            raw_output=generated["text"],
+            allowed_source_refs=request.allowed_source_refs,
+            evidence=request.evidence,
+            failure_code=failure_code,
+        )
+        # This marker is issued only after local inference returned output.
+        # The backend uses it to avoid repeating the same output validation
+        # retry after this API has already performed its one repair attempt.
+        detail = exc.detail if isinstance(exc.detail, dict) else {"code": failure_code}
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": detail.get("code", failure_code), "origin": "MODEL_OUTPUT"},
+        ) from exc
+    assert generated is not None
     return LocalInferenceResponse(
         contractVersion="smartrec.local-llm.v1",
         requestId=request.request_id,
@@ -250,12 +311,14 @@ def generate_local(
         modelIdentifier=generated["model_identifier"],
         result=summary,
         tokenMetadata=TokenMetadata(
-            inputTokens=generated["input_tokens"],
-            outputTokens=generated["output_tokens"],
-            totalTokens=generated["total_tokens"],
+            inputTokens=_sum_metadata(generated_attempts, "input_tokens"),
+            outputTokens=_sum_metadata(generated_attempts, "output_tokens"),
+            totalTokens=_sum_metadata(generated_attempts, "total_tokens"),
             source=generated["token_source"],
         ),
-        processingTimeMs=generated["processing_time_ms"],
+        processingTimeMs=_sum_metadata(generated_attempts, "processing_time_ms")
+        if _sum_metadata(generated_attempts, "processing_time_ms") is not None
+        else generated["processing_time_ms"],
     )
 
 

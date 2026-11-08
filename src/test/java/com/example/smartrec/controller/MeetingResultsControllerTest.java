@@ -21,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.example.smartrec.entity.ActionItem;
+import com.example.smartrec.entity.AiUsage;
 import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.entity.Speaker;
 import com.example.smartrec.entity.Summary;
@@ -30,6 +31,7 @@ import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.model.dto.TranscriptResponse;
 import com.example.smartrec.repository.ActionItemRepository;
+import com.example.smartrec.repository.AiUsageRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.repository.SpeakerRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
@@ -55,6 +57,8 @@ class MeetingResultsControllerTest {
     private SummaryRepository summaryRepository;
     @Mock
     private ActionItemRepository actionItemRepository;
+    @Mock
+    private AiUsageRepository aiUsageRepository;
     @Mock
     private SpeakerRepository speakerRepository;
     @Mock
@@ -95,6 +99,10 @@ class MeetingResultsControllerTest {
         when(speakerRepository.findAllById(java.util.Set.of(SPEAKER_SEGMENT_ID)))
                 .thenReturn(List.of(speaker));
         when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.of(summary));
+        AiUsage usage = new AiUsage();
+        usage.setProvider("GEMINI");
+        usage.setFallbackUsed(true);
+        when(aiUsageRepository.findFirstByJobIdOrderByCreatedAtAsc(JOB_ID)).thenReturn(Optional.of(usage));
 
         ActionItem item = new ActionItem();
         item.setId(UUID.randomUUID());
@@ -129,6 +137,9 @@ class MeetingResultsControllerTest {
         assertNull(response.actionItems().get(0).assigneeSpeakerId());
         assertNull(response.actionItems().get(0).assigneeName());
         assertEquals("Gửi bản kế hoạch", response.summary().details().path("decisions").path(0).path("text").asText());
+        assertEquals("SUCCESS", response.llmStatus());
+        assertEquals("GEMINI", response.llmProvider());
+        assertEquals(true, response.llmFallbackUsed());
         verify(meetingService).getMeeting(MEETING_ID);
         verify(jobService).getJobForCurrentUser(JOB_ID);
     }
@@ -615,6 +626,27 @@ class MeetingResultsControllerTest {
         assertNull(response.summary());
         assertEquals(List.of(), response.transcripts());
         assertEquals(List.of(), response.actionItems());
+        assertEquals("UNAVAILABLE", response.llmStatus());
+    }
+
+    @Test
+    void completedCoreJobReportsLlmFailureCodeSeparately() {
+        when(meetingService.getMeeting(MEETING_ID)).thenReturn(meetingResponse(MEETING_ID));
+        when(jobService.getJobForCurrentUser(JOB_ID)).thenReturn(JobResponse.builder()
+                .id(JOB_ID).meetingId(MEETING_ID).status(JobStatus.COMPLETED)
+                .errorCode("AI_ENRICHMENT_FAILED")
+                .errorMessage("Core processing completed, but AI enrichment failed. Code: GEMINI_OUTPUT_TRUNCATED")
+                .build());
+        when(transcriptService.getTranscriptsByJob(JOB_ID)).thenReturn(List.of());
+        when(summaryRepository.findByProcessingJobId(JOB_ID)).thenReturn(Optional.empty());
+        when(actionItemRepository.findByProcessingJobId(JOB_ID)).thenReturn(List.of());
+
+        var response = controller.getResults(MEETING_ID, JOB_ID).getBody();
+
+        assertEquals(JobStatus.COMPLETED, response.jobStatus());
+        assertEquals("FAILED", response.llmStatus());
+        assertEquals("GEMINI_OUTPUT_TRUNCATED", response.llmFailureCode());
+        assertEquals(true, response.llmFallbackUsed());
     }
 
     private MeetingResponseDTO meetingResponse(UUID meetingId) {

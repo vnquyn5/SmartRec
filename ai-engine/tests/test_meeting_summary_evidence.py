@@ -13,7 +13,11 @@ from app.services.meeting_summary_json import (
     validate_summary_output,
 )
 from app.services.meeting_summary_normalization import normalize_summary_from_evidence
-from app.services.meeting_summary_evidence import _has_assignment_cue, cross_field_consistency_issues
+from app.services.meeting_summary_evidence import (
+    _has_assignment_cue,
+    cross_field_consistency_issues,
+    extract_explicit_assignment_facts,
+)
 
 
 def evidence(ref: str, text: str, start: int, end: int, speaker: str | None = None):
@@ -110,6 +114,31 @@ def test_explicit_named_assignee_cannot_be_dropped():
         [task],
         "missing_explicit_assignee",
     )
+
+
+def test_bare_obligation_uses_shared_assignment_extraction_and_validation():
+    task = evidence(
+        "10000000-0000-4000-8000-000000000099",
+        "Hùng phải kiểm thử video.",
+        1000,
+        2000,
+    )
+
+    assert _has_assignment_cue(task.text)
+    result = normalize_and_validate({
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": None,
+        "executive_summary_refs": [],
+        "key_points": [],
+        "decisions": [],
+        "action_items": [],
+        "open_issues": [],
+        "next_steps": [],
+        "conflicts": [],
+    }, [task])
+    assert len(result.action_items) == 1
+    assert result.action_items[0].title == "kiểm thử video"
+    assert result.action_items[0].assignee == "Hùng"
 
 
 def test_vietnamese_duoc_giao_cue_supports_named_assignee():
@@ -402,6 +431,231 @@ def test_general_progress_review_is_not_an_assigned_action_item():
         [review],
         "unassigned_action_item",
     )
+
+
+def test_normalization_drops_only_unassigned_progress_review():
+    review = evidence(
+        "10000000-0000-4000-8000-000000000087",
+        "Nhóm sẽ kiểm tra tiến độ trong cuộc họp tiếp theo.",
+        1000, 2000,
+    )
+    summary = {
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": "Nhóm sẽ kiểm tra tiến độ trong cuộc họp tiếp theo.",
+        "executive_summary_refs": [review.source_ref],
+        "key_points": [], "decisions": [],
+        "action_items": [{
+            "title": "Kiểm tra tiến độ", "assignee": None,
+            "deadline": None, "deadline_raw": None,
+            "source_refs": [review.source_ref],
+        }],
+        "open_issues": [], "next_steps": [], "conflicts": [],
+    }
+    result = normalize_and_validate(summary, [review])
+    assert result.action_items == []
+    assert result.executive_summary == summary["executive_summary"]
+
+
+def test_normalization_drops_asr_corrupted_unassigned_progress_review():
+    review = evidence(
+        "10000000-0000-4000-8000-000000000089",
+        "Cuối cùng nhóm thỏng nhân nhất kiểm tra tiến đấu trong cuộc họp tiếp theo.",
+        1000, 3000,
+    )
+    summary = {
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": "Nhóm kiểm tra tiến độ trong cuộc họp tiếp theo.",
+        "executive_summary_refs": [review.source_ref],
+        "key_points": [], "decisions": [],
+        "action_items": [{
+            "title": "Kiểm tra tiến độ", "assignee": None,
+            "deadline": None, "deadline_raw": None,
+            "source_refs": [review.source_ref],
+        }],
+        "open_issues": [], "next_steps": [], "conflicts": [],
+    }
+    result = normalize_and_validate(summary, [review])
+    assert result.action_items == []
+    assert not _has_assignment_cue(review.text)
+
+
+def test_normalization_recovers_missing_explicit_named_tasks_without_progress_items():
+    lan = evidence(
+        "10000000-0000-4000-8000-000000000090",
+        "Lan sẽ phải phát triển giao diện đăng nhập.", 1000, 2000,
+    )
+    hung = evidence(
+        "10000000-0000-4000-8000-000000000091",
+        "Hùng phụ trách kiểm thử video trước ngày 12 tháng 11 năm 2026.", 2100, 4000,
+    )
+    review = evidence(
+        "10000000-0000-4000-8000-000000000092",
+        "Nhóm sẽ kiểm tra tiến độ trong cuộc họp tiếp theo.", 4100, 5200,
+    )
+    normalized = normalize_summary_from_evidence({
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": "Lan phát triển giao diện và Hùng kiểm thử video.",
+        "executive_summary_refs": [lan.source_ref, hung.source_ref],
+        "key_points": [], "decisions": [], "action_items": [],
+        "open_issues": [], "next_steps": [], "conflicts": [],
+    }, [lan, hung, review])
+    result = validate_summary_output(
+        json.dumps(normalized, ensure_ascii=False), MeetingSummary,
+        {lan.source_ref, hung.source_ref, review.source_ref}, [lan, hung, review],
+    )
+
+    assert [(item.title, item.assignee, item.source_refs) for item in result.action_items] == [
+        ("phát triển giao diện đăng nhập", "Lan", [lan.source_ref]),
+        ("kiểm thử video", "Hùng", [hung.source_ref]),
+    ]
+
+
+def test_unsupported_action_title_is_replaced_only_from_its_single_cited_assignment():
+    task = evidence(
+        "10000000-0000-4000-8000-000000000093",
+        "Lan sẽ phải phát triển giao diện đăng nhập.", 1000, 2000,
+    )
+    normalized = normalize_summary_from_evidence({
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": "Lan sẽ phát triển giao diện đăng nhập.",
+        "executive_summary_refs": [task.source_ref],
+        "key_points": [], "decisions": [],
+        "action_items": [{
+            "title": "Xây dựng hệ thống tài khoản và bảo mật", "assignee": "Lan",
+            "deadline": None, "deadline_raw": None, "source_refs": [task.source_ref],
+        }],
+        "open_issues": [], "next_steps": [], "conflicts": [],
+    }, [task])
+    result = validate_summary_output(
+        json.dumps(normalized, ensure_ascii=False), MeetingSummary,
+        {task.source_ref}, [task],
+    )
+
+    assert result.action_items[0].title == "phát triển giao diện đăng nhập"
+
+
+def test_unsupported_action_title_remains_rejected_without_safe_normalization():
+    task = evidence(
+        "10000000-0000-4000-8000-000000000094",
+        "Lan sẽ phải phát triển giao diện đăng nhập.", 1000, 2000,
+    )
+    expect_evidence_error(
+        action("Xây dựng hệ thống tài khoản và bảo mật", "Lan", None, None, [task.source_ref]),
+        [task], "unsupported_action_title",
+    )
+
+
+def test_normalization_drops_action_claim_without_explicit_assignment_evidence():
+    intention = evidence(
+        "10000000-0000-4000-8000-000000000088",
+        "Lan sẽ phát triển giao diện đăng nhập.", 1000, 2000,
+    )
+    summary = {
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": "Lan sẽ phát triển giao diện đăng nhập.",
+        "executive_summary_refs": [intention.source_ref],
+        "key_points": [], "decisions": [],
+        "action_items": [{
+            "title": "Phát triển giao diện đăng nhập", "assignee": "Lan",
+            "deadline": None, "deadline_raw": None,
+            "source_refs": [intention.source_ref],
+        }],
+        "open_issues": [], "next_steps": [], "conflicts": [],
+    }
+    result = normalize_and_validate(summary, [intention])
+    assert result.action_items == []
+
+
+def test_shared_assignment_extractor_recovers_named_first_person_and_group_tasks():
+    source = evidence(
+        "10000000-0000-4000-8000-000000000096",
+        "Vậy Hùng phụ trách kiểm thử nhận diện 6 người nói và báo cáo kết quả trước thứ 5 tuần sau. "
+        "Mình sẽ kiểm tra lại giao diện. Hai bạn hoàn thành bản thử nghiệm trước thứ 2 của tuần kế tiếp.",
+        1000,
+        7000,
+    )
+
+    facts = extract_explicit_assignment_facts(source.text, source.source_ref)
+
+    assert len(facts) == 3
+    assert [fact["assignee"] for fact in facts] == ["Hùng", None, None]
+    assert facts[0]["title"].startswith("kiểm thử nhận diện")
+    assert facts[1]["title"].startswith("kiểm tra lại giao diện")
+    assert facts[2]["title"].startswith("hoàn thành bản thử nghiệm")
+
+
+def test_shared_assignment_extractor_ignores_negated_cue_when_other_task_is_affirmative():
+    source = evidence(
+        "10000000-0000-4000-8000-000000000095",
+        "Không phụ trách kiểm thử API. Lan phụ trách phát triển giao diện đăng nhập.",
+        1000,
+        5000,
+    )
+
+    facts = extract_explicit_assignment_facts(source.text, source.source_ref)
+
+    assert len(facts) == 1
+    assert facts[0]["title"] == "phát triển giao diện đăng nhập"
+    assert facts[0]["assignee"] == "Lan"
+
+
+def test_normalizer_drops_unsupported_actions_and_recovers_explicit_assignments():
+    source = evidence(
+        "10000000-0000-4000-8000-000000000097",
+        "Lan hỗ trợ kiểm tra API. Hai bạn hoàn thành bản thử nghiệm trước thứ 2 của tuần kế tiếp.",
+        1000,
+        5000,
+    )
+    unsupported = {
+        "title": "Create a roadmap", "assignee": "Lan", "deadline": None,
+        "deadline_raw": None, "source_refs": [source.source_ref],
+    }
+    summary = {
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": None,
+        "executive_summary_refs": [],
+        "key_points": [], "decisions": [], "action_items": [unsupported],
+        "open_issues": [], "next_steps": [], "conflicts": [],
+    }
+
+    normalized = normalize_summary_from_evidence(summary, [source])
+    validated = normalize_and_validate(summary, [source])
+
+    assert [(item["title"], item["assignee"], item["deadline_raw"])
+            for item in normalized["action_items"]] == [
+        ("kiểm tra API", "Lan", None),
+        ("hoàn thành bản thử nghiệm", None, "trước thứ 2 của tuần kế tiếp"),
+    ]
+    assert len(validated.action_items) == 2
+    assert validated.action_items[1].deadline is None
+
+
+def test_explicit_assignment_in_ocr_evidence_is_kept_with_its_source_ref():
+    source = ContextEvidence(
+        source_type="SLIDE_OCR",
+        source_id=UUID("10000000-0000-4000-8000-000000000098"),
+        speaker_id=None,
+        start_time_ms=1000,
+        end_time_ms=2000,
+        text="Lan phụ trách kiểm thử luồng đăng nhập trước thứ Sáu.",
+    )
+
+    result = normalize_and_validate({
+        "schema_version": SCHEMA_VERSION,
+        "executive_summary": None,
+        "executive_summary_refs": [],
+        "key_points": [],
+        "decisions": [],
+        "action_items": [],
+        "open_issues": [],
+        "next_steps": [],
+        "conflicts": [],
+    }, [source])
+
+    assert len(result.action_items) == 1
+    assert result.action_items[0].assignee == "Lan"
+    assert result.action_items[0].source_refs == [source.source_ref]
+    assert result.action_items[0].deadline_raw == "trước thứ Sáu"
 
 
 def test_normalization_removes_unassigned_progress_review_as_action_citation():

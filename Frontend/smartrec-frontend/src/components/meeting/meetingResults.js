@@ -37,6 +37,10 @@ export function mapMeetingResults(payload) {
     meetingId: payload?.meetingId ?? null,
     jobId: payload?.jobId ?? null,
     jobStatus: payload?.jobStatus ?? null,
+    llmStatus: payload?.llmStatus ?? null,
+    llmFailureCode: payload?.llmFailureCode ?? null,
+    llmFallbackUsed: payload?.llmFallbackUsed ?? null,
+    llmProvider: payload?.llmProvider ?? null,
     transcripts: arrayOrEmpty(payload?.transcripts),
     summary: summary ? {
       executiveSummary: summary.executiveSummary ?? details.executive_summary ?? null,

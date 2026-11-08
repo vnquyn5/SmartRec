@@ -102,9 +102,10 @@ public class LocalLLMAdapterClient {
             return response.getBody();
         } catch (HttpStatusCodeException ex) {
             String code = responseCode(ex);
+            boolean modelOutputFailure = inferenceRequest && isGeneratedOutputFailure(code, ex);
             boolean eligible = inferenceRequest && (isFallbackEligible(code)
-                    || isGeneratedOutputFailure(code, ex));
-            throw new AdapterException(code, eligible, ex);
+                    || modelOutputFailure);
+            throw new AdapterException(code, eligible, modelOutputFailure, ex);
         } catch (ResourceAccessException ex) {
             throw new AdapterException(
                     inferenceRequest ? "LOCAL_ADAPTER_UNAVAILABLE" : "AI_ENGINE_UNAVAILABLE",
@@ -148,8 +149,17 @@ public class LocalLLMAdapterClient {
     }
 
     private boolean isGeneratedOutputFailure(String code, HttpStatusCodeException exception) {
-        if (!("EVIDENCE_CONSISTENCY_ERROR".equals(code) || "SOURCE_REFERENCE_ERROR".equals(code))
-                || exception.getStatusCode().value() != 502) {
+        if (!("EVIDENCE_CONSISTENCY_ERROR".equals(code)
+                || "SOURCE_REFERENCE_ERROR".equals(code)
+                || "JSON_PARSE_ERROR".equals(code)
+                || "SCHEMA_VALIDATION_ERROR".equals(code)
+                || "LOCAL_MODEL_TIMEOUT".equals(code)
+                || "LOCAL_MODEL_UNAVAILABLE".equals(code)
+                || "LOCAL_MODEL_INVALID_RESPONSE".equals(code)
+                || "LOCAL_MODEL_TRUNCATED".equals(code)
+                || "LOCAL_MODEL_NOT_CONFIGURED".equals(code))
+                || (exception.getStatusCode().value() != 502
+                    && exception.getStatusCode().value() != 503)) {
             return false;
         }
         try {
@@ -163,17 +173,25 @@ public class LocalLLMAdapterClient {
     public static class AdapterException extends RuntimeException {
         private final String code;
         private final boolean fallbackEligible;
+        private final boolean modelOutputValidationFailure;
 
         public AdapterException(String code, boolean fallbackEligible) {
-            super(code);
-            this.code = code;
-            this.fallbackEligible = fallbackEligible;
+            this(code, fallbackEligible, false, null);
         }
 
         public AdapterException(String code, boolean fallbackEligible, Throwable cause) {
+            this(code, fallbackEligible, false, cause);
+        }
+
+        public AdapterException(
+                String code,
+                boolean fallbackEligible,
+                boolean modelOutputValidationFailure,
+                Throwable cause) {
             super(code, cause);
             this.code = code;
             this.fallbackEligible = fallbackEligible;
+            this.modelOutputValidationFailure = modelOutputValidationFailure;
         }
 
         public String getCode() {
@@ -182,6 +200,10 @@ public class LocalLLMAdapterClient {
 
         public boolean isFallbackEligible() {
             return fallbackEligible;
+        }
+
+        public boolean isModelOutputValidationFailure() {
+            return modelOutputValidationFailure;
         }
     }
 }

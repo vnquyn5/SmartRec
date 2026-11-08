@@ -700,6 +700,7 @@ def test_llm_router_failure_preserves_core_output_success(tmp_path, monkeypatch)
     assert len(output_success) == 1
     assert output_success[0][2]["ai_result"] is None
     assert output_success[0][2]["error_code"] == "AI_ENRICHMENT_FAILED"
+    assert output_success[0][2]["error_msg"] == "LOCAL_MODEL_TIMEOUT"
 
 
 def test_output_callback_delivery_failure_does_not_report_success(monkeypatch):

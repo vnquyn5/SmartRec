@@ -19,12 +19,10 @@ from app.services.meeting_summary_evidence import (
     _confirmed_decision,
     _deadline_refs_are_linked,
     _explicit_deadline_dates,
-    _explicit_single_token_assignee,
     evidence_consistency_issues,
+    extract_explicit_assignment_facts,
     _has_assignment_cue,
-    _named_assignment,
     _normalize,
-    _normalize_identity,
     _source_ref,
     _value,
     cross_field_consistency_issues,
@@ -39,7 +37,8 @@ _WEEKDAY = (
     r"chủ\s*nhật|chu\s*nhat|sunday)"
 )
 _RELATIVE_TARGET = (
-    rf"(?:{_WEEKDAY}|hôm\s*nay|hom\s*nay|ngày\s*mai|ngay\s*mai|"
+    rf"(?:{_WEEKDAY}(?:\s+(?:tuần\s+(?:sau|tới|kế\s+tiếp)|tuan\s+(?:sau|toi|ke\s+tiep)|"
+    rf"của\s+tuần\s+kế\s+tiếp|cua\s+tuan\s+ke\s+tiep))?|hôm\s*nay|hom\s*nay|ngày\s*mai|ngay\s*mai|"
     r"tuần\s+tới|tuan\s+toi|today|tomorrow|next\s+week)"
 )
 _RELATIVE_PHRASE = re.compile(
@@ -58,12 +57,13 @@ _AMBIGUOUS_DAY = re.compile(
     re.IGNORECASE,
 )
 _PROGRESS_REVIEW = re.compile(
-    r"\b(?:kiem tra tien do|danh gia tien do|review progress|progress review)\b"
+    # Persisted ASR rendered “tiến độ” as “tiến đấu”. The surrounding
+    # next-meeting and no-assignment checks keep this typo repair narrow.
+    r"\b(?:kiem tra tien do|kiem tra tien dau|danh gia tien do|review progress|progress review)\b"
 )
 _NEXT_MEETING = re.compile(
     r"\b(?:cuoc hop tiep theo|buoi hop tiep theo|next meeting|upcoming meeting)\b"
 )
-_NULL_MARKERS = {"null", "unknown", "n/a", "na", "chưa xác định", "không rõ"}
 
 
 def _confirmed_decision_sentences(text: str) -> list[str]:
@@ -140,6 +140,23 @@ def _ambiguous_deadline_phrase(text: str) -> str | None:
     return None
 
 
+def _trim_title_deadline_tail(title: str, deadline_phrase: str | None) -> str:
+    if deadline_phrase:
+        match = re.search(re.escape(deadline_phrase), title, re.IGNORECASE)
+        if match:
+            title = title[:match.start()]
+        title = re.sub(r"\s+(?:được|duoc|vào|vao|là|la|deadline)\s*$", "", title, flags=re.IGNORECASE)
+        title = re.sub(
+            r"\s+(?:(?:và|and)\s+)?(?:(?:phải|sẽ|must|will)\s+)?"
+            r"(?:hoàn\s+thành|hoàn\s+tất|hoan\s+thanh|hoan\s+tat|complete|finish)"
+            r"(?:\s+(?:được|duoc|xong))?\s*$",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+    return title.strip(" \t\r\n,.;:()[]{}\"'“”‘’")
+
+
 def _is_unassigned_progress_review(source: Any) -> bool:
     text = str(_value(source, "text", ""))
     normalized = _normalize(text)
@@ -149,14 +166,6 @@ def _is_unassigned_progress_review(source: Any) -> bool:
         and bool(_PROGRESS_REVIEW.search(normalized))
         and bool(_NEXT_MEETING.search(normalized))
     )
-
-
-def _append_ref_in_evidence_order(refs: list[str], ref: str, ordered_evidence: list[Any]) -> None:
-    if ref in refs:
-        return
-    order = {_source_ref(item): index for index, item in enumerate(ordered_evidence)}
-    refs.append(ref)
-    refs.sort(key=lambda item: order.get(item, len(order)))
 
 
 def _add_ambiguous_adjacent_date_issues(
@@ -323,11 +332,11 @@ def _drop_unsupported_summary_claims(
 
 
 def normalize_summary_from_evidence(summary: dict[str, Any], evidence: list[Any]) -> dict[str, Any]:
-    """Repair only explicit names, supported deadlines, citations, and decisions.
+    """Recover only directly parseable assignment phrases and supported facts.
 
-    No action item is created from proximity. Missing assignment evidence,
-    ambiguous task relationships, and unsupported fields remain subject to the
-    strict validator and cause the request to be rejected.
+    Actions are never inferred from proximity. Named or first-person tasks are
+    recovered only from an affirmative assignment cue and verbatim task phrase;
+    all output still passes the strict evidence validator.
     """
     normalized = deepcopy(summary)
     ordered_evidence = list(evidence)
@@ -337,115 +346,124 @@ def normalize_summary_from_evidence(summary: dict[str, Any], evidence: list[Any]
         if _value(item, "source_type") == "TRANSCRIPT"
     ]
 
-    for action in normalized.get("action_items", []):
-        refs = action.get("source_refs", [])
-        cited_sources = [by_ref[ref] for ref in refs if ref in by_ref]
-        assignment_sources = [
-            source for source in cited_sources
-            if _has_assignment_cue(str(_value(source, "text", "")))
-        ]
-        if not assignment_sources:
-            # Keep unsupported model claims intact so the validator can report
-            # their original failing fields; no repair is safe without cited
-            # assignment evidence.
+    # Rebuild action items from the shared, conservative evidence extractor.
+    # This removes unsupported model claims and recovers only explicitly
+    # assigned/committed source phrases. Unparseable cues remain uncovered and
+    # therefore fail the strict validator rather than becoming guessed tasks.
+    extracted: list[dict[str, Any]] = []
+    for source in ordered_evidence:
+        if _value(source, "source_type") not in {"TRANSCRIPT", "SLIDE_OCR"}:
             continue
-        refs[:] = [
-            ref for ref in refs
-            if not _is_unassigned_progress_review(by_ref.get(ref))
-        ]
-        cited_sources = [by_ref[ref] for ref in refs if ref in by_ref]
-        assignment_sources = [
-            source for source in cited_sources
-            if _has_assignment_cue(str(_value(source, "text", "")))
-        ]
-        assignment_refs = {_source_ref(source) for source in assignment_sources}
+        source_ref = _source_ref(source)
+        text = str(_value(source, "text", ""))
+        facts = extract_explicit_assignment_facts(text, source_ref)
+        for fact in facts:
+            fact["_evidence_text"] = str(fact.get("_evidence_text", text))
+            extracted.append(fact)
 
-        explicit_subjects = {
-            _normalize_identity(subject): subject
-            for source in assignment_sources
-            if (subject := _explicit_single_token_assignee(str(_value(source, "text", ""))))
-        }
-        assignee = action.get("assignee")
-        if len(explicit_subjects) == 1:
-            # A uniquely named explicit subject in the cited assignment is
-            # stronger than a model omission, placeholder, or wrong name.
-            assignee = next(iter(explicit_subjects.values()))
-            action["assignee"] = assignee
-        elif isinstance(assignee, str) and assignee.strip().casefold() in _NULL_MARKERS:
-            assignee = None
-            action["assignee"] = None
-        elif assignee is not None and not any(
-            _named_assignment(str(_value(source, "text", "")), str(assignee))
-            for source in assignment_sources
-        ):
-            # Unsupported names are removed rather than guessed. The semantic
-            # validator still rejects the item if the evidence names someone.
-            assignee = None
-            action["assignee"] = None
-
-        if assignee is not None:
-            matching_assignment_refs = {
-                _source_ref(source) for source in assignment_sources
-                if _named_assignment(str(_value(source, "text", "")), str(assignee))
-            }
-            if matching_assignment_refs:
-                assignment_refs = matching_assignment_refs
-
-        deadline_sources: dict[str, Any] = {
-            _source_ref(source): source for source in cited_sources
-        }
-        if assignment_refs:
-            for source in ordered_evidence:
-                ref = _source_ref(source)
-                if ref in deadline_sources or _value(source, "source_type") != "TRANSCRIPT":
-                    continue
-                if _deadline_refs_are_linked(ref, assignment_refs, by_ref, transcript_order):
-                    deadline_sources[ref] = source
-
-        relative_candidates: dict[str, tuple[str, str]] = {}
-        absolute_candidates: dict[tuple[str, str], tuple[str, str, str]] = {}
-        ambiguous_candidates: dict[str, str] = {}
-        for ref, source in deadline_sources.items():
-            text = str(_value(source, "text", ""))
-            if _value(source, "source_type") != "TRANSCRIPT":
-                continue
-            linked = (
-                ref in assignment_refs
-                or bool(assignment_refs and _deadline_refs_are_linked(
-                    ref, assignment_refs, by_ref, transcript_order
-                ))
+    # Match model titles to extracted tasks only to preserve a paraphrase that
+    # already passes the existing lexical evidence check. Unsupported claims,
+    # names, and dates never survive this mapping.
+    candidates: dict[int, list[tuple[float, str]]] = {index: [] for index in range(len(extracted))}
+    fact_indexes_by_ref: dict[str, list[int]] = {}
+    for index, fact in enumerate(extracted):
+        for ref in fact["source_refs"]:
+            fact_indexes_by_ref.setdefault(ref, []).append(index)
+    for model_action in summary.get("action_items", []):
+        refs = list(model_action.get("source_refs", []))
+        title = str(model_action.get("title", ""))
+        possible = list(dict.fromkeys(
+            index for ref in refs for index in fact_indexes_by_ref.get(ref, [])
+        ))
+        if not possible:
+            continue
+        scored = [
+            (
+                _claim_support_ratio(title, [
+                    str(extracted[index]["title"]),
+                    str(extracted[index]["_evidence_text"]),
+                ]),
+                index,
             )
-            if not linked:
-                continue
-            relative = _relative_deadline_phrase(text)
-            if relative:
-                relative_candidates.setdefault(_normalize(relative), (relative, ref))
-            for iso, phrase in _absolute_deadline_phrases(text):
-                absolute_candidates.setdefault((iso, _normalize(phrase)), (iso, phrase, ref))
-            ambiguous = _ambiguous_deadline_phrase(text)
-            if ambiguous:
-                ambiguous_candidates.setdefault(_normalize(ambiguous), (ambiguous, ref))
+            for index in possible
+        ]
+        score, best_index = max(scored, key=lambda item: item[0])
+        # A zero-overlap title has no safe mapping; the evidence fact is still
+        # recovered independently below, while this model claim is discarded.
+        if score > 0:
+            fact = extracted[best_index]
+            if _claim_support_ratio(title, [str(fact["_evidence_text"])]) >= 0.75:
+                candidates[best_index].append((score, title))
 
-        if len(relative_candidates) == 1:
-            phrase, source_ref = next(iter(relative_candidates.values()))
-            action["deadline"] = None
+    normalized_actions: list[dict[str, Any]] = []
+    for index, fact in enumerate(extracted):
+        source_ref = fact["source_refs"][0]
+        evidence_text = str(fact["_evidence_text"])
+        refs = [source_ref]
+        source_text_by_ref = {source_ref: evidence_text}
+
+        # Dates in a separately persisted evidence segment are usable only
+        # when the existing timestamp/order linker establishes the relation.
+        for candidate_source in ordered_evidence:
+            candidate_ref = _source_ref(candidate_source)
+            if candidate_ref == source_ref or _value(candidate_source, "source_type") != "TRANSCRIPT":
+                continue
+            if _deadline_refs_are_linked(candidate_ref, {source_ref}, by_ref, transcript_order):
+                candidate_text = str(_value(candidate_source, "text", ""))
+                if (
+                    _relative_deadline_phrase(candidate_text)
+                    or _absolute_deadline_phrases(candidate_text)
+                    or _ambiguous_deadline_phrase(candidate_text)
+                ):
+                    refs.append(candidate_ref)
+                    source_text_by_ref[candidate_ref] = candidate_text
+
+        relative_candidates: dict[str, str] = {}
+        absolute_candidates: dict[tuple[str, str], tuple[str, str]] = {}
+        ambiguous_candidates: dict[str, str] = {}
+        for ref, candidate_text in source_text_by_ref.items():
+            relative = _relative_deadline_phrase(candidate_text)
+            if relative:
+                relative_candidates.setdefault(_normalize(relative), relative)
+            for iso, phrase in _absolute_deadline_phrases(candidate_text):
+                absolute_candidates.setdefault((iso, _normalize(phrase)), (iso, phrase))
+            ambiguous = _ambiguous_deadline_phrase(candidate_text)
+            if ambiguous:
+                ambiguous_candidates.setdefault(_normalize(ambiguous), ambiguous)
+
+        action = {
+            "title": str(fact["title"]),
+            "assignee": fact["assignee"],
+            "deadline": None,
+            "deadline_raw": None,
+            "source_refs": refs,
+        }
+        if len(relative_candidates) == 1 and not absolute_candidates:
+            phrase = next(iter(relative_candidates.values()))
             action["deadline_raw"] = phrase
-            _append_ref_in_evidence_order(refs, source_ref, ordered_evidence)
         elif not relative_candidates and len(absolute_candidates) == 1:
-            deadline, phrase, source_ref = next(iter(absolute_candidates.values()))
-            action["deadline"] = deadline
-            action["deadline_raw"] = phrase
-            _append_ref_in_evidence_order(refs, source_ref, ordered_evidence)
+            action["deadline"], action["deadline_raw"] = next(iter(absolute_candidates.values()))
         elif not relative_candidates and not absolute_candidates and len(ambiguous_candidates) == 1:
-            phrase, source_ref = next(iter(ambiguous_candidates.values()))
-            action["deadline"] = None
-            action["deadline_raw"] = phrase
-            _append_ref_in_evidence_order(refs, source_ref, ordered_evidence)
-        elif not relative_candidates and not absolute_candidates and not ambiguous_candidates:
-            # Do not persist model-generated dates or raw deadline claims that
-            # cannot be grounded in the task's cited/linked transcript spans.
-            action["deadline"] = None
-            action["deadline_raw"] = None
+            action["deadline_raw"] = next(iter(ambiguous_candidates.values()))
+
+        deadline_phrase = action["deadline_raw"]
+        action["title"] = _trim_title_deadline_tail(action["title"], deadline_phrase)
+
+        safe_model_titles = [
+            title for _, title in sorted(candidates[index], key=lambda item: item[0], reverse=True)
+            if _claim_support_ratio(title, [evidence_text]) >= 0.75
+        ]
+        if safe_model_titles:
+            action["title"] = _trim_title_deadline_tail(safe_model_titles[0], deadline_phrase)
+        if action["title"]:
+            normalized_actions.append(action)
+    if normalized_actions != normalized.get("action_items", []):
+        logger.info(
+            "Rebuilt action items from verified assignment evidence: extracted=%d model_supplied=%d",
+            len(normalized_actions),
+            len(normalized.get("action_items", [])),
+        )
+    normalized["action_items"] = normalized_actions
 
     # Decisions are kept only when their cited transcript contains an explicit
     # completed agreement. Replace paraphrased claims with the exact sentence

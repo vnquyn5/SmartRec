@@ -2,9 +2,13 @@
 package com.example.smartrec.service.impl;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
@@ -23,6 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Component
 public class GeminiFallbackClient {
+    private static final Logger log = LoggerFactory.getLogger(GeminiFallbackClient.class);
 
     private final RestTemplate restTemplate;
     private final AIModelRouterProperties properties;
@@ -103,6 +108,15 @@ public class GeminiFallbackClient {
                     ? null
                     : root.path("candidates").path(0);
 
+            JsonNode usage = root == null ? null : root.path("usageMetadata");
+            String finishReason = candidate == null ? "MISSING" : candidate.path("finishReason").asText("MISSING");
+            Long inputTokens = usage != null && usage.hasNonNull("promptTokenCount")
+                    ? usage.get("promptTokenCount").asLong() : null;
+            Long outputTokens = usage != null && usage.hasNonNull("candidatesTokenCount")
+                    ? usage.get("candidatesTokenCount").asLong() : null;
+            log.info("Gemini generation metadata: model={}, finishReason={}, inputTokens={}, outputTokens={}, maxOutputTokens={}",
+                    properties.getGeminiModel(), finishReason, inputTokens, outputTokens, maxOutputTokens);
+
             if (candidate == null
                     || candidate.isMissingNode()
                     || !candidate.isObject()) {
@@ -110,8 +124,6 @@ public class GeminiFallbackClient {
                 throw new GeminiProviderException(
                         "GEMINI_INVALID_RESPONSE", false);
             }
-
-            String finishReason = candidate.path("finishReason").asText("");
 
             if ("MAX_TOKENS".equals(finishReason)) {
                 throw new GeminiProviderException(
@@ -153,29 +165,18 @@ public class GeminiFallbackClient {
                         "GEMINI_INVALID_RESPONSE", false);
             }
 
-            JsonNode usage = root.path("usageMetadata");
-
             return new GeminiGeneration(
                     generatedText.toString(),
-                    usage.hasNonNull("promptTokenCount")
-                            ? usage.get("promptTokenCount").asLong()
-                            : null,
-                    usage.hasNonNull("candidatesTokenCount")
-                            ? usage.get("candidatesTokenCount").asLong()
-                            : null
+                    inputTokens,
+                    outputTokens
             );
 
         } catch (HttpStatusCodeException ex) {
-
             int status = ex.getStatusCode().value();
-
-            throw new GeminiProviderException(
-                    status == 429 || status == 503
-                            ? "GEMINI_TEMPORARILY_UNAVAILABLE"
-                            : "GEMINI_REQUEST_FAILED",
-                    status == 429 || status == 503,
-                    ex
-            );
+            ProviderFailure failure = classifyHttpFailure(status, ex.getResponseBodyAsString());
+            log.warn("Gemini HTTP request failed: status={}, category={}, retryable={}",
+                    status, failure.category(), failure.retryable());
+            throw new GeminiProviderException(failure.code(), failure.retryable(), ex);
 
         } catch (ResourceAccessException ex) {
 
@@ -186,6 +187,53 @@ public class GeminiFallbackClient {
             );
         }
     }
+
+    private ProviderFailure classifyHttpFailure(int status, String responseBody) {
+        if (status == 503) {
+            return new ProviderFailure("GEMINI_SERVICE_UNAVAILABLE", "service_unavailable", true);
+        }
+        if (status == 429) {
+            String signals = providerErrorSignals(responseBody);
+            if (signals.contains("quota") || signals.contains("billing") || signals.contains("spend cap")) {
+                return new ProviderFailure("GEMINI_QUOTA_EXCEEDED", "quota_exceeded", false);
+            }
+            if (signals.contains("rate limit") || signals.contains("rate_limit")
+                    || signals.contains("too many requests") || signals.contains("per-minute")
+                    || signals.contains("per minute") || signals.contains("requests per")
+                    || signals.contains("tokens per")) {
+                return new ProviderFailure("GEMINI_RATE_LIMITED", "rate_limited", true);
+            }
+            return new ProviderFailure("GEMINI_RESOURCE_EXHAUSTED", "resource_exhausted_unspecified", false);
+        }
+        return new ProviderFailure("GEMINI_REQUEST_FAILED", "request_failed", false);
+    }
+
+    /** Extract only provider error classification fields; never log this value or the body. */
+    private String providerErrorSignals(String responseBody) {
+        try {
+            JsonNode error = objectMapper.readTree(responseBody).path("error");
+            List<String> signals = new ArrayList<>();
+            addSignal(signals, error.path("status"));
+            addSignal(signals, error.path("message"));
+            JsonNode details = error.path("details");
+            if (details.isArray()) {
+                for (JsonNode detail : details) {
+                    addSignal(signals, detail.path("reason"));
+                }
+            }
+            return String.join(" ", signals).toLowerCase(Locale.ROOT);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private void addSignal(List<String> signals, JsonNode value) {
+        if (value != null && value.isTextual()) {
+            signals.add(value.asText());
+        }
+    }
+
+    private record ProviderFailure(String code, String category, boolean retryable) {}
 
     public record GeminiGeneration(
             String text,

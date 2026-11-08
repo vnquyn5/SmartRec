@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 _ASSIGNMENT_CUES = re.compile(
     r"\b(?:se phai|phu trach|chiu trach nhiem|co trach nhiem|duoc giao|phan cong|"
-    r"assigned to|is responsible for|was assigned|takes responsibility)\b"
+    r"ho tro|assigned to|is responsible for|was assigned|takes responsibility)\b"
 )
 _COMMITMENT_VERB = (
     r"(?:hoan thanh|hoan tat|thuc hien|kiem thu|kiem tra|bao cao|ket noi|"
@@ -29,11 +29,50 @@ _FIRST_PERSON_RESPONSIBILITY_CLAIM = re.compile(
 _NAMED_TASK_ACCEPTANCE = re.compile(
     r"\b([A-ZÀ-ỸĐ][\wÀ-ỹĐđ-]*)\s+(?:nhận|nhan)\s+(?:nhiệm\s+vụ|nhiem\s+vu)\b"
 )
+_TASK_VERB = (
+    r"(?:hoàn\s+thành|hoan\s+thanh|hoàn\s+tất|hoan\s+tat|thực\s+hiện|thuc\s+hien|"
+    r"kiểm\s+thử|kiem\s+thu|kiểm\s+tra|kiem\s+tra|báo\s+cáo|bao\s+cao|kết\s+nối|ket\s+noi|"
+    r"phát\s+triển|phat\s+trien|thiết\s+kế|thiet\s+ke|xử\s+lý|xu\s+ly|sửa|sua|"
+    r"xây\s+dựng|xay\s+dung|upload|complete|finish|test|report|connect|develop)"
+)
+_TASK_DISCOURSE_MARKERS = {"vậy", "thì", "còn", "như", "như vậy"}
+_DIRECT_ASSIGNMENT_CUE = re.compile(
+    r"\b(?:sẽ\s+phải|se\s+phai|phải|phai|phụ\s+trách|phu\s+trach|"
+    r"chịu\s+trách\s+nhiệm|chứa\s+trách\s+nhiệm|chiu\s+trach\s+nhiem|chua\s+trach\s+nhiem|"
+    r"có\s+trách\s+nhiệm|co\s+trach\s+nhiem|được\s+giao|duoc\s+giao|"
+    r"nhận\s+nhiệm\s+vụ|nhan\s+nhiem\s+vu|hỗ\s+trợ|ho\s+tro|"
+    r"is\s+responsible\s+for|was\s+assigned|must)\b",
+    re.IGNORECASE,
+)
+_FIRST_PERSON_TASK_CUE = re.compile(
+    rf"\b(?P<subject>mình|tôi|em|i)\s+(?:sẽ|se|will)\s+(?P<verb>{_TASK_VERB})\b",
+    re.IGNORECASE,
+)
+_FIRST_PERSON_ACCEPTANCE_CUE = re.compile(
+    r"\b(?P<subject>mình|tôi|em)\s+(?P<cue>nhận\s+nhiệm\s+vụ|nhan\s+nhiem\s+vu)\b",
+    re.IGNORECASE,
+)
+_FIRST_PERSON_RESPONSIBILITY_CUE = re.compile(
+    r"\b(?P<subject>mình|tôi|em)\s+(?P<cue>chịu\s+trách\s+nhiệm|chứa\s+trách\s+nhiệm|"
+    r"chiu\s+trach\s+nhiem|chua\s+trach\s+nhiem)\b",
+    re.IGNORECASE,
+)
+_GROUP_TASK_CUE = re.compile(
+    rf"\b(?P<subject>hai\s+bạn)\s+"
+    rf"(?:(?:sẽ|se|will)\s+)?(?P<verb>{_TASK_VERB})\b",
+    re.IGNORECASE,
+)
+_BARE_NAMED_OBLIGATION_CUE = re.compile(
+    rf"\b(?P<subject>[A-ZÀ-ỸĐ][\wÀ-ỹĐđ-]*|[Mm]ình|[Tt]ôi|[Ee]m|[Ii])\s+"
+    rf"(?:[Pp]hải|[Pp]hai)\s+(?P<verb>(?i:{_TASK_VERB}))\b"
+)
 _ASSIGNMENT_SUBJECT_CUE = re.compile(
     r"\b(?:sẽ\s+phải|se\s+phai|phải|phai|phụ\s+trách|phu\s+trach|"
-    r"chịu\s+trách\s+nhiệm|chiu\s+trach\s+nhiem|có\s+trách\s+nhiệm|co\s+trach\s+nhiem|"
+    r"chịu\s+trách\s+nhiệm|chứa\s+trách\s+nhiệm|chiu\s+trach\s+nhiem|chua\s+trach\s+nhiem|"
+    r"có\s+trách\s+nhiệm|co\s+trach\s+nhiem|"
     r"được\s+giao|duoc\s+giao|"
     r"nhận\s+nhiệm\s+vụ|nhan\s+nhiem\s+vu|"
+    r"hỗ\s+trợ|ho\s+tro|"
     rf"sẽ\s+{_COMMITMENT_VERB}|se\s+{_COMMITMENT_VERB}|"
     r"is responsible for|was assigned|must)\b",
     re.IGNORECASE,
@@ -182,10 +221,123 @@ def _has_assignment_cue(text: str) -> bool:
         cue_start = match.start() + match.group().rfind("trach nhiem")
         if not _is_negated(normalized, cue_start, text):
             return True
+    if any(
+        not _is_negated(normalized, match.start(), text)
+        and _normalize_identity(match.group("subject")) not in {
+            "nhóm", "cả nhóm", "mọi người", "team", "the team",
+        }
+        for match in _BARE_NAMED_OBLIGATION_CUE.finditer(text)
+    ):
+        return True
     return any(
         _normalize_identity(match.group(1)) not in _NON_PERSON_SUBJECTS
         for match in _NAMED_TASK_ACCEPTANCE.finditer(text)
+    ) or any(
+        not _is_negated(normalized, match.start(), text)
+        for match in _GROUP_TASK_CUE.finditer(text)
     )
+
+
+def extract_explicit_assignment_facts(text: str, source_ref: str) -> list[dict[str, Any]]:
+    """Extract tasks with explicit assignment cues and source-grounded titles.
+
+    Coverage checks use ``_has_assignment_cue`` and normalization uses this
+    extractor. Unknown, collective, and ambiguous subjects stay unassigned.
+    """
+    if not text or not _has_assignment_cue(text):
+        return []
+
+    facts: list[dict[str, Any]] = []
+    normalized_text = _normalize(text)
+    segments = [part for part in re.split(r"(?<=[.!?;])\s+|\n+", text) if part.strip()]
+
+    def add(task: str, assignee: str | None, evidence_text: str) -> None:
+        title = task.strip(" \t\r\n,.;:()[]{}\"'“”‘’")
+        if not title or not re.search(r"[\wÀ-ỹĐđ]", title):
+            return
+        key = (_normalize(title), _normalize_identity(assignee or ""))
+        if any(
+            (_normalize(item["title"]), _normalize_identity(item["assignee"] or "")) == key
+            for item in facts
+        ):
+            return
+        facts.append({
+            "title": title,
+            "assignee": assignee,
+            "source_refs": [source_ref],
+            "_evidence_text": evidence_text,
+        })
+
+    for segment in segments:
+        normalized_segment = _normalize(segment)
+        for match in _FIRST_PERSON_TASK_CUE.finditer(segment):
+            if _is_negated(normalized_segment, match.start(), segment):
+                continue
+            add(segment[match.start("verb"):], None, segment)
+        for match in _FIRST_PERSON_ACCEPTANCE_CUE.finditer(segment):
+            if _is_negated(normalized_segment, match.start(), segment):
+                continue
+            add(segment[match.end():], None, segment)
+        for match in _FIRST_PERSON_RESPONSIBILITY_CUE.finditer(segment):
+            if _is_negated(normalized_segment, match.start(), segment):
+                continue
+            add(segment[match.end():], None, segment)
+        for match in _GROUP_TASK_CUE.finditer(segment):
+            if _is_negated(normalized_segment, match.start(), segment):
+                continue
+            add(segment[match.start("verb"):], None, segment)
+        for cue in _DIRECT_ASSIGNMENT_CUE.finditer(segment):
+            if _is_negated(normalized_segment, cue.start(), segment):
+                continue
+            prefix = segment[:cue.start()].rsplit(",", 1)[-1].strip().rstrip(":")
+            tokens = prefix.split()
+            while tokens and _normalize_identity(tokens[0].strip(",:;")) in _TASK_DISCOURSE_MARKERS:
+                tokens.pop(0)
+            if len(tokens) > 1:
+                continue
+            subject = tokens[0].strip("\"'“”‘’(){}.,:;") if tokens else ""
+            if _normalize_identity(subject) in _NON_PERSON_SUBJECTS:
+                assignee = None
+            elif subject and subject[0].isupper():
+                assignee = subject
+            else:
+                # Lower-case ASR tokens can state the task but cannot safely
+                # establish the person's identity.
+                assignee = None
+            add(segment[cue.end():], assignee, segment)
+
+    # A generic, immediately following “finish the work/task” commitment is a
+    # completion condition for the single preceding assignment, not a second
+    # independently scoped task. Keep its explicit deadline with that task.
+    if len(facts) == 2 and re.match(
+        r"\s*(?:hoàn\s+thành|hoàn\s+tất|hoan\s+thanh|hoan\s+tat|complete|finish)\s+"
+        r"(?:công\s+việc|cong\s+viec|nhiệm\s+vụ|nhiem\s+vu|the\s+work|the\s+task)\b",
+        facts[1]["title"],
+        re.IGNORECASE,
+    ):
+        facts[0]["_evidence_text"] = (
+            f"{facts[0]['_evidence_text']} {facts[1]['_evidence_text']}"
+        )
+        facts.pop()
+
+    # A separate, explicit deadline sentence immediately after one assignment
+    # in the same evidence row can be linked safely. Generic nearby dates are
+    # not enough; the sentence must contain deadline wording parsed below.
+    if len(facts) == 1:
+        fact_segment = facts[0]["_evidence_text"]
+        try:
+            segment_index = segments.index(fact_segment)
+        except ValueError:
+            segment_index = -1
+        if 0 <= segment_index < len(segments) - 1:
+            following = segments[segment_index + 1]
+            if not _has_assignment_cue(following) and (
+                _has_relative_deadline(following)
+                or _explicit_deadline_dates(following)
+            ):
+                facts[0]["_evidence_text"] = f"{fact_segment} {following}"
+
+    return facts
 
 
 def _named_assignment(text: str, assignee: str) -> bool:
@@ -199,7 +351,7 @@ def _named_assignment(text: str, assignee: str) -> bool:
         prefix = _normalize(normalized_text[max(0, match.start() - 80):match.start()])
         if re.match(
             rf"\s+(?:se\s+)?(?:phai|phu trach|chiu trach nhiem|co trach nhiem|duoc giao|dam nhan|"
-            rf"nhan nhiem vu|{_COMMITMENT_VERB}|"
+            rf"nhan nhiem vu|ho tro|{_COMMITMENT_VERB}|"
             r"is responsible for|was assigned|must)\b",
             suffix,
         ):
@@ -219,7 +371,9 @@ def _explicit_single_token_assignee(text: str) -> str | None:
     """
     for cue in _ASSIGNMENT_SUBJECT_CUE.finditer(text):
         prefix = re.split(r"[.!?;:\n]", text[:cue.start()])[-1].strip().rstrip(",:")
-        tokens = prefix.split()
+        tokens = prefix.rsplit(",", 1)[-1].split()
+        while tokens and _normalize_identity(tokens[0].strip(",:;")) in _TASK_DISCOURSE_MARKERS:
+            tokens.pop(0)
         if len(tokens) != 1:
             continue
         candidate = tokens[0].strip("\"'“”‘’()[]{}")
@@ -587,48 +741,107 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
         refs = list(getattr(item, "source_refs", ()))
         cited = [by_ref[ref] for ref in refs if ref in by_ref]
         cited_texts = [str(_value(source, "text", "")) for source in cited]
-        assignment_sources = [source for source in cited if _has_assignment_cue(str(_value(source, "text", "")))]
-        assignment_refs = {_source_ref(source) for source in assignment_sources}
-        represented_assignment_refs.update(assignment_refs)
+        all_assignment_sources = [
+            source for source in cited
+            if _has_assignment_cue(str(_value(source, "text", "")))
+        ]
+        represented_assignment_refs.update(_source_ref(source) for source in all_assignment_sources)
 
-        if not assignment_sources:
+        if not all_assignment_sources:
             issue(["action_items", index, "source_refs"], "unassigned_action_item")
+        action_title = str(getattr(item, "title", ""))
+        assignment_facts = [
+            fact
+            for source in all_assignment_sources
+            for fact in extract_explicit_assignment_facts(
+                str(_value(source, "text", "")), _source_ref(source)
+            )
+        ]
+        matched_facts = []
+        if assignment_facts:
+            scored_facts = [
+                (
+                    _claim_support_ratio(action_title, [str(fact["title"])]),
+                    fact,
+                )
+                for fact in assignment_facts
+            ]
+            best_score, best_fact = max(scored_facts, key=lambda pair: pair[0])
+            if best_score >= 0.5:
+                matched_facts = [best_fact]
+        if matched_facts:
+            assignment_task_texts = [str(fact["_evidence_text"]) for fact in matched_facts]
+            assignment_refs = {ref for fact in matched_facts for ref in fact["source_refs"]}
+        else:
+            assignment_task_texts = [
+                str(_value(source, "text", "")) for source in all_assignment_sources
+            ]
+            assignment_refs = {_source_ref(source) for source in all_assignment_sources}
+        assignment_sources = [by_ref[ref] for ref in assignment_refs if ref in by_ref]
+
         assignee = getattr(item, "assignee", None)
         named_assignment_refs = {
-            _source_ref(source)
-            for source in assignment_sources
-            if assignee is not None
-            and _named_assignment(str(_value(source, "text", "")), assignee)
+            ref
+            for ref, text in zip(
+                [ref for fact in matched_facts for ref in fact["source_refs"]],
+                assignment_task_texts,
+            )
+            if assignee is not None and _named_assignment(text, assignee)
         }
-        if assignee is not None and not any(
-            _named_assignment(str(_value(source, "text", "")), assignee)
-            for source in assignment_sources
-        ):
+        if not matched_facts:
+            named_assignment_refs = {
+                _source_ref(source)
+                for source in assignment_sources
+                if assignee is not None
+                and _named_assignment(str(_value(source, "text", "")), assignee)
+            }
+        if assignee is not None and not named_assignment_refs:
             issue(["action_items", index, "assignee"], "unsupported_assignee")
         explicit_subjects = {
             _normalize_identity(subject): subject
-            for source in assignment_sources
-            if (subject := _explicit_single_token_assignee(str(_value(source, "text", ""))))
+            for text in assignment_task_texts
+            if (subject := _explicit_single_token_assignee(text))
         }
         if assignee is None and len(explicit_subjects) == 1:
             issue(["action_items", index, "assignee"], "missing_explicit_assignee")
         if assignee is not None and named_assignment_refs:
             assignment_refs = named_assignment_refs
 
+        relevant_task_texts = assignment_task_texts
+
+        relevant_text_by_ref = {
+            _source_ref(source): str(_value(source, "text", ""))
+            for source in cited
+            if _source_ref(source) not in assignment_refs
+            and _deadline_refs_are_linked(
+                _source_ref(source), assignment_refs, by_ref, transcript_order
+            )
+        }
+        for fact in matched_facts:
+            for source_ref in fact["source_refs"]:
+                relevant_text_by_ref[source_ref] = str(fact["_evidence_text"])
+        relevant_texts = relevant_task_texts + list(relevant_text_by_ref.values())
+
         raw_deadline = getattr(item, "deadline_raw", None)
         if raw_deadline is not None and not any(
-            _contains_phrase(text, raw_deadline) for text in cited_texts
+            _contains_phrase(text, raw_deadline) for text in relevant_texts
         ):
             issue(["action_items", index, "deadline_raw"], "unsupported_deadline_phrase")
 
-        dates_by_ref = {
-            _source_ref(source): _explicit_deadline_dates(str(_value(source, "text", "")))
-            for source in cited
-        }
+        dates_by_ref = dict(relevant_text_by_ref)
+        if assignment_sources:
+            dates_by_ref.update({
+                _source_ref(source): relevant_text_by_ref.get(
+                    _source_ref(source), str(_value(source, "text", ""))
+                )
+                for source in assignment_sources
+            })
+        dates_by_ref = {ref: _explicit_deadline_dates(text) for ref, text in dates_by_ref.items()}
         linked_dates_by_ref = {
             _source_ref(source): _explicit_deadline_dates(str(_value(source, "text", "")))
             for source in evidence_items
             if _value(source, "source_type") == "TRANSCRIPT"
+            and _source_ref(source) not in assignment_refs
             and _deadline_refs_are_linked(
                 _source_ref(source), assignment_refs, by_ref, transcript_order
             )
@@ -650,7 +863,7 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
             for ref, values in dates_by_ref.items()
             if values and _deadline_refs_are_linked(ref, assignment_refs, by_ref, transcript_order)
         }
-        relative_evidence = any(_has_relative_deadline(text) for text in cited_texts)
+        relative_evidence = any(_has_relative_deadline(text) for text in relevant_texts)
         deadline = getattr(item, "deadline", None)
         if deadline is not None:
             if deadline in uncited_linked_dates and not relative_evidence:
@@ -671,16 +884,25 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
 
     # Catch clear assignment omissions as well as unsupported generated claims.
     # This coverage check is limited to affirmative assignment cues in cited
-    # transcript evidence; it does not infer tasks from speaker or name matches.
+    # transcript/OCR evidence; it does not infer tasks from speaker or name matches.
     for source in evidence_items:
-        if _value(source, "source_type") != "TRANSCRIPT":
+        if _value(source, "source_type") not in {"TRANSCRIPT", "SLIDE_OCR"}:
             continue
         source_ref = _source_ref(source)
-        if (
-            _has_assignment_cue(str(_value(source, "text", "")))
-            and source_ref not in represented_assignment_refs
-        ):
+        source_text = str(_value(source, "text", ""))
+        if not _has_assignment_cue(source_text):
+            continue
+        source_actions = [
+            item for item in getattr(summary, "action_items", ())
+            if source_ref in getattr(item, "source_refs", ())
+        ]
+        extracted_facts = extract_explicit_assignment_facts(source_text, source_ref)
+        if source_ref not in represented_assignment_refs or not source_actions:
             issue(["action_items"], "missing_explicit_assignment")
+            continue
+        if len(source_actions) < len(extracted_facts):
+            for _ in range(len(extracted_facts) - len(source_actions)):
+                issue(["action_items"], "missing_explicit_assignment")
 
     for index, item in enumerate(getattr(summary, "decisions", ())):
         refs = list(getattr(item, "source_refs", ()))

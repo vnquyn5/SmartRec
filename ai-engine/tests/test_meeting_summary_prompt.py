@@ -39,7 +39,7 @@ def extract_evidence_json(prompt):
 
 
 def test_prompt_version():
-    assert PROMPT_VERSION == "smartrec.enterprise-summary-prompt.v4"
+    assert PROMPT_VERSION == "smartrec.enterprise-summary-prompt.v6"
 
 
 def test_original_system_prompt_exists():

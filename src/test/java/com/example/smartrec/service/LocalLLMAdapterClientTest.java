@@ -115,8 +115,43 @@ class LocalLLMAdapterClientTest {
             var error = assertThrows(LocalLLMAdapterClient.AdapterException.class,
                     () -> client(restTemplate).generate(generateRequest()));
             assertEquals(body.contains("MODEL_OUTPUT"), error.isFallbackEligible());
+            assertEquals(body.contains("MODEL_OUTPUT"), error.isModelOutputValidationFailure());
             server.verify();
         }
+    }
+
+    @Test
+    void generatedJsonAndSchemaFailuresCarryExhaustedRepairMarker() {
+        for (String code : List.of("JSON_PARSE_ERROR", "SCHEMA_VALIDATION_ERROR")) {
+            RestTemplate restTemplate = new RestTemplate();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+            server.expect(requestTo("http://127.0.0.1:8000/api/v1/internal/llm/generate"))
+                    .andRespond(MockRestResponseCreators.withStatus(HttpStatus.BAD_GATEWAY)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"detail\":{\"code\":\"" + code + "\",\"origin\":\"MODEL_OUTPUT\"}}"));
+
+            var error = assertThrows(LocalLLMAdapterClient.AdapterException.class,
+                    () -> client(restTemplate).generate(generateRequest()));
+            assertTrue(error.isFallbackEligible());
+            assertTrue(error.isModelOutputValidationFailure());
+            server.verify();
+        }
+    }
+
+    @Test
+    void modelFailureDuringRepairCallCarriesExhaustedRepairMarker() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        server.expect(requestTo("http://127.0.0.1:8000/api/v1/internal/llm/generate"))
+                .andRespond(MockRestResponseCreators.withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"detail\":{\"code\":\"LOCAL_MODEL_TIMEOUT\",\"origin\":\"MODEL_OUTPUT\"}}"));
+
+        var error = assertThrows(LocalLLMAdapterClient.AdapterException.class,
+                () -> client(restTemplate).generate(generateRequest()));
+        assertTrue(error.isFallbackEligible());
+        assertTrue(error.isModelOutputValidationFailure());
+        server.verify();
     }
 
     @Test

@@ -52,6 +52,58 @@ explicit alternative and requires a CTranslate2 model directory with `model.bin`
 
 Set `SMARTREC_LLM_ENABLED=false` or `true` in root `.env` to choose core-only or LLM-enriched processing. Since the startup command exports root `.env`, the flag is available to the native worker. If also set in `ai-engine/.env`, that value takes precedence. Keep Spring Boot and the Docker FastAPI AI Engine on the same flag value and restart them after changing it. `false` skips LLM enrichment; it does not block the media pipeline.
 
+### Optional Gemini fallback in native Spring Boot
+
+Spring Boot reads `src/main/resources/application.yml`, which imports
+`config/application-local-secrets.properties` when present, and receives exported
+shell environment variables. Spring Boot does not load root `.env`,
+`ai-engine/.env`, or `.env.spring.local` by itself. The Spring startup command
+below exports root `.env`; a separate local startup may also export
+`.env.spring.local`. The presence of a variable in a file does not prove it was
+present in the Spring process that returned `GEMINI_OUTPUT_TRUNCATED`.
+
+The checked-in configuration uses `GEMINI_MAX_OUTPUT_TOKENS=2048` as its default
+and has no default Gemini model. The current `.env.spring.local` contains a
+disabled, unapproved example with a model placeholder; it is not a confirmed
+runtime configuration. Set the actual model and approved output limit explicitly
+in the Spring process, after checking that model's supported limit and the
+per-job cost budget. Gemini `MAX_TOKENS` is rejected as
+`GEMINI_OUTPUT_TRUNCATED`; the partial candidate is never parsed or persisted.
+The current implementation does not raise the token limit automatically or
+retry a truncation, because it has no verified model-specific ceiling or token
+price estimate with which to enforce the configured cost cap. Transient provider
+retries remain bounded by `GEMINI_MAX_ATTEMPTS` (at most two) and
+`GEMINI_MAX_REQUESTS_PER_JOB`. The existing positive
+`GEMINI_MAX_COST_PER_JOB_USD` setting is an authorization gate, not a measured
+dollar-spend limiter: this code does not know the model's live token prices.
+Keep the request count at one unless an external billing check confirms the
+budget; do not assume that a positive amount guarantees a hard cost ceiling.
+
+To opt in after obtaining approval, put the real API key and settings in a
+private file outside version control, then export that file in the **Spring
+Boot terminal only** before `./mvnw spring-boot:run`. Required settings are
+`GEMINI_FALLBACK_ENABLED=true`, `GEMINI_DATA_SHARING_APPROVED=true`,
+`GEMINI_REDACTION_POLICY_VERSION=contact-details-v1`, `GEMINI_API_KEY`,
+`GEMINI_MODEL`, a positive `GEMINI_MAX_REQUESTS_PER_JOB`, and a positive
+`GEMINI_MAX_COST_PER_JOB_USD`. Set `GEMINI_MAX_OUTPUT_TOKENS` to an approved
+model-supported value; leave `GEMINI_MAX_ATTEMPTS=1` unless a second request is
+explicitly budgeted. The contact-details policy redacts email addresses, URLs,
+and phone numbers only; review whether that scope is adequate before approving
+sharing. Never copy a Gemini key into Docker or the worker environment merely
+to make fallback work.
+
+The results endpoint reports `jobStatus` for Core processing and `llmStatus`
+(`SUCCESS`, `FAILED`, `DISABLED`, `PENDING`, or `UNAVAILABLE`) independently.
+It also reports `llmFailureCode` when available and, for persisted success,
+`llmProvider` and `llmFallbackUsed`. On a failed Gemini provider attempt,
+`llmFallbackUsed=true` identifies that the provider was called; a policy denial
+reports `false`. A completed Core job with `FAILED` LLM
+status has no validated summary. The existing `/jobs/{jobId}/retry` restarts
+the entire media pipeline and is not an LLM-only retry; this architecture's
+inference lease requires an active processing job. Reuse the persisted
+transcript/OCR evidence to create a separate enrichment attempt only after a
+dedicated lease and result-persistence workflow is implemented.
+
 Root `.env` may contain Docker-facing values such as `host.docker.internal` or Compose service names for containers. Keep native callback, Redis, MinIO, ChromaDB, and Ollama endpoints in `ai-engine/.env`; the second source step overrides those root values. A native worker must not use Docker-only DNS names such as `redis` or `minio`.
 
 ## 2. Start Docker infrastructure and FastAPI
@@ -59,9 +111,16 @@ Root `.env` may contain Docker-facing values such as `host.docker.internal` or C
 From the repository root, start only the required Docker services:
 
 ```bash
-docker compose up -d postgres redis minio minio-init chromadb ai-engine
+docker compose up -d --build postgres redis minio minio-init chromadb ai-engine
 docker compose ps
 ```
+
+The default Compose file does not bind-mount `ai-engine/app`. Rebuild and
+recreate `ai-engine` after changing its routes or schemas; otherwise the
+container can return HTTP 200 from an older `/prepare` contract. In particular,
+Spring requires the `fallbackSystemPrompt` field. To update only FastAPI after
+a code change, run `docker compose up -d --build --no-deps ai-engine`. Rebuilding
+does not restart the native worker or Spring Boot.
 
 Do not include `ai-worker`. If a compatibility worker was previously started, stop it before proceeding:
 
@@ -173,6 +232,29 @@ themselves prove peak memory safety.
 3. In the Meeting page, inspect Transcript and OCR. Transcript rows include speaker/timestamp data and should seek the video; OCR may validly report no slides after a successful pass.
 4. With `SMARTREC_LLM_ENABLED=false`, Summary and Tasks remain unprocessed and no placeholder result is written. With it enabled, inspect LLM status and only trust validated persisted results.
 
+FastAPI rebuilds action items from explicit, evidence-backed assignment facts,
+normalizes supported names/deadlines and then runs the unchanged strict schema,
+source-reference, and evidence checks. If a Qwen response still fails parsing,
+schema, source-reference, or evidence validation, FastAPI allows one additional
+Qwen call using the same token limit and verified evidence, with only safe
+diagnostic field/type hints. It never feeds the failed raw JSON back to the
+model. If the repair output also fails, Spring may use Gemini only when the
+existing enablement, data-sharing approval, redaction, request, and cost gates
+allow it; Gemini output goes through the same normalization and validation
+before persistence. Otherwise the results endpoint keeps Core `jobStatus`
+separate from `llmStatus=FAILED` and the LLM failure code. No partial or
+unvalidated summary is saved.
+
+For a manual LLM check after rebuilding FastAPI, submit a real job only when
+authorized, then inspect `GET /api/v1/meetings/{meetingId}/jobs/{jobId}/results`.
+Confirm `llmStatus=SUCCESS`, a non-null summary, and the expected
+`llmProvider`/`llmFallbackUsed`; if it fails, check `llmFailureCode` and safe
+field/type diagnostics. Verify the native Ollama service received one or two
+sequential `/api/generate` calls for a local-only attempt. A Gemini request
+requires a separately approved configuration and is never made by automated
+tests. To check only the deterministic repair against existing evidence, use
+the offline replay in section 8; it calls neither provider.
+
 Authenticated backend endpoints:
 
 ```text
@@ -195,3 +277,44 @@ PostgreSQL can be inspected through the configured local `psql` connection. Avoi
 ## 7. Acceptance record
 
 For an actual E2E run, record Meeting ID, Job ID, stage statuses, transcript segment and speaker counts, OCR status/record count, LLM status, and whether the frontend displayed the persisted results. Do not report E2E success from unit tests or mocks alone. Do not include transcript text, secrets, or private meeting content in the report.
+
+## 8. Opt-in local LLM failure capture and offline replay
+
+FastAPI does not persist prompts, transcripts, or model output by default. To
+capture only a failed **local Ollama** output for a development investigation,
+start/recreate FastAPI with both explicit gates enabled:
+
+```bash
+SMARTREC_ENVIRONMENT=development SMARTREC_LLM_DEBUG_CAPTURE_ENABLED=true \
+  docker compose up -d --build --no-deps ai-engine
+```
+
+Captures are stored in the private Docker volume at
+`/var/lib/smartrec/llm-debug`, outside the repository and outside public
+application routes. Each file includes raw local model output, verified
+evidence, source refs, job ID, and failure code; it excludes prompts and
+credentials. The default retention is 24 hours, with 512 KiB per capture and
+16 MiB total storage caps. Oversized captures are skipped whole, never
+truncated. Gemini `/validate` responses are never captured.
+
+After an authorized development job, list and replay a capture without calling
+Ollama or Gemini:
+
+```bash
+docker compose exec ai-engine python -m app.services.local_llm_debug list
+docker compose exec ai-engine python -m app.services.local_llm_debug replay capture-<timestamp>-<uuid>.json
+```
+
+Replay reports only the validation result and safe diagnostic paths by default.
+Use `--show-result` only when you need the normalized summary printed to the
+private development terminal. Expired captures are also removed by an hourly
+background cleanup. Remove a capture or all captures when finished:
+
+```bash
+docker compose exec ai-engine python -m app.services.local_llm_debug delete --file capture-<timestamp>-<uuid>.json
+docker compose exec ai-engine python -m app.services.local_llm_debug delete --all
+```
+
+Turn capture off again by recreating FastAPI with
+`SMARTREC_ENVIRONMENT=production SMARTREC_LLM_DEBUG_CAPTURE_ENABLED=false`.
+Expired files are also removed during capture/list operations and by `prune`.

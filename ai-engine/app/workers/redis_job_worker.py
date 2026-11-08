@@ -955,6 +955,7 @@ def process_job(job_id: str):
             heartbeat.checkpoint()
             ai_result = None
             ai_enrichment_error_code = None
+            ai_enrichment_failure_detail = None
             if settings.smartrec_llm_enabled:
                 logger.info("[%s] LLM enrichment enabled; requesting AI Router after STT/OCR", job_id)
                 try:
@@ -981,6 +982,7 @@ def process_job(job_id: str):
                         job_id, exc.code, exc.retryable,
                     )
                     ai_enrichment_error_code = "AI_ENRICHMENT_FAILED"
+                    ai_enrichment_failure_detail = exc.code
                 if ai_result is not None:
                     try:
                         heartbeat.checkpoint()
@@ -992,6 +994,7 @@ def process_job(job_id: str):
                         )
                         ai_result = None
                         ai_enrichment_error_code = "AI_ENRICHMENT_FAILED"
+                        ai_enrichment_failure_detail = exc.error_code
             else:
                 logger.info("[%s] LLM enrichment disabled; completing Core OUTPUT without AI Router", job_id)
                 ai_enrichment_error_code = "AI_ENRICHMENT_DISABLED"
@@ -1001,13 +1004,7 @@ def process_job(job_id: str):
                 "SUCCESS",
                 segments=formatted_segments,
                 error_code=ai_enrichment_error_code,
-                error_msg=(
-                    "Core processing completed, but AI enrichment failed."
-                    if ai_enrichment_error_code == "AI_ENRICHMENT_FAILED"
-                    else "Core processing completed; AI enrichment is disabled."
-                    if ai_enrichment_error_code == "AI_ENRICHMENT_DISABLED"
-                    else None
-                ),
+                error_msg=ai_enrichment_failure_detail,
                 execution_id=execution_id,
                 ai_result=ai_result,
             )

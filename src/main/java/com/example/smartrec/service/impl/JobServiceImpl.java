@@ -598,9 +598,12 @@ public class JobServiceImpl implements JobService {
         if (outputSuccess && request.getAiResult() == null
                 && isAiEnrichmentOutcome(request.getErrorCode())) {
             job.setErrorCode(request.getErrorCode());
+            String diagnosticCode = request.getErrorMessage();
             job.setErrorMessage("AI_ENRICHMENT_DISABLED".equals(request.getErrorCode())
                     ? "Core processing completed; AI enrichment is disabled."
-                    : "Core processing completed, but AI enrichment failed.");
+                    : "Core processing completed, but AI enrichment failed."
+                            + (diagnosticCode != null && diagnosticCode.matches("[A-Z][A-Z0-9_]{1,63}")
+                                    ? " Code: " + diagnosticCode : ""));
         }
 
         JobStage jobStage = jobStageRepository.findByJobIdAndStage(jobId, request.getStage())

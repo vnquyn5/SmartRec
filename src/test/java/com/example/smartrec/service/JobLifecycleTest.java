@@ -325,6 +325,26 @@ class JobLifecycleTest {
     }
 
     @Test
+    void outputSuccessKeepsBoundedLlmDiagnosticCode() {
+        UUID executionId = UUID.randomUUID();
+        job.setCurrentStage(PipelineStage.OUTPUT);
+        job.setExecutionId(executionId);
+        job.setLeaseExpiresAt(Instant.now().plusSeconds(60));
+        JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.PROCESSING).build();
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT)).thenReturn(Optional.of(output));
+
+        service.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                .executionId(executionId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.SUCCESS).errorCode("AI_ENRICHMENT_FAILED")
+                .errorMessage("GEMINI_OUTPUT_TRUNCATED").build());
+
+        assertEquals(JobStatus.COMPLETED, job.getStatus());
+        assertEquals("Core processing completed, but AI enrichment failed. Code: GEMINI_OUTPUT_TRUNCATED",
+                job.getErrorMessage());
+    }
+
+    @Test
     void outputSuccessDoesNotPersistUnrecognizedEnrichmentErrorCodes() {
         UUID executionId = UUID.randomUUID();
         job.setCurrentStage(PipelineStage.OUTPUT);

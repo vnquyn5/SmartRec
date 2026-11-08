@@ -328,9 +328,11 @@ export default function MeetingDetailPage() {
   const isCurrentMeeting = meetingId === id && meeting?.id === id;
   const currentSpeakers = isCurrentMeeting && speakersMeetingId === id ? speakers : [];
   const displayState = meetingLoading || !isCurrentMeeting ? "loading" : meetingError ? "error" : pageState;
-  const enrichmentStatus = job?.errorCode === "AI_ENRICHMENT_FAILED"
+  const currentLlmStatus = results?.jobId === job?.id ? results?.llmStatus : null;
+  const enrichmentStatus = currentLlmStatus === "FAILED" || job?.errorCode === "AI_ENRICHMENT_FAILED"
     ? "enrichment_failed"
-    : job?.errorCode === "AI_ENRICHMENT_DISABLED" ? "enrichment_disabled" : null;
+    : currentLlmStatus === "DISABLED" || job?.errorCode === "AI_ENRICHMENT_DISABLED"
+      ? "enrichment_disabled" : null;
   const aiStatus = displayState === "completed"
     ? enrichmentStatus || (speakerError ? "completed" : currentSpeakers.length === 0 ? "empty" : "completed")
     : displayState === "completed-loading-speakers" ? enrichmentStatus || "completed"

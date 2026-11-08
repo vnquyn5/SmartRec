@@ -33,13 +33,18 @@ function EvidenceList({ title, items, emptyMessage, transcripts, onEvidenceClick
   );
 }
 
-export default function MeetingSummaryTab({ summary, transcripts = [], onEvidenceClick, aiStatus = 'processing', loading = false, error = '' }) {
+export default function MeetingSummaryTab({ summary, llmProvider = null, fallbackUsed = false, transcripts = [], onEvidenceClick, aiStatus = 'processing', loading = false, error = '' }) {
   const viewState = getSummaryViewState({ summary, aiStatus, loading, error });
 
   return (
     <div className="w-full min-w-0 flex flex-col gap-4 text-slate-300">
       <header className="pb-3 border-b border-[#1b2640]">
         <h3 className="text-sm font-bold text-white">AI Summary</h3>
+        {viewState === 'success' && llmProvider && (
+          <p className="mt-1 text-xs text-slate-400">
+            Nguồn AI: {llmProvider}{fallbackUsed ? ' (dự phòng)' : ''}
+          </p>
+        )}
         <p className="mt-1 text-xs text-slate-400">Tóm tắt và các nội dung được hỗ trợ bởi bằng chứng cuộc họp.</p>
       </header>
 
