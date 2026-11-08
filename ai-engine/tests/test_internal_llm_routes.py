@@ -8,6 +8,7 @@ from app.api import internal_llm_routes
 from app.core.config import settings
 from app.main import app
 from app.schemas.meeting_summary import MeetingSummary
+from app.services.local_llm_debug import LocalLLMDebugStore
 from app.services.local_llm_client import LocalLLMError
 
 
@@ -92,8 +93,18 @@ def test_prepare_uses_verified_context_and_existing_prompt_builder(monkeypatch):
     assert response.status_code == 200
     result = response.json()
     assert result["requestId"] == REQUEST_ID
+    assert result["contractVersion"] == "smartrec.local-llm.v1"
+    assert result["jobId"] == JOB_ID
+    assert result["meetingId"] == MEETING_ID
+    assert result["taskType"] == "MEETING_ANALYSIS"
     assert result["schemaVersion"] == "smartrec.ai.meeting-summary.v1"
     assert result["allowedSourceRefs"] == ["S1"]
+    assert set(result) == {
+        "contractVersion", "requestId", "jobId", "meetingId", "taskType",
+        "systemPrompt", "fallbackSystemPrompt", "prompt",
+        "allowedSourceRefs", "schemaVersion",
+    }
+    assert result["fallbackSystemPrompt"].strip()
     assert "S1" in result["prompt"]
     assert SOURCE_ID not in result["prompt"]
     assert "speaker_id" not in result["prompt"]
@@ -172,6 +183,117 @@ def test_generate_returns_validated_local_output_and_provider_token_metadata(mon
     assert result["result"]["executive_summary_refs"] == ["TRANSCRIPT:" + SOURCE_ID]
     assert result["tokenMetadata"]["inputTokens"] == 72
     assert result["tokenMetadata"]["outputTokens"] == 31
+
+
+def test_generate_repairs_validation_failure_once_without_reusing_raw_output(monkeypatch):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    calls = []
+
+    class RepairingLocalClient:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return {
+                    "text": '{"schema_version":"RAW_OUTPUT_SENTINEL"',
+                    "model_identifier": "qwen2.5:3b",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "token_source": "ollama_metadata",
+                    "processing_time_ms": 1,
+                }
+            assert "REPAIR INSTRUCTIONS" in kwargs["prompt"]
+            assert "JSON_PARSE_ERROR" in kwargs["prompt"]
+            assert "RAW_OUTPUT_SENTINEL" not in kwargs["prompt"]
+            return {
+                "text": json.dumps(_summary(), ensure_ascii=False),
+                "model_identifier": "qwen2.5:3b",
+                "input_tokens": 72,
+                "output_tokens": 31,
+                "total_tokens": 103,
+                "token_source": "ollama_metadata",
+                "processing_time_ms": 184,
+            }
+
+    monkeypatch.setattr(internal_llm_routes, "local_llm_client", RepairingLocalClient())
+    response = client.post(
+        "/api/v1/internal/llm/generate",
+        json=_generate_request(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 2
+    assert response.json()["tokenMetadata"]["inputTokens"] == 82
+    assert response.json()["tokenMetadata"]["outputTokens"] == 36
+    assert response.json()["tokenMetadata"]["totalTokens"] == 118
+    assert response.json()["processingTimeMs"] == 185
+
+
+def test_generate_stops_after_one_repair_and_marks_final_model_output_failure(monkeypatch):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    calls = []
+
+    class AlwaysInvalidLocalClient:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "text": f'{{"schema_version":"INVALID_{len(calls)}"',
+                "model_identifier": "qwen2.5:3b",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+                "token_source": "ollama_metadata",
+                "processing_time_ms": 1,
+            }
+
+    monkeypatch.setattr(internal_llm_routes, "local_llm_client", AlwaysInvalidLocalClient())
+    response = client.post(
+        "/api/v1/internal/llm/generate",
+        json=_generate_request(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 502
+    assert len(calls) == 2
+    assert response.json()["detail"] == {
+        "code": "JSON_PARSE_ERROR",
+        "origin": "MODEL_OUTPUT",
+    }
+
+
+def test_generate_marks_repair_attempt_when_second_model_call_fails(monkeypatch):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    calls = []
+
+    class RepairUnavailableLocalClient:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return {
+                    "text": '{"schema_version":',
+                    "model_identifier": "qwen2.5:3b",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "token_source": "ollama_metadata",
+                    "processing_time_ms": 1,
+                }
+            raise LocalLLMError("LOCAL_MODEL_TIMEOUT")
+
+    monkeypatch.setattr(internal_llm_routes, "local_llm_client", RepairUnavailableLocalClient())
+    response = client.post(
+        "/api/v1/internal/llm/generate",
+        json=_generate_request(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 503
+    assert len(calls) == 2
+    assert response.json()["detail"] == {
+        "code": "LOCAL_MODEL_TIMEOUT",
+        "origin": "MODEL_OUTPUT",
+    }
 
 
 def test_generate_reports_missing_model_configuration_without_inference(monkeypatch):
@@ -254,6 +376,75 @@ def test_generate_rejects_malformed_json_from_local_model(monkeypatch):
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "JSON_PARSE_ERROR"
+    assert response.json()["detail"]["origin"] == "MODEL_OUTPUT"
+
+
+def test_generate_captures_failed_local_output_only_when_development_capture_is_enabled(
+    monkeypatch, tmp_path, caplog,
+):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    monkeypatch.setattr(settings, "smartrec_environment", "development")
+    monkeypatch.setattr(settings, "smartrec_llm_debug_capture_enabled", True)
+    monkeypatch.setattr(settings, "smartrec_llm_debug_dir", tmp_path / "local-llm-debug")
+
+    class InvalidOutputStub:
+        def generate(self, **kwargs):
+            return {
+                "text": '{"schema_version":',
+                "model_identifier": "qwen2.5:3b",
+                "input_tokens": 4,
+                "output_tokens": 2,
+                "total_tokens": 6,
+                "token_source": "ollama_metadata",
+                "processing_time_ms": 1,
+            }
+
+    monkeypatch.setattr(internal_llm_routes, "local_llm_client", InvalidOutputStub())
+    response = client.post(
+        "/api/v1/internal/llm/generate",
+        json=_generate_request(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 502
+    captures = LocalLLMDebugStore(settings.smartrec_llm_debug_dir).list_captures()
+    assert len(captures) == 1
+    capture = LocalLLMDebugStore(settings.smartrec_llm_debug_dir).load(captures[0][0])
+    assert capture["rawOutput"] == '{"schema_version":'
+    assert capture["failureCode"] == "JSON_PARSE_ERROR"
+    assert "prompt" not in capture
+    assert "systemPrompt" not in capture
+    assert capture["evidence"][0]["text"] == "Thống nhất hoàn thành kiểm thử."
+    assert '{"schema_version":' not in caplog.text
+    assert "Thống nhất hoàn thành kiểm thử." not in caplog.text
+
+
+def test_validate_fallback_never_captures_gemini_response_even_when_debug_enabled(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    monkeypatch.setattr(settings, "smartrec_environment", "development")
+    monkeypatch.setattr(settings, "smartrec_llm_debug_capture_enabled", True)
+    monkeypatch.setattr(settings, "smartrec_llm_debug_dir", tmp_path / "local-llm-debug")
+    request = {
+        "contractVersion": "smartrec.local-llm.v1",
+        "requestId": REQUEST_ID,
+        "jobId": JOB_ID,
+        "meetingId": MEETING_ID,
+        "taskType": "MEETING_ANALYSIS",
+        "rawOutput": '{"schema_version":',
+        "allowedSourceRefs": ["S1"],
+        "evidence": _prepare_request()["evidence"],
+    }
+
+    response = client.post(
+        "/api/v1/internal/llm/validate",
+        json=request,
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 502
+    assert not (tmp_path / "local-llm-debug").exists()
 
 
 def test_generate_rejects_null_summary_when_verified_evidence_exists(monkeypatch):
@@ -283,6 +474,7 @@ def test_generate_rejects_null_summary_when_verified_evidence_exists(monkeypatch
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "SCHEMA_VALIDATION_ERROR"
+    assert response.json()["detail"]["origin"] == "MODEL_OUTPUT"
 
 
 def test_generate_logs_only_safe_cross_field_diagnostics(monkeypatch, caplog):
@@ -319,7 +511,7 @@ def test_generate_logs_only_safe_cross_field_diagnostics(monkeypatch, caplog):
     assert "PRIVATE_MEETING_SENTINEL" not in caplog.text
 
 
-def test_generate_rejects_unsupported_assignee_and_inferred_date_safely(monkeypatch, caplog):
+def test_generate_removes_unsupported_action_assignee_and_inferred_date_safely(monkeypatch, caplog):
     monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
     unsupported = _summary()
     unsupported["action_items"] = [{
@@ -349,12 +541,10 @@ def test_generate_rejects_unsupported_assignee_and_inferred_date_safely(monkeypa
         headers={"X-Internal-Token": TOKEN},
     )
 
-    assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "EVIDENCE_CONSISTENCY_ERROR"
-    assert response.json()["detail"]["origin"] == "MODEL_OUTPUT"
-    assert "category=evidence_consistency" in caplog.text
-    assert "unsupported_assignee" in caplog.text
-    assert "unsupported_absolute_deadline" in caplog.text
+    assert response.status_code == 200
+    assert response.json()["result"]["action_items"] == []
+    assert "unsupported_assignee" not in caplog.text
+    assert "unsupported_absolute_deadline" not in caplog.text
     assert "Thống nhất hoàn thành kiểm thử." not in caplog.text
 
 
@@ -381,7 +571,7 @@ def test_validate_fallback_output_uses_the_same_python_schema(monkeypatch):
     assert response.json()["result"]["executive_summary_refs"] == ["TRANSCRIPT:" + SOURCE_ID]
 
 
-def test_validate_fallback_rejects_unsupported_action_item(monkeypatch):
+def test_validate_fallback_removes_unsupported_action_item(monkeypatch):
     monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
     summary = _summary()
     summary["action_items"] = [{
@@ -408,8 +598,8 @@ def test_validate_fallback_rejects_unsupported_action_item(monkeypatch):
         headers={"X-Internal-Token": TOKEN},
     )
 
-    assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "EVIDENCE_CONSISTENCY_ERROR"
+    assert response.status_code == 200
+    assert response.json()["result"]["action_items"] == []
 
 
 def test_prepare_assigns_short_ids_in_chronological_order_for_all_evidence_types(monkeypatch):

@@ -1,15 +1,18 @@
 package com.example.smartrec.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
@@ -74,6 +77,45 @@ class GeminiFallbackClientTest {
                 () -> client.generate("system", "prompt", 512));
 
         assertEquals("GEMINI_OUTPUT_TRUNCATED", error.getCode());
+        server.verify();
+    }
+
+    @Test
+    void classifiesQuotaAndRateLimit429WithoutLoggingProviderBody() {
+        assertHttpFailure(429,
+                "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for private project\"}}",
+                "GEMINI_QUOTA_EXCEEDED", false);
+        assertHttpFailure(429,
+                "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Rate limit exceeded per minute\"}}",
+                "GEMINI_RATE_LIMITED", true);
+        assertHttpFailure(429,
+                "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Resource exhausted\"}}",
+                "GEMINI_RESOURCE_EXHAUSTED", false);
+    }
+
+    @Test
+    void classifies503AsRetryableServiceUnavailable() {
+        assertHttpFailure(503,
+                "{\"error\":{\"status\":\"UNAVAILABLE\",\"message\":\"Service unavailable\"}}",
+                "GEMINI_SERVICE_UNAVAILABLE", true);
+    }
+
+    private static void assertHttpFailure(int status, String responseBody, String expectedCode, boolean retryable) {
+        AIModelRouterProperties properties = properties();
+        RestTemplate requestTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(requestTemplate).build();
+        HttpStatus httpStatus = HttpStatus.valueOf(status);
+        server.expect(requestTo("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"))
+                .andRespond(withStatus(httpStatus).contentType(MediaType.APPLICATION_JSON).body(responseBody));
+        GeminiFallbackClient client = new GeminiFallbackClient(requestTemplate, properties, new ObjectMapper());
+
+        GeminiFallbackClient.GeminiProviderException error = assertThrows(
+                GeminiFallbackClient.GeminiProviderException.class,
+                () -> client.generate("system", "prompt", 512));
+
+        assertEquals(expectedCode, error.getCode());
+        assertEquals(retryable, error.isRetryable());
+        assertFalse(error.getMessage().contains(responseBody));
         server.verify();
     }
 

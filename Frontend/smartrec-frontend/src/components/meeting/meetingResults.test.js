@@ -16,6 +16,9 @@ test("maps backend summary, category evidence and task references", () => {
     meetingId: "meeting-1",
     jobId: "job-1",
     jobStatus: "COMPLETED",
+    llmStatus: "SUCCESS",
+    llmProvider: "GEMINI",
+    llmFallbackUsed: true,
     summary: {
       executiveSummary: "Summary text",
       details: {
@@ -34,6 +37,9 @@ test("maps backend summary, category evidence and task references", () => {
   });
 
   assert.equal(result.summary.executiveSummary, "Summary text");
+  assert.equal(result.llmStatus, "SUCCESS");
+  assert.equal(result.llmProvider, "GEMINI");
+  assert.equal(result.llmFallbackUsed, true);
   assert.equal(result.summary.decisions[0].text, "Use PostgreSQL");
   assert.equal(result.summary.keyPoints[0].kind, "DISCUSSION");
   assert.equal(result.actionItems[0].title, "Prepare database design");

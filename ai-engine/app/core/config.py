@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     local_llm_connect_timeout_seconds: float = 5.0
     local_llm_timeout_seconds: float = 180.0
     smartrec_llm_enabled: bool = True
+    smartrec_environment: Literal["development", "test", "production"] = "production"
+    smartrec_llm_debug_capture_enabled: bool = False
+    smartrec_llm_debug_dir: Path = Path("/var/lib/smartrec/llm-debug")
+    smartrec_llm_debug_retention_hours: int = Field(default=24, ge=1, le=168)
+    smartrec_llm_debug_max_capture_bytes: int = Field(default=524288, ge=1024, le=2097152)
+    smartrec_llm_debug_max_total_bytes: int = Field(default=16777216, ge=1048576, le=67108864)
 
     # Pyannote Speaker Diarization Settings
     hf_token: Optional[str] = None

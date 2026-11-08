@@ -15,7 +15,11 @@ public record MeetingResultsResponse(
         JobStatus jobStatus,
         List<TranscriptResult> transcripts,
         SummaryResult summary,
-        List<ActionItemResult> actionItems) {
+        List<ActionItemResult> actionItems,
+        String llmStatus,
+        String llmFailureCode,
+        Boolean llmFallbackUsed,
+        String llmProvider) {
 
     public record TranscriptResult(
             UUID id,

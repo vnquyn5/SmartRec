@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -139,6 +140,55 @@ class GeminiFallbackServiceTest {
 
         assertThrows(GeminiFallbackClient.GeminiProviderException.class,
                 () -> service.generate(id, id, id, "system", "prompt"));
+        verify(client).generate("safe system", "safe prompt", 512);
+    }
+
+    @Test
+    void retryableRateLimitCanRetryOnlyWithinConfiguredRequestBudget() {
+        UUID id = UUID.randomUUID();
+        when(properties.isGeminiFallbackEnabled()).thenReturn(true);
+        when(properties.isGeminiDataSharingApproved()).thenReturn(true);
+        when(properties.getGeminiRedactionPolicyVersion()).thenReturn("contact-details-v1");
+        when(properties.getGeminiApiKey()).thenReturn("test-key");
+        when(properties.getGeminiModel()).thenReturn("test-model");
+        when(properties.getGeminiMaxRequestsPerJob()).thenReturn(2);
+        when(properties.getGeminiMaxCostPerJobUsd()).thenReturn(BigDecimal.ONE);
+        when(properties.getGeminiMaxOutputTokens()).thenReturn(512);
+        when(properties.getGeminiMaxAttempts()).thenReturn(5);
+        when(policy.authorizeAndRedact(id, id, id, "system", "prompt", 2, 512, 2, BigDecimal.ONE))
+                .thenReturn(Optional.of(new AuthorizedPrompt("safe system", "safe prompt")));
+        when(client.generate("safe system", "safe prompt", 512))
+                .thenThrow(new GeminiFallbackClient.GeminiProviderException("GEMINI_RATE_LIMITED", true))
+                .thenReturn(new GeminiGeneration("{}", 8L, 4L));
+
+        GeminiGeneration result = service.generate(id, id, id, "system", "prompt");
+
+        assertEquals("{}", result.text());
+        verify(client, times(2)).generate("safe system", "safe prompt", 512);
+        verify(policy).authorizeAndRedact(id, id, id, "system", "prompt", 2, 512, 2, BigDecimal.ONE);
+    }
+
+    @Test
+    void quotaFailureIsNotRetriedEvenWhenBudgetAllowsTwoRequests() {
+        UUID id = UUID.randomUUID();
+        when(properties.isGeminiFallbackEnabled()).thenReturn(true);
+        when(properties.isGeminiDataSharingApproved()).thenReturn(true);
+        when(properties.getGeminiRedactionPolicyVersion()).thenReturn("contact-details-v1");
+        when(properties.getGeminiApiKey()).thenReturn("test-key");
+        when(properties.getGeminiModel()).thenReturn("test-model");
+        when(properties.getGeminiMaxRequestsPerJob()).thenReturn(2);
+        when(properties.getGeminiMaxCostPerJobUsd()).thenReturn(BigDecimal.ONE);
+        when(properties.getGeminiMaxOutputTokens()).thenReturn(512);
+        when(properties.getGeminiMaxAttempts()).thenReturn(2);
+        when(policy.authorizeAndRedact(id, id, id, "system", "prompt", 2, 512, 2, BigDecimal.ONE))
+                .thenReturn(Optional.of(new AuthorizedPrompt("safe system", "safe prompt")));
+        when(client.generate("safe system", "safe prompt", 512))
+                .thenThrow(new GeminiFallbackClient.GeminiProviderException("GEMINI_QUOTA_EXCEEDED", false));
+
+        var error = assertThrows(GeminiFallbackClient.GeminiProviderException.class,
+                () -> service.generate(id, id, id, "system", "prompt"));
+
+        assertEquals("GEMINI_QUOTA_EXCEEDED", error.getCode());
         verify(client).generate("safe system", "safe prompt", 512);
     }
 }

@@ -27,6 +27,7 @@ import com.example.smartrec.model.dto.MeetingResultsResponse.SummaryResult;
 import com.example.smartrec.model.dto.MeetingResultsResponse.TranscriptResult;
 import com.example.smartrec.model.dto.TranscriptResponse;
 import com.example.smartrec.repository.ActionItemRepository;
+import com.example.smartrec.repository.AiUsageRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.repository.SpeakerRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
@@ -50,6 +51,7 @@ public class MeetingResultsController {
     private final TranscriptService transcriptService;
     private final SummaryRepository summaryRepository;
     private final ActionItemRepository actionItemRepository;
+    private final AiUsageRepository aiUsageRepository;
     private final SpeakerRepository speakerRepository;
     private final SpeakerSegmentRepository speakerSegmentRepository;
 
@@ -109,8 +111,30 @@ public class MeetingResultsController {
                 .map(item -> toActionItem(meetingId, jobId, item, identities, persistedTranscripts))
                 .toList();
 
+        String llmStatus = summaryEntity != null ? "SUCCESS"
+                : "AI_ENRICHMENT_FAILED".equals(job.getErrorCode()) ? "FAILED"
+                : "AI_ENRICHMENT_DISABLED".equals(job.getErrorCode()) ? "DISABLED"
+                : job.getStatus() == com.example.smartrec.enums.JobStatus.COMPLETED ? "UNAVAILABLE" : "PENDING";
+        String failureCode = null;
+        if ("FAILED".equals(llmStatus) && job.getErrorMessage() != null) {
+            java.util.regex.Matcher match = java.util.regex.Pattern
+                    .compile("\\bCode: ([A-Z][A-Z0-9_]{1,63})$")
+                    .matcher(job.getErrorMessage());
+            if (match.find()) failureCode = match.group(1);
+        }
+        var usage = summaryEntity == null ? null : aiUsageRepository.findFirstByJobIdOrderByCreatedAtAsc(jobId)
+                .orElse(null);
+        Boolean fallbackUsed = usage == null
+                ? failureCode != null && failureCode.startsWith("GEMINI_")
+                        ? !java.util.Set.of("GEMINI_FALLBACK_DENIED", "GEMINI_FALLBACK_NOT_CONFIGURED",
+                                "GEMINI_DATA_POLICY_DENIED").contains(failureCode)
+                        : null
+                : usage.getFallbackUsed();
+
         return ResponseEntity.ok(new MeetingResultsResponse(
-                meetingId, jobId, job.getStatus(), transcripts, summary, actionItems));
+                meetingId, jobId, job.getStatus(), transcripts, summary, actionItems,
+                llmStatus, failureCode, fallbackUsed,
+                usage == null ? null : usage.getProvider()));
     }
 
     private TranscriptResult toTranscriptResult(

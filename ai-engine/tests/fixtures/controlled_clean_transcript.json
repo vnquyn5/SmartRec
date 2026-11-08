@@ -1,0 +1,62 @@
+{
+  "fixture_name": "controlled-clean-vietnamese-meeting",
+  "contract_version": "smartrec.local-llm.v1",
+  "evidence": [
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000001",
+      "speakerId": null,
+      "startTimeMs": 1000,
+      "endTimeMs": 2200,
+      "text": "Minh phụ trách thiết kế cơ sở dữ liệu."
+    },
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000002",
+      "speakerId": null,
+      "startTimeMs": 2300,
+      "endTimeMs": 3400,
+      "text": "Hạn hoàn thành là trước thứ Sáu."
+    },
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000003",
+      "speakerId": null,
+      "startTimeMs": 4200,
+      "endTimeMs": 5900,
+      "text": "Lan sẽ phải phát triển giao diện đăng nhập."
+    },
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000004",
+      "speakerId": null,
+      "startTimeMs": 6000,
+      "endTimeMs": 7300,
+      "text": "Hạn hoàn thành là ngày 10 tháng 11 năm 2026."
+    },
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000005",
+      "speakerId": null,
+      "startTimeMs": 8100,
+      "endTimeMs": 13200,
+      "text": "Hùng phụ trách kiểm thử chức năng upload video và báo cáo kết quả ngày 12 tháng 11 năm 2026."
+    },
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000006",
+      "speakerId": null,
+      "startTimeMs": 14000,
+      "endTimeMs": 18300,
+      "text": "Nhóm đã thống nhất sử dụng PostgreSQL làm cơ sở dữ liệu và React để phát triển giao diện."
+    },
+    {
+      "sourceType": "TRANSCRIPT",
+      "sourceId": "10000000-0000-4000-8000-000000000007",
+      "speakerId": null,
+      "startTimeMs": 19000,
+      "endTimeMs": 22200,
+      "text": "Nhóm sẽ kiểm tra tiến độ trong cuộc họp tiếp theo."
+    }
+  ]
+}

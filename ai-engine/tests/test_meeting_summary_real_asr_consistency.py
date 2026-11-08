@@ -139,6 +139,24 @@ def test_actual_persisted_asr_normalizes_to_consistent_grounded_result():
     assert all(ref in {row.source_ref for row in rows} for ref in validated.executive_summary_refs)
 
 
+def test_latest_persisted_asr_recovers_omitted_assignments_and_drops_asr_progress_review():
+    _, rows = load_persisted_evidence()
+    payload = generated_result(rows)
+    payload["action_items"] = []
+
+    normalized = normalize_summary_from_evidence(payload, rows)
+    validated = strict_validate(normalized, rows)
+
+    assert [(item.title, item.assignee, item.deadline, item.deadline_raw, item.source_refs)
+            for item in validated.action_items] == [
+        ("thiết kế cơ sở dữ liệu", None, None, "thứ 6", [rows[2].source_ref]),
+        ("phát triển giao diện đăng nhập", "Lan", None, None, [rows[3].source_ref]),
+        ("kiểm thử chức năng của blog video và phải báo cáo kết quả", "Hùng",
+         "2026-11-12", "ngày 12 tháng 11 năm 2026", [rows[5].source_ref]),
+    ]
+    assert all(rows[6].source_ref not in item.source_refs for item in validated.action_items)
+
+
 def test_clean_transcript_keeps_explicit_task_dates_and_confirmed_decision():
     rows = load_clean_evidence()
     refs = [row.source_ref for row in rows]
@@ -292,7 +310,7 @@ def test_executive_summary_rebuild_excludes_action_items_without_evidence_suppor
 
     assert normalized["executive_summary"] is None
     assert normalized["executive_summary_refs"] == []
-    assert normalized["action_items"] == payload["action_items"]
-    with pytest.raises(SummaryValidationError) as error:
-        strict_validate(normalized, [evidence])
-    assert error.value.code == SummaryErrorCode.EVIDENCE_CONSISTENCY_ERROR
+    assert normalized["action_items"] == []
+    validated = strict_validate(normalized, [evidence])
+    assert validated.action_items == []
+    assert validated.executive_summary is None

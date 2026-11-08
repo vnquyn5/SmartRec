@@ -143,6 +143,11 @@ public class AIModelRouter {
                         || "LOCAL_MODEL_TRUNCATED".equals(ex.getCode())) {
                     break;
                 }
+                if (ex.isModelOutputValidationFailure()) {
+                    // FastAPI already normalized, validated, and performed its
+                    // single local repair call before returning MODEL_OUTPUT.
+                    break;
+                }
                 if (attempt < attempts) {
                     sleepBeforeRetry(attempt);
                 }
@@ -249,19 +254,36 @@ public class AIModelRouter {
         }
     }
 
-    private void verifyPreparation(
+    void verifyPreparation(
             PrepareResponse response, UUID requestId, UUID jobId, UUID meetingId, List<ContextEvidence> evidence) {
-        if (response == null
-                || !InternalLLMContracts.VERSION.equals(response.contractVersion())
-                || !requestId.equals(response.requestId())
-                || !jobId.equals(response.jobId())
-                || !meetingId.equals(response.meetingId())
-                || !TASK_TYPE.equals(response.taskType())
-                || !InternalLLMContracts.SUMMARY_SCHEMA_VERSION.equals(response.schemaVersion())
-                || response.systemPrompt() == null || response.systemPrompt().isBlank()
-                || response.fallbackSystemPrompt() == null || response.fallbackSystemPrompt().isBlank()
-                || response.prompt() == null || response.prompt().isBlank()
-                || response.allowedSourceRefs() == null) {
+        if (response == null) {
+            log.warn("AI prepare response invalid: field=response type=missing");
+            throw new BusinessException(
+                    HttpStatus.BAD_GATEWAY, "AI_PREPARE_RESPONSE_INVALID", "AI Engine trả contract không hợp lệ");
+        }
+        List<String> diagnostics = new ArrayList<>();
+        if (!InternalLLMContracts.VERSION.equals(response.contractVersion()))
+            diagnostics.add("contractVersion:" + (response.contractVersion() == null ? "missing" : "mismatch"));
+        if (!requestId.equals(response.requestId()))
+            diagnostics.add("requestId:" + (response.requestId() == null ? "missing" : "mismatch"));
+        if (!jobId.equals(response.jobId()))
+            diagnostics.add("jobId:" + (response.jobId() == null ? "missing" : "mismatch"));
+        if (!meetingId.equals(response.meetingId()))
+            diagnostics.add("meetingId:" + (response.meetingId() == null ? "missing" : "mismatch"));
+        if (!TASK_TYPE.equals(response.taskType()))
+            diagnostics.add("taskType:" + (response.taskType() == null ? "missing" : "mismatch"));
+        if (!InternalLLMContracts.SUMMARY_SCHEMA_VERSION.equals(response.schemaVersion()))
+            diagnostics.add("schemaVersion:" + (response.schemaVersion() == null ? "missing" : "mismatch"));
+        if (response.systemPrompt() == null || response.systemPrompt().isBlank())
+            diagnostics.add("systemPrompt:" + (response.systemPrompt() == null ? "missing" : "blank"));
+        if (response.fallbackSystemPrompt() == null || response.fallbackSystemPrompt().isBlank())
+            diagnostics.add("fallbackSystemPrompt:" + (response.fallbackSystemPrompt() == null ? "missing" : "blank"));
+        if (response.prompt() == null || response.prompt().isBlank())
+            diagnostics.add("prompt:" + (response.prompt() == null ? "missing" : "blank"));
+        if (response.allowedSourceRefs() == null)
+            diagnostics.add("allowedSourceRefs:missing");
+        if (!diagnostics.isEmpty()) {
+            log.warn("AI prepare response invalid: diagnostics={}", diagnostics);
             throw new BusinessException(
                     HttpStatus.BAD_GATEWAY, "AI_PREPARE_RESPONSE_INVALID", "AI Engine trả contract không hợp lệ");
         }
@@ -276,6 +298,7 @@ public class AIModelRouter {
             expectedRefs.add("S" + (index + 1));
         }
         if (!expectedRefs.equals(response.allowedSourceRefs())) {
+            log.warn("AI prepare response invalid: field=allowedSourceRefs type=mismatch");
             throw new BusinessException(
                     HttpStatus.BAD_GATEWAY, "AI_SOURCE_ALLOWLIST_INVALID",
                     "AI Engine source allowlist không khớp context đã xác minh");
