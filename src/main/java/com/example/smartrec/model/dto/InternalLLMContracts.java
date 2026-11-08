@@ -34,6 +34,7 @@ public final class InternalLLMContracts {
             UUID meetingId,
             String taskType,
             String systemPrompt,
+            String fallbackSystemPrompt,
             String prompt,
             List<String> allowedSourceRefs,
             String schemaVersion) {}

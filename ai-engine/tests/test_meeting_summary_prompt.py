@@ -10,6 +10,7 @@ from app.schemas.meeting_summary import MeetingSummary
 from app.services.meeting_summary_prompt import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
+    build_meeting_summary_system_prompt,
     ACTION_EXTRACTION_PROMPT,
     CLASSIFICATION_EXTRACTION_PROMPT,
     build_meeting_summary_prompt,
@@ -38,7 +39,7 @@ def extract_evidence_json(prompt):
 
 
 def test_prompt_version():
-    assert PROMPT_VERSION == "smartrec.enterprise-summary-prompt.v3"
+    assert PROMPT_VERSION == "smartrec.enterprise-summary-prompt.v4"
 
 
 def test_original_system_prompt_exists():
@@ -115,6 +116,16 @@ def test_system_prompt_has_complete_output_contract():
     assert schema["properties"]["schema_version"]["const"] == "smartrec.ai.meeting-summary.v1"
     assert schema["properties"]["key_points"]["items"]["$ref"].endswith("/DiscussionPoint")
     assert schema["additionalProperties"] is False
+
+
+def test_provider_prompt_embeds_schema_generated_from_meeting_summary():
+    prompt = build_meeting_summary_system_prompt()
+    embedded = prompt.split("MEETING_SUMMARY_JSON_SCHEMA:\n", 1)[1]
+
+    assert json.loads(embedded) == MeetingSummary.model_json_schema()
+    assert "schema_version" in embedded
+    assert "deadline_raw" in embedded
+    assert "additionalProperties" in embedded
 
 
 def test_action_prompt_contract():

@@ -24,7 +24,11 @@ from app.services.meeting_summary_json import (
     SummaryValidationError,
     validate_summary_output,
 )
-from app.services.meeting_summary_prompt import SYSTEM_PROMPT, build_meeting_summary_prompt
+from app.services.meeting_summary_prompt import (
+    SYSTEM_PROMPT,
+    build_meeting_summary_prompt,
+    build_meeting_summary_system_prompt,
+)
 from app.services.meeting_summary_normalization import normalize_summary_from_evidence
 from app.services.meeting_summary_references import (
     EvidenceReferenceError,
@@ -174,6 +178,7 @@ def prepare_inference(
         meetingId=request.meeting_id,
         taskType=request.task_type,
         systemPrompt=SYSTEM_PROMPT,
+        fallbackSystemPrompt=build_meeting_summary_system_prompt(),
         prompt=prompt,
         allowedSourceRefs=reference_map.allowed_short_refs,
         schemaVersion=SCHEMA_VERSION,

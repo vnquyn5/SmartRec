@@ -173,7 +173,7 @@ public class AIModelRouter {
         try {
             long fallbackStartedNanos = System.nanoTime();
             GeminiGeneration generated = geminiFallbackService.generate(
-                jobId, meetingId, requestId, prepared.systemPrompt(), prepared.prompt());
+                jobId, meetingId, requestId, prepared.fallbackSystemPrompt(), prepared.prompt());
             requireLiveExecution(jobId, meetingId, executionId);
             ValidateResponse validated = localClient.validateFallback(new ValidateRequest(
                     InternalLLMContracts.VERSION,
@@ -206,10 +206,20 @@ public class AIModelRouter {
         } catch (GeminiFallbackService.GeminiFallbackDeniedException ex) {
             throw inferenceFailure("GEMINI_FALLBACK_DENIED", ex);
         } catch (GeminiFallbackClient.GeminiProviderException ex) {
-            throw inferenceFailure("GEMINI_INFERENCE_FAILED", ex);
+            throw inferenceFailure(ex.getCode(), ex);
         } catch (AdapterException ex) {
-            throw inferenceFailure("GEMINI_OUTPUT_VALIDATION_FAILED", ex);
+            throw inferenceFailure(geminiValidationFailureCode(ex.getCode()), ex);
         }
+    }
+
+    private String geminiValidationFailureCode(String validationCode) {
+        return switch (validationCode) {
+            case "JSON_PARSE_ERROR" -> "GEMINI_JSON_INVALID";
+            case "SCHEMA_VALIDATION_ERROR" -> "GEMINI_SCHEMA_MISMATCH";
+            case "SOURCE_REFERENCE_ERROR" -> "GEMINI_SOURCE_REFERENCE_INVALID";
+            case "EVIDENCE_CONSISTENCY_ERROR" -> "GEMINI_EVIDENCE_CONSISTENCY_FAILED";
+            default -> "GEMINI_OUTPUT_VALIDATION_FAILED";
+        };
     }
 
     private JobRepository.ExecutionLeaseView requireLiveExecution(UUID jobId, UUID meetingId, UUID executionId) {
@@ -249,6 +259,7 @@ public class AIModelRouter {
                 || !TASK_TYPE.equals(response.taskType())
                 || !InternalLLMContracts.SUMMARY_SCHEMA_VERSION.equals(response.schemaVersion())
                 || response.systemPrompt() == null || response.systemPrompt().isBlank()
+                || response.fallbackSystemPrompt() == null || response.fallbackSystemPrompt().isBlank()
                 || response.prompt() == null || response.prompt().isBlank()
                 || response.allowedSourceRefs() == null) {
             throw new BusinessException(

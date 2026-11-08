@@ -82,6 +82,7 @@ class AIModelRouterTest {
                 MEETING_ID,
                 "MEETING_ANALYSIS",
                 "system prompt",
+                "fallback system prompt",
                 "user prompt",
                 List.of("S1"),
                 InternalLLMContracts.SUMMARY_SCHEMA_VERSION));
@@ -230,7 +231,7 @@ class AIModelRouterTest {
         BusinessException error = assertThrows(BusinessException.class,
                 () -> router.generate(JOB_ID, EXECUTION_ID));
 
-        assertEquals("GEMINI_OUTPUT_VALIDATION_FAILED", error.getCode());
+        assertEquals("GEMINI_EVIDENCE_CONSISTENCY_FAILED", error.getCode());
         verify(responseValidator, never()).validate(any());
     }
 

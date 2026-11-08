@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api import internal_llm_routes
 from app.core.config import settings
 from app.main import app
+from app.schemas.meeting_summary import MeetingSummary
 from app.services.local_llm_client import LocalLLMError
 
 
@@ -380,6 +381,37 @@ def test_validate_fallback_output_uses_the_same_python_schema(monkeypatch):
     assert response.json()["result"]["executive_summary_refs"] == ["TRANSCRIPT:" + SOURCE_ID]
 
 
+def test_validate_fallback_rejects_unsupported_action_item(monkeypatch):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    summary = _summary()
+    summary["action_items"] = [{
+        "title": "Kiểm thử chức năng",
+        "assignee": "Lan",
+        "deadline": "2026-11-10",
+        "deadline_raw": "ngày 10 tháng 11 năm 2026",
+        "source_refs": ["S1"],
+    }]
+    request = {
+        "contractVersion": "smartrec.local-llm.v1",
+        "requestId": REQUEST_ID,
+        "jobId": JOB_ID,
+        "meetingId": MEETING_ID,
+        "taskType": "MEETING_ANALYSIS",
+        "rawOutput": json.dumps(summary, ensure_ascii=False),
+        "allowedSourceRefs": ["S1"],
+        "evidence": _prepare_request()["evidence"],
+    }
+
+    response = client.post(
+        "/api/v1/internal/llm/validate",
+        json=request,
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "EVIDENCE_CONSISTENCY_ERROR"
+
+
 def test_prepare_assigns_short_ids_in_chronological_order_for_all_evidence_types(monkeypatch):
     monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
     request = _prepare_request()
@@ -400,6 +432,22 @@ def test_prepare_assigns_short_ids_in_chronological_order_for_all_evidence_types
     evidence_json = prepared["prompt"].split("EVIDENCE_JSON:\n", 1)[1]
     assert json.loads(evidence_json)[0]["source_ref"] == "S1"
     assert json.loads(evidence_json)[0]["source_type"] == "SLIDE_OCR"
+
+
+def test_prepare_supplies_the_authoritative_summary_schema_to_all_providers(monkeypatch):
+    monkeypatch.setattr(settings, "smartrec_internal_token", TOKEN)
+    response = client.post(
+        "/api/v1/internal/llm/prepare",
+        json=_prepare_request(),
+        headers={"X-Internal-Token": TOKEN},
+    )
+
+    assert response.status_code == 200
+    prepared = response.json()
+    assert prepared["systemPrompt"] == internal_llm_routes.SYSTEM_PROMPT
+    system_prompt = prepared["fallbackSystemPrompt"]
+    schema_json = system_prompt.split("MEETING_SUMMARY_JSON_SCHEMA:\n", 1)[1]
+    assert json.loads(schema_json) == MeetingSummary.model_json_schema()
 
 
 def test_generate_expands_adjacent_short_ids_to_original_source_refs(monkeypatch):

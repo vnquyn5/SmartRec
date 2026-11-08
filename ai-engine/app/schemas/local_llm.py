@@ -49,6 +49,7 @@ class PrepareInferenceResponse(ContractModel):
     meeting_id: UUID = Field(alias="meetingId")
     task_type: Literal["MEETING_ANALYSIS"] = Field(alias="taskType")
     system_prompt: StrictStr = Field(alias="systemPrompt")
+    fallback_system_prompt: StrictStr = Field(alias="fallbackSystemPrompt")
     prompt: StrictStr
     allowed_source_refs: list[StrictStr] = Field(alias="allowedSourceRefs")
     schema_version: Literal["smartrec.ai.meeting-summary.v1"] = Field(alias="schemaVersion")

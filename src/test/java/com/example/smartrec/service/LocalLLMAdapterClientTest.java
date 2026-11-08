@@ -47,6 +47,7 @@ class LocalLLMAdapterClientTest {
                           "meetingId": "33333333-3333-4333-8333-333333333333",
                           "taskType": "MEETING_ANALYSIS",
                           "systemPrompt": "system",
+                          "fallbackSystemPrompt": "fallback system",
                           "prompt": "prompt",
                           "allowedSourceRefs": ["TRANSCRIPT:44444444-4444-4444-8444-444444444444"],
                           "schemaVersion": "smartrec.ai.meeting-summary.v1"
