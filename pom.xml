@@ -80,6 +80,12 @@
             <version>${minio.version}</version>
         </dependency>
 
+        <!-- WebSocket + STOMP -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
         <!-- 5. Security (Giữ lại Spring Security Core) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
