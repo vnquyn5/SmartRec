@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -46,12 +47,14 @@ public class FileServiceImpl implements FileService {
 
     private static final long MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024;
     private static final int SIMPLE_UPLOAD_PRESIGN_EXPIRES_SECONDS = 20 * 60;
+    
 
     private final MediaFileRepository mediaFileRepository;
     private final MeetingRepository meetingRepository;
     private final UserRepository userRepository;
     private final MinioService minioService;
     private final FileChecksumService fileChecksumService;
+    @Qualifier("applicationTaskExecutor")
     private final TaskExecutor applicationTaskExecutor;
     @Override
     @Transactional

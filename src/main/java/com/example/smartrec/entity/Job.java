@@ -90,4 +90,8 @@ public class Job {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Builder.Default
+    @Column(name = "event_sequence", nullable = false)
+    private Long eventSequence = 0L;
+
 }
