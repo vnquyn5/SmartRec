@@ -230,15 +230,16 @@ export default function WorkspacePage() {
         </label>
       </div>
 
-      {loading && meetings.length === 0 ? (
-        <div className="loading-container"><div className="spinner" /></div>
-      ) : error && meetings.length === 0 ? (
-        <div className="empty-state" role="alert">
-          <p>{error}</p>
-          <button onClick={() => fetchMeetings({ initial: true })} className="btn-action btn-insights">Thử lại</button>
-        </div>
-      ) : (
-        <div className="meetings-grid">
+      <div className="meetings-grid">
+        {loading && meetings.length === 0 ? (
+          <div className="workspace-grid-state loading-container"><div className="spinner" /></div>
+        ) : error && meetings.length === 0 ? (
+          <div className="workspace-grid-state empty-state" role="alert">
+            <p>{error}</p>
+            <button onClick={() => fetchMeetings({ initial: true })} className="btn-action btn-insights">Thử lại</button>
+          </div>
+        ) : (
+          <>
           {visibleMeetings.map((meeting) => {
             const status = getStatus(meeting);
             const duration = formatDuration(meeting.durationSeconds);
@@ -301,8 +302,9 @@ export default function WorkspacePage() {
             <span className="add-another-subtext">Nhấn để chọn tệp và bắt đầu xử lý.</span>
           </button>
           {visibleMeetings.length === 0 && <p className="workspace-no-results">{meetings.length ? "Không tìm thấy cuộc họp phù hợp." : "Chưa có cuộc họp nào."}</p>}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -4,47 +4,12 @@ import { useAuth } from "../../features/auth/AuthProvider";
 import BrandLink from "./BrandLink";
 
 const navItems = [
-  { to: "/", icon: "dashboard", label: "Tổng quan" },
   { to: "/upload", icon: "upload", label: "Tải lên cuộc họp" },
   { to: "/history", icon: "history", label: "Danh sách cuộc họp" },
-  { to: "/workspace", icon: "workspace", label: "Không gian cuộc họp" },
   { to: "/trash", icon: "trash", label: "Thùng rác" },
-  { to: "/export", icon: "export", label: "Xuất dữ liệu" },
 ];
 
 const icons = {
-  dashboard: (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <rect x="2" y="2" width="7" height="7" rx="2" fill="currentColor" />
-      <rect
-        x="11"
-        y="2"
-        width="7"
-        height="7"
-        rx="2"
-        fill="currentColor"
-        opacity="0.5"
-      />
-      <rect
-        x="2"
-        y="11"
-        width="7"
-        height="7"
-        rx="2"
-        fill="currentColor"
-        opacity="0.5"
-      />
-      <rect
-        x="11"
-        y="11"
-        width="7"
-        height="7"
-        rx="2"
-        fill="currentColor"
-        opacity="0.3"
-      />
-    </svg>
-  ),
   history: (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.5" />
@@ -64,39 +29,6 @@ const icons = {
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  workspace: (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M3 7l7-4 7 4v6l-7 4-7-4V7z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M10 11V17M3 7l7 4 7-4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  export: (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M10 3v10M6 9l4 4 4-4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M3 14v2a2 2 0 002 2h10a2 2 0 002-2v-2"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
       />
     </svg>
   ),
@@ -165,7 +97,6 @@ const Sidebar = () => {
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === "/"}
               className={({ isActive }) =>
                 `sidebar-link${isActive ? " is-active" : ""}`
               }

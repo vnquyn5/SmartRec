@@ -1,0 +1,86 @@
+.trash-page {
+  display: flex;
+  width: min(100%, 1180px);
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+  margin-inline: auto;
+}
+
+@media (min-width: 768px) {
+  .trash-page {
+    min-height: 0;
+    flex: 1 1 0%;
+  }
+
+  .trash-tabs,
+  .trash-toolbar,
+  .trash-page-message,
+  .trash-page-error {
+    flex: 0 0 auto;
+  }
+
+  .trash-main {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 0%;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .trash-tabs {
+    flex-shrink: 0;
+  }
+
+  .trash-table-panel {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 0%;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .trash-table-scroll {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 0%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: rgba(255, 255, 255, 0.18) #101624;
+  }
+
+  .trash-table-scroll table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .trash-table-header th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #101624;
+  }
+
+  .trash-pagination {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .trash-page {
+    width: 100%;
+  }
+
+  .trash-table-panel {
+    overflow: visible;
+  }
+
+  .trash-table-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+}
+

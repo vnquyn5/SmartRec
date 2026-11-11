@@ -1114,7 +1114,7 @@ a {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 24px 16px;
+  padding: 16px 16px 24px;
   background: var(--sr-panel);
   border-right: 1px solid rgba(255, 255, 255, 0.05);
   overflow-y: auto;
@@ -1251,6 +1251,38 @@ a {
   justify-content: flex-end;
 }
 
+.topbar--page {
+  justify-content: flex-start;
+  min-height: 64px;
+}
+
+.topbar-page-title {
+  flex: 1 1 0%;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.topbar-page-title h1 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--sr-text);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-page-title p {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--sr-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbar-search {
   display: flex;
   align-items: center;
@@ -1340,6 +1372,38 @@ a {
   padding: 28px 32px 48px;
 }
 
+/* History and Trash keep the app chrome in place and scroll their data regions. */
+@media (min-width: 768px) {
+  .dashboard-shell.history-scroll-shell,
+  .dashboard-shell.trash-scroll-shell {
+    grid-template-rows: minmax(0, 1fr);
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .history-scroll-shell .dashboard-main,
+  .trash-scroll-shell .dashboard-main {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .history-scroll-shell .topbar,
+  .trash-scroll-shell .topbar {
+    flex: 0 0 auto;
+  }
+
+  .history-scroll-content,
+  .trash-scroll-content {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+
 /* Meeting Details owns the space below the global header on desktop. The
    page itself stays fixed while its transcript and speaker lists scroll. */
 @media (min-width: 1280px) {
@@ -1378,12 +1442,12 @@ a {
   }
 
   .meeting-detail-heading {
-    flex: 1 1 34%;
-    max-width: 46%;
+    flex: 0 0 auto;
+    max-width: none;
   }
 
   .meeting-detail-toolbar-actions {
-    flex: 1 1 58%;
+    flex: 1 1 auto;
   }
 
   .meeting-media-player {
@@ -1850,6 +1914,57 @@ a {
 
   .topbar {
     padding: 12px 16px;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar--page {
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .topbar-page-title h1 {
+    font-size: 17px;
+  }
+
+  .topbar-page-title p,
+  .topbar-page .avatar-role {
+    display: none;
+  }
+
+  .topbar-page .avatar-info {
+    max-width: 86px;
+  }
+
+  .topbar-page .avatar-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 460px) {
+  .topbar--page {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .topbar-page-title h1 {
+    font-size: 15px;
+  }
+
+  .topbar-page .topbar-avatar {
+    gap: 6px;
+  }
+
+  .topbar-page .avatar-circle {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+
+  .topbar-page .avatar-info {
+    max-width: 64px;
   }
 }
 

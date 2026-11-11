@@ -18,7 +18,22 @@ import { getMediaDuration } from "../../utils/fileSlice";
 import { getMediaUploadError, MEDIA_UPLOAD_ACCEPT } from "../../utils/mediaUploadPolicy.js";
 import { confirmSimpleUpload, discardSimpleUpload } from "../../features/files/useSingleUpload.js";
 import { getFolders, moveMeetingsToFolder } from "../../services/folderService.js";
-import { getMeetings } from "../../services/meetingService.js";
+import {
+  getMeetings,
+  startMeetingProcessing,
+} from "../../services/meetingService.js";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  PencilIcon,
+  TrashIcon,
+  XIcon,
+} from "../../components/common/icons.jsx";
+import {
+  getUploadFileNameDraft,
+  normalizeUploadFileName,
+} from "../../utils/uploadFileName.js";
+import { getUploadActionButtonState } from "../../utils/uploadActionState.js";
 import "./UploadPage.css";
 import {
   buildUploadDuplicateNotice,
@@ -34,24 +49,6 @@ const formatBytes = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 };
 
-const formatDuration = (seconds) => {
-  if (!seconds || !isFinite(seconds)) return "--";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  const pad = (n) => n.toString().padStart(2, "0");
-  return `${pad(h)}:${pad(m)}:${pad(s)}`;
-};
-
-const formatCompletedAt = (value) => {
-  const date = value ? new Date(value) : new Date();
-  return `${date.toLocaleTimeString("vi-VN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })} ${date.toLocaleDateString("vi-VN")}`;
-};
-
 const MAX_SINGLE_FILES = 5;
 const MAX_CHUNKED_FILES = 3;
 const SINGLE_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024;
@@ -59,27 +56,6 @@ const CHUNKED_UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024;
 
 const getFileIdentity = (file) =>
   `${file.name}-${file.size}-${file.lastModified}`;
-
-const getFileExtension = (fileName = "") => {
-  const dot = fileName.lastIndexOf(".");
-  return dot > 0 ? fileName.slice(dot) : "";
-};
-
-const getFileBaseName = (fileName = "") => {
-  const extension = getFileExtension(fileName);
-  return extension ? fileName.slice(0, -extension.length) : fileName;
-};
-
-const normalizeUploadFileName = (fileName, sourceFileName) => {
-  const extension = getFileExtension(sourceFileName).toLowerCase();
-  const rawBaseName = getFileBaseName(fileName).trim();
-  const safeBaseName = (rawBaseName || "Ban ghi")
-    .replace(/[\\/]/g, "_")
-    .replace(/\.\./g, "_")
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .slice(0, Math.max(1, 495 - extension.length));
-  return `${safeBaseName}${extension}`;
-};
 
 const getFolderPath = (folder, folderList) => {
   const foldersById = new Map(folderList.map((item) => [item.id, item]));
@@ -110,6 +86,16 @@ const buildQueueIdentitySet = (singleItems, chunkedItems) =>
       ),
   ]);
 
+const mergeSavedSummaries = (current, incoming) => {
+  const incomingKeys = new Set(
+    incoming.map((item) => item.meetingId || item.id),
+  );
+  return [
+    ...current.filter((item) => !incomingKeys.has(item.meetingId || item.id)),
+    ...incoming,
+  ];
+};
+
 const UploadPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -121,8 +107,13 @@ const UploadPage = () => {
   const [folders, setFolders] = useState([]);
   const [selectedFolderId, setSelectedFolderId] = useState("");
   const [folderLoadError, setFolderLoadError] = useState(false);
+  const [renameDraftById, setRenameDraftById] = useState({});
+  const [editingFileId, setEditingFileId] = useState(null);
+  const [editingBaseName, setEditingBaseName] = useState("");
+  const [isStartingUploads, setIsStartingUploads] = useState(false);
+  const [isStartingProcessing, setIsStartingProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
-  const [savedNotification, setSavedNotification] = useState(null);
   const [uploadNotice, setUploadNotice] = useState(null);
   const [savedFilesSummary, setSavedFilesSummary] = useState([]);
   const [durationByFileId, setDurationByFileId] = useState({});
@@ -130,7 +121,18 @@ const UploadPage = () => {
   const [isSavingAll, setIsSavingAll] = useState(false);
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
+  const startUploadsRef = useRef(false);
+  const startProcessingRef = useRef(false);
+  const renameInputRef = useRef(null);
+  const pendingChunkStartIdsRef = useRef([]);
+  const startingChunkRef = useRef(false);
   const queue = singleUploadState.items;
+
+  useEffect(() => {
+    if (!editingFileId || !renameInputRef.current) return;
+    renameInputRef.current.focus();
+    renameInputRef.current.select();
+  }, [editingFileId]);
 
   useEffect(() => {
     let isActive = true;
@@ -617,19 +619,6 @@ const UploadPage = () => {
     [singleUploadState.items],
   );
 
-  const handleCancelAllUploads = useCallback(async () => {
-    for (const item of singleUploadStore.getSnapshot().items) {
-      if (item.phase !== "success") singleUploadStore.cancel(item.id);
-      await removeItemFromUI(item);
-    }
-    for (const item of largeUploadStore.getSnapshot().items) {
-      largeUploadStore.selectItem(item.id);
-      largeUploadStore.cancel();
-      largeUploadStore.remove(item.id);
-    }
-    navigate("/");
-  }, [navigate, removeItemFromUI]);
-
   const handleRetryFile = useCallback(
     async (item) => {
       let retryItem = item;
@@ -742,17 +731,22 @@ const UploadPage = () => {
       .items.find((candidate) => candidate.id === id);
     if (!item) return null;
 
-    const existingMeetings = selectedFolderId
-      ? await findMeetingsForFile(item.fileName, item.fileSize)
-      : [];
-    const existingIds = new Set(existingMeetings.map((meeting) => meeting.id));
-    const savedItem = await largeUploadStore.merge(id);
-    if (savedItem?.phase !== "success" || !selectedFolderId) return savedItem;
-
-    const matchingMeetings = await findMeetingsForFile(
+    const existingMeetings = await findMeetingsForFile(
       item.fileName,
       item.fileSize,
-    );
+    ).catch((error) => {
+      if (selectedFolderId) throw error;
+      return [];
+    });
+    const existingIds = new Set(existingMeetings.map((meeting) => meeting.id));
+    const savedItem = await largeUploadStore.merge(id);
+    if (savedItem?.phase !== "success") return savedItem;
+
+    const matchingMeetings = await findMeetingsForFile(item.fileName, item.fileSize)
+      .catch((error) => {
+        if (selectedFolderId) throw error;
+        return [];
+      });
     const newlySaved = matchingMeetings
       .filter((meeting) => !existingIds.has(meeting.id))
       .sort(
@@ -761,11 +755,17 @@ const UploadPage = () => {
           new Date(first.createdAt || 0).getTime(),
       );
     const meeting = newlySaved[0];
-    if (!meeting) {
+    if (!meeting && selectedFolderId) {
       throw new Error("File đã lưu nhưng không tìm thấy bản ghi để chuyển thư mục.");
     }
-    await moveMeetingsToFolder([meeting.id], selectedFolderId);
-    return savedItem;
+    if (meeting && selectedFolderId) {
+      await moveMeetingsToFolder([meeting.id], selectedFolderId);
+    }
+    return {
+      ...savedItem,
+      meetingId: meeting?.id || null,
+      meetingStatus: meeting?.status || "UNPROCESSED",
+    };
   }, [findMeetingsForFile, selectedFolderId]);
 
   const buildSavedSummary = useCallback(
@@ -788,6 +788,12 @@ const UploadPage = () => {
         null,
       completedAt,
       uploadType: item.strategy === "chunk" ? "CHUNKED" : "SINGLE",
+      meetingId: item.meetingId || item.uploadResponse?.meetingId || null,
+      meetingStatus:
+        item.meetingStatus ||
+        item.uploadResponse?.meetingStatus ||
+        "UNPROCESSED",
+      processingStarted: false,
     }),
     [durationByFileId],
   );
@@ -813,14 +819,13 @@ const UploadPage = () => {
           if (singleItem.phase !== "success") return;
           const confirmedUpload = await persistFile(singleItem);
           const summary = buildSavedSummary({ ...singleItem, uploadResponse: confirmedUpload });
-          setSavedFilesSummary([summary]);
+          setSavedFilesSummary((current) => mergeSavedSummaries(current, [summary]));
           singleUploadStore.markSaved(id);
         } else {
           if (chunkItem.phase === "success") {
             const savedItem = await mergeAndPlaceInFolder(id);
             if (savedItem?.phase === "success") {
-              setSavedFilesSummary([
-                buildSavedSummary(
+              const summary = buildSavedSummary(
                   {
                     ...savedItem,
                     strategy: "chunk",
@@ -830,8 +835,8 @@ const UploadPage = () => {
                       savedItem.lastModified || savedItem.file?.lastModified,
                   },
                   savedItem.completedAt || new Date().toISOString(),
-                ),
-              ]);
+                );
+              setSavedFilesSummary((current) => mergeSavedSummaries(current, [summary]));
               largeUploadStore.markSaved(id);
             }
             return;
@@ -848,8 +853,7 @@ const UploadPage = () => {
           largeUploadStore.selectItem(id);
           const savedItem = await mergeAndPlaceInFolder(id);
           if (savedItem?.phase === "success") {
-            setSavedFilesSummary([
-              buildSavedSummary(
+            const summary = buildSavedSummary(
                 {
                   ...savedItem,
                   strategy: "chunk",
@@ -859,8 +863,8 @@ const UploadPage = () => {
                     savedItem.lastModified || savedItem.file?.lastModified,
                 },
                 savedItem.completedAt || new Date().toISOString(),
-              ),
-            ]);
+              );
+            setSavedFilesSummary((current) => mergeSavedSummaries(current, [summary]));
             largeUploadStore.markSaved(id);
           }
         }
@@ -981,7 +985,9 @@ const UploadPage = () => {
       }
 
       if (successfulSummaries.length > 0) {
-        setSavedFilesSummary(successfulSummaries);
+        setSavedFilesSummary((current) =>
+          mergeSavedSummaries(current, successfulSummaries),
+        );
         savedSingleIds.forEach((id) => singleUploadStore.markSaved(id));
       }
 
@@ -1014,30 +1020,235 @@ const UploadPage = () => {
   const preparedChunkItems = largeUploadState.items.filter(
     (item) => item.phase === "idle" && item.hasFile,
   );
+  const preparedItems = [...preparedSingleItems, ...preparedChunkItems];
   const preparedCount = preparedSingleItems.length + preparedChunkItems.length;
-  const isChunkUploadActive = largeUploadState.items.some((item) =>
-    ["uploading", "merging"].includes(item.phase),
+  const getItemNameDraft = (item) => {
+    const defaultDraft = getUploadFileNameDraft(item);
+    return {
+      ...defaultDraft,
+      baseName: Object.prototype.hasOwnProperty.call(renameDraftById, item.id)
+        ? renameDraftById[item.id]
+        : defaultDraft.baseName,
+    };
+  };
+  const normalizedNamesById = new Map(
+    preparedItems.map((item) => {
+      const draft = getItemNameDraft(item);
+      return [item.id, normalizeUploadFileName(draft.baseName, draft.extension)];
+    }),
+  );
+  const reservedFileNames = [
+    ...singleUploadState.items.filter((item) => item.phase !== "idle"),
+    ...largeUploadState.items.filter((item) => item.phase !== "idle"),
+  ]
+    .map((item) => item.fileName || item.sourceFileName || item.file?.name || "")
+    .concat(savedFilesSummary.map((item) => item.fileName || ""));
+  const normalizedNameCounts = new Map();
+  [...normalizedNamesById.values(), ...reservedFileNames].forEach((fileName) => {
+    if (!fileName) return;
+    const key = fileName.toLocaleLowerCase();
+    normalizedNameCounts.set(key, (normalizedNameCounts.get(key) || 0) + 1);
+  });
+  const renameErrorsById = new Map(
+    preparedItems.map((item) => {
+      const draft = getItemNameDraft(item);
+      const normalizedFileName = normalizedNamesById.get(item.id);
+      if (!draft.baseName.trim()) {
+        return [item.id, "Nhập tên tệp trước khi tải lên."];
+      }
+      if (!normalizedFileName) {
+        return [item.id, "Tên tệp không hợp lệ."];
+      }
+      if (
+        normalizedNameCounts.get(normalizedFileName.toLocaleLowerCase()) > 1
+      ) {
+        return [item.id, "Tên tệp bị trùng với một tệp khác."];
+      }
+      return [item.id, ""];
+    }),
+  );
+  const getRenameValidationError = (item, baseName) => {
+    if (!String(baseName ?? "").trim()) {
+      return "Nhập tên tệp trước khi tải lên.";
+    }
+    const draft = getItemNameDraft(item);
+    const normalizedFileName = normalizeUploadFileName(
+      baseName,
+      draft.extension,
+    );
+    if (!normalizedFileName) return "Tên tệp không hợp lệ.";
+
+    const duplicate = preparedItems.some((otherItem) => {
+      if (otherItem.id === item.id) return false;
+      const otherDraft = getItemNameDraft(otherItem);
+      const otherName = normalizeUploadFileName(
+        otherDraft.baseName,
+        otherDraft.extension,
+      );
+      return (
+        otherName &&
+        otherName.toLocaleLowerCase() === normalizedFileName.toLocaleLowerCase()
+      );
+    }) || reservedFileNames.some(
+      (otherName) =>
+        String(otherName).trim().toLocaleLowerCase() ===
+        normalizedFileName.toLocaleLowerCase(),
+    );
+    return duplicate ? "Tên tệp bị trùng với một tệp khác." : "";
+  };
+  const cancelInlineRename = () => {
+    setEditingFileId(null);
+    setEditingBaseName("");
+  };
+  const commitInlineRename = (item) => {
+    const error = getRenameValidationError(item, editingBaseName);
+    if (error) return;
+
+    const draft = getItemNameDraft(item);
+    const normalizedName = normalizeUploadFileName(
+      editingBaseName,
+      draft.extension,
+    );
+    const normalizedBaseName = draft.extension
+      ? normalizedName.slice(0, -draft.extension.length)
+      : normalizedName;
+    setRenameDraftById((current) => ({
+      ...current,
+      [item.id]: normalizedBaseName,
+    }));
+    cancelInlineRename();
+  };
+  const arePreparedNamesValid =
+    preparedCount >= 1 &&
+    editingFileId === null &&
+    preparedItems.every((item) => !renameErrorsById.get(item.id));
+  const hasUploadInProgress =
+    singleUploadState.items.some((item) =>
+      ["uploading", "finalizing"].includes(item.phase),
+    ) ||
+    largeUploadState.items.some((item) =>
+      item.phase === "uploading",
+    );
+  const isChunkSaveInProgress = largeUploadState.items.some(
+    (item) => item.phase === "merging",
+  );
+  const uploadAction = getUploadActionButtonState({
+    preparedCount,
+    arePreparedNamesValid,
+    isStartingUploads,
+    hasUploadInProgress,
+    pendingChunkCount: pendingChunkStartIdsRef.current.length,
+  });
+  const processableSavedFiles = savedFilesSummary.filter(
+    (file) =>
+      file.meetingId &&
+      !file.processingStarted &&
+      String(file.meetingStatus || "UNPROCESSED").toUpperCase() ===
+        "UNPROCESSED",
   );
 
-  const handleStartUploads = useCallback(() => {
-    preparedSingleItems.forEach((item) => {
-      const fileName = normalizeUploadFileName(item.fileName, item.sourceFileName);
-      singleUploadStore.renameFile(item.id, fileName);
-      singleUploadStore.start(item.id, meetingName, fileName);
-    });
+  const handleStartProcessing = useCallback(async () => {
+    if (startProcessingRef.current || processableSavedFiles.length === 0) return;
+    startProcessingRef.current = true;
+    setIsStartingProcessing(true);
+    setProcessingError("");
+    try {
+      for (const file of processableSavedFiles) {
+        await startMeetingProcessing(file.meetingId);
+        setSavedFilesSummary((current) =>
+          current.map((savedFile) =>
+            savedFile.meetingId === file.meetingId
+              ? { ...savedFile, processingStarted: true }
+              : savedFile,
+          ),
+        );
+      }
+      navigate(`/meeting/${processableSavedFiles[0].meetingId}`);
+    } catch (error) {
+      setProcessingError(
+        error?.message || "Không thể bắt đầu xử lý cuộc họp. Vui lòng thử lại.",
+      );
+    } finally {
+      startProcessingRef.current = false;
+      setIsStartingProcessing(false);
+    }
+  }, [navigate, processableSavedFiles]);
 
-    if (preparedChunkItems.length > 0 && !isChunkUploadActive) {
-      const item = preparedChunkItems[0];
-      const fileName = normalizeUploadFileName(item.fileName, item.sourceFileName);
-      largeUploadStore.renameFile(item.id, fileName);
-      largeUploadStore.selectItem(item.id);
-      largeUploadStore.start(item.id);
+  const startNextChunkUpload = useCallback(async () => {
+    if (startingChunkRef.current) return;
+    const currentState = largeUploadStore.getSnapshot();
+    const activeChunk = currentState.items.some((item) =>
+      ["uploading", "merging"].includes(item.phase),
+    );
+    if (activeChunk) return;
+
+    while (pendingChunkStartIdsRef.current.length > 0) {
+      const nextId = pendingChunkStartIdsRef.current.shift();
+      const nextItem = largeUploadStore
+        .getSnapshot()
+        .items.find((item) => item.id === nextId);
+      if (!nextItem || nextItem.phase !== "idle" || !nextItem.hasFile) continue;
+
+      startingChunkRef.current = true;
+      try {
+        largeUploadStore.selectItem(nextId);
+        await largeUploadStore.start(nextId);
+      } finally {
+        startingChunkRef.current = false;
+        window.setTimeout(() => {
+          void startNextChunkUpload();
+        }, 0);
+      }
+      return;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (pendingChunkStartIdsRef.current.length === 0) return;
+    if (startingChunkRef.current) return;
+    const activeChunk = largeUploadState.items.some((item) =>
+      ["uploading", "merging"].includes(item.phase),
+    );
+    if (!activeChunk) void startNextChunkUpload();
+  }, [largeUploadState.items, startNextChunkUpload]);
+
+  const handleStartUploads = useCallback(async () => {
+    if (
+      startUploadsRef.current ||
+      !arePreparedNamesValid ||
+      hasUploadInProgress ||
+      pendingChunkStartIdsRef.current.length > 0
+    ) {
+      return;
+    }
+
+    startUploadsRef.current = true;
+    setIsStartingUploads(true);
+    try {
+      preparedSingleItems.forEach((item) => {
+        const fileName = normalizedNamesById.get(item.id);
+        singleUploadStore.renameFile(item.id, fileName);
+        void singleUploadStore.start(item.id, meetingName, fileName);
+      });
+
+      preparedChunkItems.forEach((item) => {
+        const fileName = normalizedNamesById.get(item.id);
+        largeUploadStore.renameFile(item.id, fileName);
+      });
+      pendingChunkStartIdsRef.current = preparedChunkItems.map((item) => item.id);
+      await startNextChunkUpload();
+    } finally {
+      startUploadsRef.current = false;
+      setIsStartingUploads(false);
     }
   }, [
-    isChunkUploadActive,
+    arePreparedNamesValid,
+    hasUploadInProgress,
     meetingName,
+    normalizedNamesById,
     preparedChunkItems,
     preparedSingleItems,
+    startNextChunkUpload,
   ]);
 
   const activeCount = queue.filter((item) =>
@@ -1094,85 +1305,8 @@ const UploadPage = () => {
 
   return (
     <>
-      <div
-        className="upload-page-shell"
-        style={{
-          flex: 1,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "flex-start",
-          padding: "24px",
-          paddingTop: "40px",
-        }}
-      >
+      <div className="upload-page-shell">
         <div className="upload-page-form" style={{ width: "700px", maxWidth: "100%" }}>
-          {/* Header */}
-          <div className="upload-page-header" style={{ textAlign: "center", marginBottom: "16px" }}>
-            <button
-              type="button"
-              className="upload-close-button"
-              aria-label="Đóng cửa sổ tải tệp"
-              title="Đóng"
-              onClick={() => navigate("/")}
-            >
-              ×
-            </button>
-            <h1
-              style={{
-                fontSize: "20px",
-                fontWeight: "800",
-                color: "#fff",
-                marginBottom: "8px",
-              }}
-            >
-                Thêm tệp
-            </h1>
-            <p
-              style={{
-                fontSize: "12px",
-                color: "#8d96aa",
-                maxWidth: "460px",
-                margin: "0 auto",
-                lineHeight: "1.6",
-              }}
-            >
-              Thêm một hoặc nhiều tệp để AI phân tích, tổng hợp thông tin và tạo bản ghi cuộc họp.
-            </p>
-          </div>
-
-          {/* Thông báo đã lưu */}
-          {savedNotification && (
-            <div
-              style={{
-                padding: "12px 16px",
-                background: "rgba(34, 197, 94, 0.1)",
-                color: "#22c55e",
-                borderRadius: "8px",
-                marginBottom: "16px",
-                fontSize: "13px",
-                border: "1px solid rgba(34, 197, 94, 0.25)",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-              }}
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#22c55e"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                <polyline points="22 4 12 14.01 9 11.01"></polyline>
-              </svg>
-              <span style={{ fontWeight: "600" }}>{savedNotification}</span>
-            </div>
-          )}
-
           {uploadNotice && (
             <div
               style={{
@@ -1337,43 +1471,6 @@ const UploadPage = () => {
             </span>
           </div>
 
-          {saveableCount >= 2 && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                marginBottom: "12px",
-              }}
-            >
-              <button
-                type="button"
-                onClick={handleSaveAll}
-                disabled={
-                  isSavingAll || savingIds.size > 0 || saveableCount < 2
-                }
-                style={{
-                  background:
-                    saveableCount >= 2 && !isSavingAll
-                      ? "linear-gradient(135deg, #22c55e, #16a34a)"
-                      : "rgba(255,255,255,0.08)",
-                  border: "none",
-                  color:
-                    saveableCount >= 2 && !isSavingAll ? "#fff" : "#576176",
-                  padding: "8px 16px",
-                  borderRadius: "6px",
-                  fontSize: "12px",
-                  fontWeight: "700",
-                  cursor:
-                    saveableCount >= 2 && !isSavingAll
-                      ? "pointer"
-                      : "not-allowed",
-                }}
-              >
-                {isSavingAll ? "Đang lưu..." : "Lưu tất cả"}
-              </button>
-            </div>
-          )}
-
           {/* File Queue */}
           {displayQueue.length > 0 && (
             <div
@@ -1391,6 +1488,9 @@ const UploadPage = () => {
               </div>
               {displayQueue.map((item) => {
                 const isDone = item.phase === "success";
+                const itemFileName =
+                  item.fileName || item.sourceFileName || item.file?.name || "File không tên";
+                const itemFileSize = Number(item.fileSize || item.file?.size || 0);
                 const isError =
                   item.phase === "error" || item.phase === "upload_failed";
                 const isInterruptedSingle =
@@ -1412,12 +1512,20 @@ const UploadPage = () => {
                 const isFinalizing = item.phase === "finalizing";
                 const disableRemove =
                   isItemUploading || isFinalizing || isMerging;
+                const shouldShowProgress =
+                  isItemUploading ||
+                  isFinalizing ||
+                  isPaused ||
+                  isDone ||
+                  isReadyToMerge ||
+                  isMerging ||
+                  item.progress > 0;
                 const progressColor =
                   item.strategy === "chunk" ? "#f59e0b" : "#00d1ff";
 
                 const speedBps = item.speedBps || 0;
-                const uploadedBytes = item.file.size * (item.progress / 100);
-                const remainingBytes = item.file.size - uploadedBytes;
+                const uploadedBytes = itemFileSize * ((item.progress || 0) / 100);
+                const remainingBytes = itemFileSize - uploadedBytes;
                 const remainingSeconds =
                   speedBps > 0 ? remainingBytes / speedBps : 0;
 
@@ -1455,10 +1563,7 @@ const UploadPage = () => {
                   statusText = "Sẵn sàng lưu";
                   statusColor = "#22c55e";
                 } else if (isDone && !item.saved) {
-                  statusText =
-                    item.strategy === "chunk"
-                      ? "Đã xử lý xong, sẵn sàng lưu"
-                      : "Hoàn thành";
+                  statusText = "Đã tải lên, chờ lưu";
                   statusColor = "#22c55e";
                 } else if (isDone && item.saved) {
                   statusText = "Đã lưu";
@@ -1479,175 +1584,172 @@ const UploadPage = () => {
                   <div
                     key={item.id}
                     className="upload-file-card"
-                    style={{
-                      border: "1px solid rgba(255,255,255,0.05)",
-                      borderRadius: "12px",
-                      padding: "16px",
-                      background: "rgba(255,255,255,0.02)",
-                    }}
                   >
-                    {/* File info header */}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginBottom: "12px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "12px",
-                          flex: 1,
-                          minWidth: 0,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: "36px",
-                            height: "36px",
-                            flexShrink: 0,
-                            background: "rgba(62,137,255,0.1)",
-                            borderRadius: "8px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <svg
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="#3e89ff"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                          </svg>
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            className="upload-file-name"
-                            style={{
-                              fontSize: "14px",
-                              fontWeight: "700",
-                              color: isCanceled || isError ? "#ff5c5c" : "#fff",
-                              marginBottom: "4px",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {item.fileName || item.file.name}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: "12px",
-                              color: statusColor,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "8px",
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <span>{formatBytes(item.file.size)}</span>
-                            <span style={{ color: "#576176" }}>-</span>
-                            <span>{statusText}</span>
-                            {item.strategy && (
-                              <span
-                                style={{
-                                  fontSize: "10px",
-                                  fontWeight: "700",
-                                  letterSpacing: "0.5px",
-                                  padding: "2px 6px",
-                                  borderRadius: "4px",
-                                  background:
-                                    item.strategy === "chunk"
-                                      ? "rgba(245, 158, 11, 0.15)"
-                                      : "rgba(0, 209, 255, 0.15)",
-                                  color:
-                                    item.strategy === "chunk"
-                                      ? "#f59e0b"
-                                      : "#00d1ff",
-                                  border: `1px solid ${item.strategy === "chunk" ? "rgba(245, 158, 11, 0.3)" : "rgba(0, 209, 255, 0.3)"}`,
-                                }}
-                              >
-                                {item.strategy === "chunk"
-                                  ? "File lớn"
-                                  : "File thường"}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!disableRemove) removeItemFromUI(item);
-                        }}
-                        disabled={disableRemove}
-                        title={
-                          disableRemove
-                            ? "Không thể ẩn khi file đang xử lý"
-                            : "Ẩn khỏi danh sách"
-                        }
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: disableRemove ? "#30384a" : "#576176",
-                          cursor: disableRemove ? "not-allowed" : "pointer",
-                          opacity: disableRemove ? 0.45 : 1,
-                          padding: "4px",
-                          flexShrink: 0,
-                        }}
-                      >
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <line x1="18" y1="6" x2="6" y2="18"></line>
-                          <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                      </button>
-                    </div>
+                    {(() => {
+                      const draft = getItemNameDraft(item);
+                      const isEditingName = editingFileId === item.id;
+                      const activeBaseName = isEditingName
+                        ? editingBaseName
+                        : draft.baseName;
+                      const renameError = isEditingName
+                        ? getRenameValidationError(item, editingBaseName)
+                        : renameErrorsById.get(item.id);
+                      const displayedFileName = item.phase === "idle"
+                        ? `${draft.baseName}${draft.extension}`
+                        : itemFileName;
+                      const canRename = item.phase === "idle" && item.hasFile !== false;
 
-                    {item.phase === "idle" && item.hasFile !== false && (
-                      <label className="upload-rename-control">
-                        <span>Tên tệp</span>
-                        <div className="upload-rename-input-wrap">
-                          <input
-                            type="text"
-                            value={getFileBaseName(item.fileName || item.file.name)}
-                            aria-label={`Đổi tên ${item.sourceFileName || item.file.name}`}
-                            onChange={(event) => {
-                              const sourceName = item.sourceFileName || item.file.name;
-                              const extension = getFileExtension(sourceName);
-                              const baseName = extension && event.target.value.toLowerCase().endsWith(extension.toLowerCase())
-                                ? event.target.value.slice(0, -extension.length)
-                                : event.target.value;
-                              const nextName = `${baseName}${extension}`;
-                              if (item.strategy === "chunk") {
-                                largeUploadStore.renameFile(item.id, nextName);
-                              } else {
-                                singleUploadStore.renameFile(item.id, nextName);
-                              }
-                            }}
-                          />
-                          <span>{getFileExtension(item.sourceFileName || item.file.name)}</span>
-                        </div>
-                      </label>
-                    )}
+                      return (
+                        <>
+                          <div className="upload-file-row">
+                            <div className="upload-file-identity">
+                              <div className="upload-file-icon" aria-hidden="true">
+                                <svg
+                                  width="17"
+                                  height="17"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <path d="M14 2v6h6" />
+                                </svg>
+                              </div>
+                              <div className="upload-file-details">
+                                {isEditingName ? (
+                                  <div className="upload-inline-editor">
+                                    <div className={`upload-inline-name${renameError ? " has-error" : ""}`}>
+                                      <input
+                                        ref={renameInputRef}
+                                        type="text"
+                                        value={activeBaseName}
+                                        aria-label={`Tên mới cho ${item.sourceFileName || itemFileName}`}
+                                        aria-invalid={Boolean(renameError)}
+                                        aria-describedby={renameError ? `rename-error-${item.id}` : undefined}
+                                        onChange={(event) => {
+                                          let baseName = event.target.value;
+                                          if (
+                                            draft.extension &&
+                                            baseName
+                                              .toLowerCase()
+                                              .endsWith(draft.extension.toLowerCase())
+                                          ) {
+                                            baseName = baseName.slice(
+                                              0,
+                                              -draft.extension.length,
+                                            );
+                                          }
+                                          setEditingBaseName(baseName);
+                                        }}
+                                        onBlur={(event) => {
+                                          const editor = event.currentTarget.closest(
+                                            ".upload-inline-editor",
+                                          );
+                                          if (!editor?.contains(event.relatedTarget)) {
+                                            cancelInlineRename();
+                                          }
+                                        }}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            commitInlineRename(item);
+                                          } else if (event.key === "Escape") {
+                                            event.preventDefault();
+                                            cancelInlineRename();
+                                          }
+                                        }}
+                                      />
+                                      {draft.extension && <span>{draft.extension}</span>}
+                                    </div>
+                                    <div className="upload-inline-actions">
+                                      <button
+                                        type="button"
+                                        className="upload-icon-button is-confirm"
+                                        onClick={() => commitInlineRename(item)}
+                                        disabled={Boolean(renameError)}
+                                        aria-label="Xác nhận đổi tên"
+                                        title="Xác nhận (Enter)"
+                                      >
+                                        <CheckIcon />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="upload-icon-button"
+                                        onClick={cancelInlineRename}
+                                        aria-label="Hủy đổi tên"
+                                        title="Hủy (Escape)"
+                                      >
+                                        <XIcon />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="upload-file-title-line">
+                                    <span
+                                      className="upload-file-name"
+                                      title={displayedFileName}
+                                    >
+                                      {displayedFileName || "(Chưa đặt tên)"}
+                                    </span>
+                                    <div className="upload-file-actions">
+                                      <button
+                                        type="button"
+                                        className="upload-icon-button"
+                                        onClick={() => {
+                                          setEditingBaseName(draft.baseName);
+                                          setEditingFileId(item.id);
+                                        }}
+                                        disabled={!canRename}
+                                        aria-label={`Đổi tên ${displayedFileName}`}
+                                        title={canRename ? "Đổi tên" : "Chỉ có thể đổi tên trước khi tải lên"}
+                                      >
+                                        <PencilIcon />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="upload-icon-button is-danger"
+                                        onClick={() => {
+                                          if (editingFileId === item.id) cancelInlineRename();
+                                          void removeItemFromUI(item);
+                                        }}
+                                        disabled={disableRemove}
+                                        aria-label={`Xóa ${displayedFileName} khỏi danh sách`}
+                                        title={disableRemove ? "Không thể xóa khi file đang xử lý" : "Xóa file"}
+                                      >
+                                        <TrashIcon />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="upload-file-meta">
+                                  <span>{formatBytes(itemFileSize)}</span>
+                                  <span aria-hidden="true">·</span>
+                                  <span style={{ color: statusColor }}>{statusText}</span>
+                                  {item.strategy && (
+                                    <span className={`upload-file-type ${item.strategy === "chunk" ? "is-large" : ""}`}>
+                                      {item.strategy === "chunk" ? "File lớn" : "File thường"}
+                                    </span>
+                                  )}
+                                </div>
+                                {isEditingName && renameError && (
+                                  <span className="upload-rename-error" id={`rename-error-${item.id}`}>
+                                    {renameError}
+                                  </span>
+                                )}
+                                {!isEditingName && canRename && renameError && (
+                                  <span className="upload-rename-error" role="alert">
+                                    {renameError}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
 
                     {/* Progress bar + Save button */}
                     {(isError || isCanceled) && !isMergeFailed ? (
@@ -1698,9 +1800,10 @@ const UploadPage = () => {
                           </button>
                         </div>
                       </>
-                    ) : (
+                    ) : shouldShowProgress ? (
                       <>
                         <div
+                          className="upload-progress-row"
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -1869,6 +1972,7 @@ const UploadPage = () => {
                           </div>
                         )}
                         <div
+                          className="upload-progress-meta"
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
@@ -1916,11 +2020,11 @@ const UploadPage = () => {
                           </div>
                           <span>
                             {formatBytes(uploadedBytes)} /{" "}
-                            {formatBytes(item.file.size)}
+                            {formatBytes(itemFileSize)}
                           </span>
                         </div>
                       </>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}
@@ -1947,7 +2051,7 @@ const UploadPage = () => {
                   </option>
                 ))}
               </select>
-              <span className="upload-folder-chevron" aria-hidden="true">⌄</span>
+              <ChevronDownIcon className="upload-folder-chevron" />
             </div>
             {folderLoadError && (
               <p className="upload-folder-error">
@@ -1956,181 +2060,142 @@ const UploadPage = () => {
             )}
           </section>
 
-          {/* Action buttons */}
+          {savedFilesSummary.length > 0 && (
+            <section className="upload-saved-summary" aria-live="polite">
+              <div className="upload-saved-summary-heading">
+                <strong>
+                  {savedFilesSummary.length === 1
+                    ? "Đã lưu tệp, sẵn sàng xử lý"
+                    : `Đã lưu ${savedFilesSummary.length} tệp, sẵn sàng xử lý`}
+                </strong>
+              </div>
+              <div className="upload-saved-summary-list">
+                {savedFilesSummary.slice(0, 3).map((file) => (
+                  <div className="upload-saved-summary-row" key={file.id}>
+                    <span className="upload-saved-summary-name" title={file.fileName}>
+                      {file.fileName}
+                    </span>
+                    <span>{formatBytes(file.fileSize)}</span>
+                    <span>
+                      {file.meetingId
+                        ? file.processingStarted
+                          ? "Đã gửi xử lý"
+                          : String(file.meetingStatus || "UNPROCESSED").toUpperCase() === "UNPROCESSED"
+                            ? "Chưa xử lý"
+                            : file.meetingStatus
+                        : "Không tìm thấy cuộc họp"}
+                    </span>
+                  </div>
+                ))}
+                {savedFilesSummary.length > 3 && (
+                  <div className="upload-saved-summary-row">
+                    <span>Và {savedFilesSummary.length - 3} tệp khác</span>
+                  </div>
+                )}
+              </div>
+              {processingError && (
+                <p className="upload-processing-error" role="alert">
+                  {processingError}
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* Upload, save and processing actions */}
           <div
             className="upload-page-footer"
-            style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}
+            style={{ display: "flex", justifyContent: "flex-end", gap: "10px", flexWrap: "wrap" }}
           >
-            {preparedCount > 0 && (
+            {isSavingAll || savingIds.size > 0 || isChunkSaveInProgress ? (
+              <button type="button" className="upload-confirm-button" disabled aria-busy="true">
+                Đang lưu...
+              </button>
+            ) : null}
+
+            {uploadAction.loading ? (
+              <button
+                type="button"
+                className="upload-start-button"
+                disabled
+                aria-busy="true"
+              >
+                {uploadAction.label}
+              </button>
+            ) : preparedCount > 0 ? (
               <button
                 type="button"
                 className="upload-start-button"
                 onClick={handleStartUploads}
-                disabled={isChunkUploadActive && preparedSingleItems.length === 0}
+                disabled={uploadAction.disabled}
               >
-                {isChunkUploadActive && preparedSingleItems.length === 0
-                  ? "Đang tải lên tệp lớn..."
-                  : `Bắt đầu tải lên${preparedCount > 1 ? ` (${preparedCount})` : ""}`}
+                {uploadAction.label}
+              </button>
+            ) : null}
+
+            {saveableCount > 0 &&
+              !isSavingAll &&
+              savingIds.size === 0 &&
+              !isChunkSaveInProgress && (
+              <button
+                type="button"
+                className="upload-confirm-button"
+                onClick={handleSaveAll}
+                disabled={isSavingAll || savingIds.size > 0 || hasUploadInProgress}
+              >
+                {isSavingAll
+                  ? "Đang lưu..."
+                  : saveableCount > 1
+                    ? "Lưu tất cả"
+                    : "Xác nhận lưu"}
               </button>
             )}
-            <button
-              className="sr-button sr-button-secondary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-              }}
-              onClick={handleCancelAllUploads}
-            >
-              Hủy
-            </button>
-            <button
-              className="sr-button sr-button-primary"
-              style={{
-                minHeight: "36px",
-                height: "36px",
-                width: "auto",
-                padding: "0 24px",
-                fontSize: "13px",
-              }}
-              onClick={() => {
-                navigate("/history");
-              }}
-            >
-              Tiếp tục
-            </button>
+
+            {processableSavedFiles.length > 0 && (
+              <button
+                type="button"
+                className="upload-start-button"
+                onClick={handleStartProcessing}
+                disabled={isStartingProcessing || isSavingAll}
+                aria-busy={isStartingProcessing}
+              >
+                {isStartingProcessing ? "Đang xử lý..." : "Bắt đầu xử lý"}
+              </button>
+            )}
+
+            {savedFilesSummary.length > 0 &&
+              processableSavedFiles.length === 0 &&
+              savedFilesSummary.some((file) => file.meetingId) && (
+                <button
+                  type="button"
+                  className="upload-start-button"
+                  onClick={() => {
+                    const file = savedFilesSummary.find((item) => item.meetingId);
+                    if (file) navigate(`/meeting/${file.meetingId}`);
+                  }}
+                >
+                  Xem cuộc họp
+                </button>
+              )}
+
+            {preparedCount === 0 &&
+              !hasUploadInProgress &&
+              saveableCount === 0 &&
+              savedFilesSummary.length === 0 && (
+                <button type="button" className="upload-start-button" disabled={uploadAction.disabled}>
+                  {uploadAction.label}
+                </button>
+              )}
+
+            {savedFilesSummary.length > 0 &&
+              processableSavedFiles.length === 0 &&
+              !savedFilesSummary.some((file) => file.meetingId) && (
+                <button type="button" className="upload-start-button" disabled>
+                  Không thể bắt đầu xử lý
+                </button>
+              )}
           </div>
         </div>
       </div>
-
-      {savedFilesSummary.length > 0 && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(3, 7, 18, 0.72)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "24px",
-            zIndex: 60,
-          }}
-        >
-          <div
-            style={{
-              width: "520px",
-              maxWidth: "100%",
-              background: "#0f172a",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: "12px",
-              boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
-              padding: "18px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                marginBottom: "14px",
-              }}
-            >
-              <div>
-                <h2
-                  style={{
-                    margin: 0,
-                    color: "#fff",
-                    fontSize: "18px",
-                    fontWeight: "800",
-                  }}
-                >
-                  Lưu file thành công
-                </h2>
-                <p
-                  style={{
-                    margin: "6px 0 0",
-                    color: "#8d96aa",
-                    fontSize: "12px",
-                  }}
-                >
-                  {savedFilesSummary.length === 1
-                    ? "File đã được lưu vào hệ thống."
-                    : `${savedFilesSummary.length} file đã được lưu vào hệ thống.`}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSavedFilesSummary([])}
-                style={{
-                  width: "32px",
-                  height: "32px",
-                  borderRadius: "8px",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  background: "rgba(255,255,255,0.04)",
-                  color: "#8d96aa",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-                aria-label="Đóng thông báo"
-              >
-                ×
-              </button>
-            </div>
-
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: "8px" }}
-            >
-              {savedFilesSummary.map((file, index) => (
-                <div
-                  key={`${file.id}-${index}`}
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.06)",
-                    borderRadius: "8px",
-                    background: "rgba(255,255,255,0.03)",
-                    padding: "12px",
-                  }}
-                >
-                  <div
-                    style={{
-                      color: "#fff",
-                      fontSize: "13px",
-                      fontWeight: "700",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    {savedFilesSummary.length > 1
-                      ? `${index + 1}. ${file.fileName}`
-                      : file.fileName}
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gap: "6px",
-                      color: "#8d96aa",
-                      fontSize: "12px",
-                    }}
-                  >
-                    <span>Kích thước: {formatBytes(file.fileSize)}</span>
-                    <span>Thời lượng: {formatDuration(file.duration)}</span>
-                    <span>
-                      Hoàn tất lúc: {formatCompletedAt(file.completedAt)}
-                    </span>
-                    <span>Loại: {file.uploadType || "SINGLE"}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 };

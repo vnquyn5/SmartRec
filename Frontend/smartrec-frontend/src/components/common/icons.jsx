@@ -15,6 +15,24 @@ export function SearchIcon({ className = "h-4 w-4", ...props }) {
   );
 }
 
+export function ChevronDownIcon({ className = "h-4 w-4", ...props }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 export function TrashIcon({ className = "h-4 w-4", ...props }) {
   return (
     <svg
@@ -244,6 +262,41 @@ export function PencilIcon({ className = "h-3.5 w-3.5", ...props }) {
         strokeLinejoin="round"
       />
       <path d="m14.5 7.5 2 2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ className = "h-4 w-4", ...props }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="m5 12 4 4L19 6" />
+    </svg>
+  );
+}
+
+export function XIcon({ className = "h-4 w-4", ...props }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="m6 6 12 12M18 6 6 18" />
     </svg>
   );
 }

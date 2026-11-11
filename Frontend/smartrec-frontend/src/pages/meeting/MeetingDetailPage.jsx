@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 import MeetingVideoPlayer from "../../components/meeting/MeetingVideoPlayer";
 import ShareMeetingModal from "../../components/meeting/ShareMeetingModal";
+import { usePageHeader } from "../../components/layout/PageHeaderContext.jsx";
 import { api } from "../../lib/http/client";
 import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
 import { mapSpeakerManagementSegments } from "../../components/meeting/transcriptData";
@@ -26,6 +27,7 @@ function apiMessage(error, fallback) {
 export default function MeetingDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { setPageHeader } = usePageHeader();
   const mediaRef = useRef(null);
   const [meeting, setMeeting] = useState(null);
   const [meetingId, setMeetingId] = useState(null);
@@ -357,14 +359,29 @@ export default function MeetingDetailPage() {
     ? job.errorMessage
     : `Xử lý âm thanh thất bại${job?.errorCode ? ` (${job.errorCode})` : ""}.`;
 
+  useEffect(() => {
+    const subtitle = meetingError
+      ? "Không thể tải thông tin cuộc họp."
+      : !isCurrentMeeting || displayState === "loading"
+        ? "Đang tải thông tin cuộc họp…"
+        : "Transcript và phân tích AI của cuộc họp.";
+    setPageHeader({
+      title: isCurrentMeeting
+        ? fileName
+        : meetingError
+          ? "Không thể tải cuộc họp"
+          : "Đang tải cuộc họp…",
+      subtitle,
+    });
+  }, [displayState, fileName, isCurrentMeeting, meetingError, setPageHeader]);
+
   return (
     <div className="meeting-details-page w-full min-w-0 min-h-0 font-sans flex flex-col">
       <div className="meeting-detail-toolbar mb-3 flex min-w-0 shrink-0 items-center justify-between gap-3 border-b border-[#1b2742] pb-3">
         <div className="meeting-detail-heading flex min-w-0 items-center gap-3">
-          <button type="button" onClick={() => navigate("/workspace")} className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#141d33] border border-[#233357] text-slate-300 hover:text-white hover:bg-[#1a2642] transition shadow-sm shrink-0" title="Quay lại">
+          <button type="button" onClick={() => navigate("/history")} className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#141d33] border border-[#233357] text-slate-300 hover:text-white hover:bg-[#1a2642] transition shadow-sm shrink-0" title="Quay lại danh sách cuộc họp">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           </button>
-          <h1 className="text-base font-bold text-white tracking-wide truncate" title={fileName}>{fileName}</h1>
         </div>
         <div className="meeting-detail-toolbar-actions flex min-w-0 items-center justify-end gap-2">
           {isCurrentMeeting && <MeetingVideoPlayer
