@@ -28,6 +28,7 @@ import com.example.smartrec.enums.PipelineStage;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
 import com.example.smartrec.model.dto.AIResponse;
 import com.example.smartrec.repository.JobRepository;
+import com.example.smartrec.repository.JobDispatchOutboxRepository;
 import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MeetingRepository;
 import com.example.smartrec.repository.MediaFileRepository;
@@ -37,6 +38,7 @@ import com.example.smartrec.service.impl.JobServiceImpl;
 @ExtendWith(MockitoExtension.class)
 class JobServiceImplSpeakerCallbackTest {
     @Mock private JobRepository jobRepository;
+    @Mock private JobDispatchOutboxRepository outboxRepository;
     @Mock private JobStageRepository jobStageRepository;
     @Mock private JobQueueService jobQueueService;
     @Mock private MediaFileRepository mediaFileRepository;
