@@ -17,6 +17,9 @@ import {
 import { getMediaDuration } from "../../utils/fileSlice";
 import { getMediaUploadError, MEDIA_UPLOAD_ACCEPT } from "../../utils/mediaUploadPolicy.js";
 import { confirmSimpleUpload, discardSimpleUpload } from "../../features/files/useSingleUpload.js";
+import { getFolders, moveMeetingsToFolder } from "../../services/folderService.js";
+import { getMeetings } from "../../services/meetingService.js";
+import "./UploadPage.css";
 import {
   buildUploadDuplicateNotice,
   checkFilesForUploadDuplicates,
@@ -57,19 +60,53 @@ const CHUNKED_UPLOAD_LIMIT = 5 * 1024 * 1024 * 1024;
 const getFileIdentity = (file) =>
   `${file.name}-${file.size}-${file.lastModified}`;
 
+const getFileExtension = (fileName = "") => {
+  const dot = fileName.lastIndexOf(".");
+  return dot > 0 ? fileName.slice(dot) : "";
+};
+
+const getFileBaseName = (fileName = "") => {
+  const extension = getFileExtension(fileName);
+  return extension ? fileName.slice(0, -extension.length) : fileName;
+};
+
+const normalizeUploadFileName = (fileName, sourceFileName) => {
+  const extension = getFileExtension(sourceFileName).toLowerCase();
+  const rawBaseName = getFileBaseName(fileName).trim();
+  const safeBaseName = (rawBaseName || "Ban ghi")
+    .replace(/[\\/]/g, "_")
+    .replace(/\.\./g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, Math.max(1, 495 - extension.length));
+  return `${safeBaseName}${extension}`;
+};
+
+const getFolderPath = (folder, folderList) => {
+  const foldersById = new Map(folderList.map((item) => [item.id, item]));
+  const path = [];
+  const visited = new Set();
+  let current = folder;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    path.push(current.name);
+    current = current.parentId ? foldersById.get(current.parentId) : null;
+  }
+  return path.reverse().join(" / ");
+};
+
 const buildQueueIdentitySet = (singleItems, chunkedItems) =>
   new Set([
     ...singleItems
       .filter((item) => item.hasFile !== false)
       .map(
         (item) =>
-          `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.file?.lastModified || item.lastModified || ""}`,
+          `${item.sourceFileName || item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.file?.lastModified || item.lastModified || ""}`,
       ),
     ...chunkedItems
       .filter((item) => item.hasFile !== false)
       .map(
         (item) =>
-          `${item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.file?.lastModified || item.lastModified || ""}`,
+          `${item.sourceFileName || item.fileName || item.file?.name}-${item.fileSize || item.file?.size}-${item.file?.lastModified || item.lastModified || ""}`,
       ),
   ]);
 
@@ -81,6 +118,9 @@ const UploadPage = () => {
   const largeUploadState = useLargeUploadStore();
 
   const [meetingName, setMeetingName] = useState("");
+  const [folders, setFolders] = useState([]);
+  const [selectedFolderId, setSelectedFolderId] = useState("");
+  const [folderLoadError, setFolderLoadError] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [savedNotification, setSavedNotification] = useState(null);
   const [uploadNotice, setUploadNotice] = useState(null);
@@ -91,6 +131,20 @@ const UploadPage = () => {
   const savingIdsRef = useRef(new Set());
   const isSavingAllRef = useRef(false);
   const queue = singleUploadState.items;
+
+  useEffect(() => {
+    let isActive = true;
+    getFolders("all")
+      .then((folderList) => {
+        if (isActive) setFolders(Array.isArray(folderList) ? folderList : []);
+      })
+      .catch(() => {
+        if (isActive) setFolderLoadError(true);
+      });
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -331,6 +385,7 @@ const UploadPage = () => {
               metadataByIdentity.get(getFileIdentity(file)) || null,
             ]),
           ),
+          false,
         );
       }
 
@@ -367,17 +422,10 @@ const UploadPage = () => {
         } else {
           largeUploadStore.addFiles(chunkedFiles, duplicateMetadataById);
         }
-        const hasActiveChunkedUpload = largeUploadState.items.some((item) =>
-          ["uploading", "merging"].includes(item.phase),
-        );
         if (import.meta.env.DEV) {
-          console.log("[upload-page:chunked-autostart]", {
-            hasActiveChunkedUpload,
+          console.log("[upload-page:chunked-awaiting-confirmation]", {
             startId: chunkedIds[0] || null,
           });
-        }
-        if (!hasActiveChunkedUpload) {
-          window.setTimeout(() => largeUploadStore.start(chunkedIds[0]), 0);
         }
       }
     },
@@ -400,7 +448,7 @@ const UploadPage = () => {
         const item = chunkItem || singleItem;
         if (
           item &&
-          selectedFile.name === item.fileName &&
+          selectedFile.name === (item.sourceFileName || item.fileName) &&
           selectedFile.size === item.fileSize &&
           (!item.lastModified ||
             selectedFile.lastModified === item.lastModified)
@@ -669,8 +717,56 @@ const UploadPage = () => {
     if (!item.uploadResponse?.objectKey) {
       throw new Error("Không tìm thấy tệp tạm để xác nhận lưu. Vui lòng tải lại tệp.");
     }
-    return confirmSimpleUpload(item.uploadResponse);
+    const confirmed = await confirmSimpleUpload(item.uploadResponse);
+    if (selectedFolderId) {
+      if (!confirmed?.meetingId) {
+        throw new Error("Không tìm thấy cuộc họp vừa lưu để chuyển thư mục.");
+      }
+      await moveMeetingsToFolder([confirmed.meetingId], selectedFolderId);
+    }
+    return confirmed;
+  }, [selectedFolderId]);
+
+  const findMeetingsForFile = useCallback(async (fileName, fileSize) => {
+    const response = await getMeetings({ keyword: fileName, page: 0, size: 100 });
+    return response.content.filter(
+      (meeting) =>
+        meeting.fileName === fileName &&
+        Number(meeting.fileSizeBytes) === Number(fileSize),
+    );
   }, []);
+
+  const mergeAndPlaceInFolder = useCallback(async (id) => {
+    const item = largeUploadStore
+      .getSnapshot()
+      .items.find((candidate) => candidate.id === id);
+    if (!item) return null;
+
+    const existingMeetings = selectedFolderId
+      ? await findMeetingsForFile(item.fileName, item.fileSize)
+      : [];
+    const existingIds = new Set(existingMeetings.map((meeting) => meeting.id));
+    const savedItem = await largeUploadStore.merge(id);
+    if (savedItem?.phase !== "success" || !selectedFolderId) return savedItem;
+
+    const matchingMeetings = await findMeetingsForFile(
+      item.fileName,
+      item.fileSize,
+    );
+    const newlySaved = matchingMeetings
+      .filter((meeting) => !existingIds.has(meeting.id))
+      .sort(
+        (first, second) =>
+          new Date(second.createdAt || 0).getTime() -
+          new Date(first.createdAt || 0).getTime(),
+      );
+    const meeting = newlySaved[0];
+    if (!meeting) {
+      throw new Error("File đã lưu nhưng không tìm thấy bản ghi để chuyển thư mục.");
+    }
+    await moveMeetingsToFolder([meeting.id], selectedFolderId);
+    return savedItem;
+  }, [findMeetingsForFile, selectedFolderId]);
 
   const buildSavedSummary = useCallback(
     (item, completedAt = new Date().toISOString()) => ({
@@ -721,7 +817,7 @@ const UploadPage = () => {
           singleUploadStore.markSaved(id);
         } else {
           if (chunkItem.phase === "success") {
-            const savedItem = await largeUploadStore.merge(id);
+            const savedItem = await mergeAndPlaceInFolder(id);
             if (savedItem?.phase === "success") {
               setSavedFilesSummary([
                 buildSavedSummary(
@@ -750,7 +846,7 @@ const UploadPage = () => {
               !chunkItem.mergeStarted);
           if (!canMerge) return;
           largeUploadStore.selectItem(id);
-          const savedItem = await largeUploadStore.merge(id);
+          const savedItem = await mergeAndPlaceInFolder(id);
           if (savedItem?.phase === "success") {
             setSavedFilesSummary([
               buildSavedSummary(
@@ -774,6 +870,8 @@ const UploadPage = () => {
             id,
             error.message || "Lưu file thất bại",
           );
+        } else {
+          setUploadNotice(error.message || "Lưu file thất bại");
         }
       } finally {
         savingIdsRef.current.delete(id);
@@ -783,6 +881,7 @@ const UploadPage = () => {
     [
       buildSavedSummary,
       largeUploadState.items,
+      mergeAndPlaceInFolder,
       persistFile,
       singleUploadState.items,
     ],
@@ -811,6 +910,7 @@ const UploadPage = () => {
     const savedSingleIds = [];
     const successfulSummaries = [];
     const failedNames = [];
+    const saveErrors = [];
     try {
       for (const item of singleItemsToSave) {
         try {
@@ -830,7 +930,10 @@ const UploadPage = () => {
 
       for (const item of chunkItemsToSave) {
         if (item.phase === "success") {
-          const savedItem = await largeUploadStore.merge(item.id);
+          const savedItem = await mergeAndPlaceInFolder(item.id).catch((error) => {
+            saveErrors.push(error.message || "Không thể lưu hoặc chuyển thư mục.");
+            return null;
+          });
           if (savedItem?.phase === "success") {
             successfulSummaries.push(
               buildSavedSummary(
@@ -851,7 +954,10 @@ const UploadPage = () => {
           continue;
         }
 
-        const savedItem = await largeUploadStore.merge(item.id);
+        const savedItem = await mergeAndPlaceInFolder(item.id).catch((error) => {
+          saveErrors.push(error.message || "Không thể lưu hoặc chuyển thư mục.");
+          return null;
+        });
         if (savedItem?.phase === "success") {
           successfulSummaries.push(
             buildSavedSummary(
@@ -879,10 +985,15 @@ const UploadPage = () => {
         savedSingleIds.forEach((id) => singleUploadStore.markSaved(id));
       }
 
-      if (failedNames.length > 0) {
-        setUploadNotice(
-          `Không thể lưu ${failedNames.length} file: ${failedNames.join(", ")}`,
-        );
+      if (failedNames.length > 0 || saveErrors.length > 0) {
+        const noticeParts = [];
+        if (failedNames.length > 0) {
+          noticeParts.push(
+            `Không thể lưu ${failedNames.length} file: ${failedNames.join(", ")}`,
+          );
+        }
+        if (saveErrors.length > 0) noticeParts.push(saveErrors.join(" "));
+        setUploadNotice(noticeParts.join(" "));
         window.setTimeout(() => setUploadNotice(null), 4000);
       }
     } finally {
@@ -891,9 +1002,42 @@ const UploadPage = () => {
     }
   }, [
     buildSavedSummary,
+    mergeAndPlaceInFolder,
     largeUploadState.items,
     persistFile,
     singleUploadState.items,
+  ]);
+
+  const preparedSingleItems = queue.filter(
+    (item) => item.phase === "idle" && item.hasFile !== false,
+  );
+  const preparedChunkItems = largeUploadState.items.filter(
+    (item) => item.phase === "idle" && item.hasFile,
+  );
+  const preparedCount = preparedSingleItems.length + preparedChunkItems.length;
+  const isChunkUploadActive = largeUploadState.items.some((item) =>
+    ["uploading", "merging"].includes(item.phase),
+  );
+
+  const handleStartUploads = useCallback(() => {
+    preparedSingleItems.forEach((item) => {
+      const fileName = normalizeUploadFileName(item.fileName, item.sourceFileName);
+      singleUploadStore.renameFile(item.id, fileName);
+      singleUploadStore.start(item.id, meetingName, fileName);
+    });
+
+    if (preparedChunkItems.length > 0 && !isChunkUploadActive) {
+      const item = preparedChunkItems[0];
+      const fileName = normalizeUploadFileName(item.fileName, item.sourceFileName);
+      largeUploadStore.renameFile(item.id, fileName);
+      largeUploadStore.selectItem(item.id);
+      largeUploadStore.start(item.id);
+    }
+  }, [
+    isChunkUploadActive,
+    meetingName,
+    preparedChunkItems,
+    preparedSingleItems,
   ]);
 
   const activeCount = queue.filter((item) =>
@@ -940,6 +1084,7 @@ const UploadPage = () => {
     mergeStarted: item.mergeStarted,
     mergeResponse: item.mergeResponse,
     fileName: item.fileName,
+    sourceFileName: item.sourceFileName,
     fileSize: item.fileSize,
     lastModified: item.lastModified,
     hasFile: item.hasFile,
@@ -950,6 +1095,7 @@ const UploadPage = () => {
   return (
     <>
       <div
+        className="upload-page-shell"
         style={{
           flex: 1,
           display: "flex",
@@ -959,9 +1105,18 @@ const UploadPage = () => {
           paddingTop: "40px",
         }}
       >
-        <div style={{ width: "700px", maxWidth: "100%" }}>
+        <div className="upload-page-form" style={{ width: "700px", maxWidth: "100%" }}>
           {/* Header */}
-          <div style={{ textAlign: "center", marginBottom: "16px" }}>
+          <div className="upload-page-header" style={{ textAlign: "center", marginBottom: "16px" }}>
+            <button
+              type="button"
+              className="upload-close-button"
+              aria-label="Đóng cửa sổ tải tệp"
+              title="Đóng"
+              onClick={() => navigate("/")}
+            >
+              ×
+            </button>
             <h1
               style={{
                 fontSize: "20px",
@@ -970,7 +1125,7 @@ const UploadPage = () => {
                 marginBottom: "8px",
               }}
             >
-              Tải lên file cuộc họp
+                Thêm tệp
             </h1>
             <p
               style={{
@@ -981,9 +1136,7 @@ const UploadPage = () => {
                 lineHeight: "1.6",
               }}
             >
-              Tải lên một hoặc nhiều file ghi âm/ghi hình đã có sẵn để hệ thống
-              phân tích và tạo bản ghi. Tối đa {MAX_SINGLE_FILES} file thường và{" "}
-              {MAX_CHUNKED_FILES} file lớn.
+              Thêm một hoặc nhiều tệp để AI phân tích, tổng hợp thông tin và tạo bản ghi cuộc họp.
             </p>
           </div>
 
@@ -1052,6 +1205,7 @@ const UploadPage = () => {
           {/* Dropzone */}
           {canAddMore && (
             <div
+              className="upload-dropzone"
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
@@ -1106,7 +1260,7 @@ const UploadPage = () => {
                   fontWeight: "700",
                 }}
               >
-                Kéo thả file vào đây hoặc nhấn để chọn file
+                Nhấn để chọn một hoặc nhiều tệp, hoặc kéo thả tệp vào đây.
               </h3>
               <p
                 style={{
@@ -1115,7 +1269,7 @@ const UploadPage = () => {
                   margin: "0 0 20px",
                 }}
               >
-                Hỗ trợ file thường đến 2GB và file lớn đến 5GB
+                Hỗ trợ MP3, M4A, MP4 và MKV · Tối đa 5GB cho mỗi tệp
               </p>
               <input
                 type="file"
@@ -1161,7 +1315,7 @@ const UploadPage = () => {
             </div>
           )}
 
-          <div style={{ textAlign: "center", marginBottom: "20px" }}>
+          <div className="upload-format-note" style={{ textAlign: "center", marginBottom: "20px" }}>
             <span
               style={{
                 display: "inline-flex",
@@ -1223,6 +1377,7 @@ const UploadPage = () => {
           {/* File Queue */}
           {displayQueue.length > 0 && (
             <div
+              className="upload-file-list"
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -1230,6 +1385,10 @@ const UploadPage = () => {
                 marginBottom: "24px",
               }}
             >
+              <div className="upload-file-list-heading">
+                <span>Tệp đã thêm ({displayQueue.length})</span>
+                <span>Chỉnh tên trước khi bắt đầu tải lên</span>
+              </div>
               {displayQueue.map((item) => {
                 const isDone = item.phase === "success";
                 const isError =
@@ -1319,6 +1478,7 @@ const UploadPage = () => {
                 return (
                   <div
                     key={item.id}
+                    className="upload-file-card"
                     style={{
                       border: "1px solid rgba(255,255,255,0.05)",
                       borderRadius: "12px",
@@ -1372,6 +1532,7 @@ const UploadPage = () => {
                         </div>
                         <div style={{ minWidth: 0 }}>
                           <div
+                            className="upload-file-name"
                             style={{
                               fontSize: "14px",
                               fontWeight: "700",
@@ -1382,7 +1543,7 @@ const UploadPage = () => {
                               whiteSpace: "nowrap",
                             }}
                           >
-                            {item.file.name}
+                            {item.fileName || item.file.name}
                           </div>
                           <div
                             style={{
@@ -1460,6 +1621,33 @@ const UploadPage = () => {
                         </svg>
                       </button>
                     </div>
+
+                    {item.phase === "idle" && item.hasFile !== false && (
+                      <label className="upload-rename-control">
+                        <span>Tên tệp</span>
+                        <div className="upload-rename-input-wrap">
+                          <input
+                            type="text"
+                            value={getFileBaseName(item.fileName || item.file.name)}
+                            aria-label={`Đổi tên ${item.sourceFileName || item.file.name}`}
+                            onChange={(event) => {
+                              const sourceName = item.sourceFileName || item.file.name;
+                              const extension = getFileExtension(sourceName);
+                              const baseName = extension && event.target.value.toLowerCase().endsWith(extension.toLowerCase())
+                                ? event.target.value.slice(0, -extension.length)
+                                : event.target.value;
+                              const nextName = `${baseName}${extension}`;
+                              if (item.strategy === "chunk") {
+                                largeUploadStore.renameFile(item.id, nextName);
+                              } else {
+                                singleUploadStore.renameFile(item.id, nextName);
+                              }
+                            }}
+                          />
+                          <span>{getFileExtension(item.sourceFileName || item.file.name)}</span>
+                        </div>
+                      </label>
+                    )}
 
                     {/* Progress bar + Save button */}
                     {(isError || isCanceled) && !isMergeFailed ? (
@@ -1739,10 +1927,52 @@ const UploadPage = () => {
             </div>
           )}
 
+          <section className="upload-folder-field" aria-labelledby="upload-folder-label">
+            <label id="upload-folder-label" htmlFor="upload-destination-folder">
+              Thư mục đích
+            </label>
+            <div className="upload-folder-select-wrap">
+              <svg className="upload-folder-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />
+              </svg>
+              <select
+                id="upload-destination-folder"
+                value={selectedFolderId}
+                onChange={(event) => setSelectedFolderId(event.target.value)}
+              >
+                <option value="">Toàn bộ ghi chú</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {getFolderPath(folder, folders)}
+                  </option>
+                ))}
+              </select>
+              <span className="upload-folder-chevron" aria-hidden="true">⌄</span>
+            </div>
+            {folderLoadError && (
+              <p className="upload-folder-error">
+                Không thể tải danh sách thư mục. Tệp sẽ được lưu trong Toàn bộ ghi chú.
+              </p>
+            )}
+          </section>
+
           {/* Action buttons */}
           <div
+            className="upload-page-footer"
             style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}
           >
+            {preparedCount > 0 && (
+              <button
+                type="button"
+                className="upload-start-button"
+                onClick={handleStartUploads}
+                disabled={isChunkUploadActive && preparedSingleItems.length === 0}
+              >
+                {isChunkUploadActive && preparedSingleItems.length === 0
+                  ? "Đang tải lên tệp lớn..."
+                  : `Bắt đầu tải lên${preparedCount > 1 ? ` (${preparedCount})` : ""}`}
+              </button>
+            )}
             <button
               className="sr-button sr-button-secondary"
               style={{

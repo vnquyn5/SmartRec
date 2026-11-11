@@ -1372,6 +1372,34 @@ a {
     height: 100%;
     overflow: hidden;
   }
+
+  .meeting-detail-toolbar {
+    min-height: 50px;
+  }
+
+  .meeting-detail-heading {
+    flex: 1 1 34%;
+    max-width: 46%;
+  }
+
+  .meeting-detail-toolbar-actions {
+    flex: 1 1 58%;
+  }
+
+  .meeting-media-player {
+    flex: 1 1 0%;
+    width: auto;
+  }
+
+  .meeting-player-range {
+    height: 4px;
+    cursor: pointer;
+  }
+
+  .meeting-player-range:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 3px;
+  }
 }
 
 @media (max-width: 1279px) {
@@ -1381,6 +1409,30 @@ a {
 
   .meeting-details-page {
     height: auto;
+    overflow: visible;
+  }
+
+  .meeting-detail-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .meeting-detail-heading,
+  .meeting-detail-toolbar-actions {
+    width: 100%;
+    max-width: none;
+  }
+
+  .meeting-detail-toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .meeting-media-player {
+    max-width: none;
+  }
+
+  .meeting-detail-columns {
+    flex: none;
     overflow: visible;
   }
 }

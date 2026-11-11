@@ -21,6 +21,7 @@ export function mapTranscriptResults(response) {
       endTimeMs: Number(segment.endTimeMs),
       text: segment.textContent,
       speakerId: segment.speakerId ?? null,
+      speakerFilterKey: segment.speakerId == null ? null : String(segment.speakerId),
       attributionStatus: segment.attributionStatus || 'ATTRIBUTED',
       speaker: segment.attributionStatus === 'CROSS_SPEAKER_BOUNDARY'
         ? 'Multiple speakers'
@@ -194,7 +195,7 @@ export function subscribeTranscriptMedia(media, segments, onActiveChange, onPlay
 export function filterTranscriptSegments(segments, searchTerm, selectedSpeaker) {
   const query = String(searchTerm || '').toLocaleLowerCase();
   return segments.filter((segment) =>
-    (selectedSpeaker === 'All' || segment.speaker === selectedSpeaker) &&
+    (selectedSpeaker === 'All' || segment.speakerFilterKey === selectedSpeaker) &&
     `${segment.speaker} ${segment.text}`.toLocaleLowerCase().includes(query));
 }
 

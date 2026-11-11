@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
+import MeetingVideoPlayer from "../../components/meeting/MeetingVideoPlayer";
+import ShareMeetingModal from "../../components/meeting/ShareMeetingModal";
 import { api } from "../../lib/http/client";
 import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
 import { mapSpeakerManagementSegments } from "../../components/meeting/transcriptData";
@@ -24,6 +26,7 @@ function apiMessage(error, fallback) {
 export default function MeetingDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const mediaRef = useRef(null);
   const [meeting, setMeeting] = useState(null);
   const [meetingId, setMeetingId] = useState(null);
   const [meetingLoading, setMeetingLoading] = useState(true);
@@ -43,10 +46,15 @@ export default function MeetingDetailPage() {
   const [startingProcess, setStartingProcess] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState(false);
   const [refreshGeneration, setRefreshGeneration] = useState(0);
+  const [shareMeeting, setShareMeeting] = useState(null);
   const activeMeetingIdRef = useRef(null);
   const requestedJobIdsRef = useRef(new Set());
   const meetingSnapshotRef = useRef(null);
   const resultsSnapshotRef = useRef(null);
+
+  useEffect(() => {
+    setShareMeeting(null);
+  }, [id]);
 
   const refresh = useCallback(async (isCancelled, { fetchMeeting = true } = {}) => {
     const currentMeeting = fetchMeeting || !meetingSnapshotRef.current
@@ -351,12 +359,32 @@ export default function MeetingDetailPage() {
 
   return (
     <div className="meeting-details-page w-full min-w-0 min-h-0 font-sans flex flex-col">
-      <div className="flex items-center justify-between mb-3 pb-3 border-b border-[#1b2742] min-w-0 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="meeting-detail-toolbar mb-3 flex min-w-0 shrink-0 items-center justify-between gap-3 border-b border-[#1b2742] pb-3">
+        <div className="meeting-detail-heading flex min-w-0 items-center gap-3">
           <button type="button" onClick={() => navigate("/workspace")} className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#141d33] border border-[#233357] text-slate-300 hover:text-white hover:bg-[#1a2642] transition shadow-sm shrink-0" title="Quay lại">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           </button>
           <h1 className="text-base font-bold text-white tracking-wide truncate" title={fileName}>{fileName}</h1>
+        </div>
+        <div className="meeting-detail-toolbar-actions flex min-w-0 items-center justify-end gap-2">
+          {isCurrentMeeting && <MeetingVideoPlayer
+            meetingId={meeting?.id}
+            fileName={meeting?.fileName || meeting?.title}
+            mimeType={meeting?.mimeType}
+            fileType={fileType}
+            mediaRef={mediaRef}
+            durationSeconds={meeting?.durationSeconds}
+          />}
+          <button
+            type="button"
+            onClick={() => setShareMeeting(meeting)}
+            disabled={!isCurrentMeeting}
+            className="meeting-share-button flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[#2a3b60] bg-[#141d33] px-3 text-xs font-semibold text-slate-200 transition hover:border-sky-400/60 hover:bg-[#1a2642] disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Chia sẻ cuộc họp"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.7 10.7 6.6-4.4M8.7 13.3l6.6 4.4" /></svg>
+            <span>Chia sẻ</span>
+          </button>
         </div>
       </div>
       {displayState === "loading" && <p role="status" className="text-sm text-slate-400 mb-4 shrink-0">Đang tải cuộc họp…</p>}
@@ -365,9 +393,9 @@ export default function MeetingDetailPage() {
       {isCurrentMeeting && displayState !== "loading" && <MeetingDetail
         key={id}
         meeting={meeting}
+        mediaRef={mediaRef}
         jobId={job?.id || meeting?.activeJobId}
         jobStatus={job?.status || meeting?.status}
-        fileType={fileType}
         speakers={currentSpeakers}
         aiStatus={aiStatus}
         jobLoading={jobLoading}
@@ -387,6 +415,7 @@ export default function MeetingDetailPage() {
         retrying={retrying}
         onSaveSpeakers={displayState === "completed" && !speakerError ? handleSaveSpeakers : undefined}
       />}
+      {shareMeeting && <ShareMeetingModal meeting={shareMeeting} onClose={() => setShareMeeting(null)} />}
     </div>
   );
 }

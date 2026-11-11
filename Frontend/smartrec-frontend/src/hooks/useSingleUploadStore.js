@@ -20,7 +20,7 @@ const readPersisted = () => {
 };
 
 const createFilePlaceholder = (item) => ({
-  name: item.fileName,
+  name: item.sourceFileName || item.fileName,
   size: item.fileSize,
   lastModified: item.lastModified,
   type: item.fileType || "application/octet-stream",
@@ -29,6 +29,7 @@ const createFilePlaceholder = (item) => ({
 let state = {
   items: readPersisted().map((item) => ({
     ...item,
+    sourceFileName: item.sourceFileName || item.fileName,
     quickFingerprint:
       item.quickFingerprint || item.duplicateMetadata?.quickFingerprint || null,
     fingerprintVersion:
@@ -54,7 +55,11 @@ let state = {
 
 const attachRecoveredFile = (id, file) => {
   const item = state.items.find((candidate) => candidate.id === id);
-  if (!item || file.name !== item.fileName || file.size !== item.fileSize)
+  if (
+    !item ||
+    file.name !== (item.sourceFileName || item.fileName) ||
+    file.size !== item.fileSize
+  )
     return;
   updateItem(id, { file, hasFile: true });
 };
@@ -73,6 +78,7 @@ const setState = (updater) => {
       state.items.map((item) => ({
         id: item.id,
         fileName: item.fileName,
+        sourceFileName: item.sourceFileName || item.file?.name || item.fileName,
         fileSize: item.fileSize,
         fileType: item.file?.type,
         lastModified: item.lastModified,
@@ -108,6 +114,7 @@ const buildItem = (file, duplicateMetadata = null) => ({
   fileSize: file.size,
   fileType: file.type,
   lastModified: file.lastModified,
+  sourceFileName: file.name,
   hasFile: true,
   strategy: "single",
   chunkInfo: null,
@@ -126,7 +133,7 @@ const buildItem = (file, duplicateMetadata = null) => ({
   abortController: null,
 });
 
-const startUpload = async (itemId, meetingName = "") => {
+const startUpload = async (itemId, meetingName = "", requestedFileName) => {
   const item = state.items.find((currentItem) => currentItem.id === itemId);
   if (!item || item.phase === "uploading" || item.phase === "finalizing")
     return;
@@ -204,6 +211,7 @@ const startUpload = async (itemId, meetingName = "") => {
         });
       },
       (pendingUploadRequest) => updateItem(item.id, { pendingUploadRequest }),
+      requestedFileName || item.fileName || item.file.name,
     );
 
     updateItem(item.id, {
@@ -238,7 +246,7 @@ export const singleUploadStore = {
   getSnapshot() {
     return state;
   },
-  addFiles(files, meetingName = "", duplicateMetadataById = {}) {
+  addFiles(files, meetingName = "", duplicateMetadataById = {}, autoStart = true) {
     const items = files.map((file) =>
       buildItem(
         file,
@@ -256,12 +264,19 @@ export const singleUploadStore = {
         ...items,
       ],
     }));
-    items.forEach((item) => {
-      window.setTimeout(() => startUpload(item.id, meetingName), 0);
-    });
+    if (autoStart) {
+      items.forEach((item) => {
+        window.setTimeout(() => startUpload(item.id, meetingName), 0);
+      });
+    }
   },
-  start(id, meetingName = "") {
-    return startUpload(id, meetingName);
+  start(id, meetingName = "", fileName) {
+    return startUpload(id, meetingName, fileName);
+  },
+  renameFile(id, fileName) {
+    const item = state.items.find((candidate) => candidate.id === id);
+    if (!item || item.phase !== "idle") return;
+    updateItem(id, { fileName });
   },
   attachRecoveredFile(id, file) {
     attachRecoveredFile(id, file);

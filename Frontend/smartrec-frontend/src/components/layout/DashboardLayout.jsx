@@ -6,13 +6,14 @@ import TopBar from "./TopBar";
 const DashboardLayout = () => {
   const { pathname } = useLocation();
   const isMeetingDetails = /^\/meeting\/[^/]+\/?$/.test(pathname);
+  const isUploadPage = pathname === "/upload";
 
   return (
     <div className={`dashboard-shell${isMeetingDetails ? " meeting-details-shell" : ""}`}>
       <Sidebar />
       <div className="dashboard-main">
         <TopBar hideSearch />
-        <div className={`dashboard-content${isMeetingDetails ? " meeting-details-content" : ""}`}>
+        <div className={`dashboard-content${isMeetingDetails ? " meeting-details-content" : ""}${isUploadPage ? " upload-page-content" : ""}`}>
           <Outlet />
         </div>
       </div>

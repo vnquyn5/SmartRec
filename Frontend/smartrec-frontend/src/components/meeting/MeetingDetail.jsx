@@ -1,5 +1,4 @@
 import React, { useCallback, useRef } from 'react';
-import MeetingVideoPlayer from './MeetingVideoPlayer';
 import MeetingTabs from './MeetingTabs';
 import TranscriptPanel from './TranscriptPanel';
 import { seekMediaToSeconds, seekMediaWithoutPlayback } from './transcriptData';
@@ -8,7 +7,7 @@ export default function MeetingDetail({
   meeting,
   jobId,
   jobStatus,
-  fileType = 'video', 
+  mediaRef: suppliedMediaRef,
   speakers = [],
   onSaveSpeakers,
   aiStatus = 'processing',
@@ -28,7 +27,8 @@ export default function MeetingDetail({
   resultsLoading,
   resultsError
 }) {
-  const mediaRef = useRef(null);
+  const localMediaRef = useRef(null);
+  const mediaRef = suppliedMediaRef || localMediaRef;
   const transcriptPanelRef = useRef(null);
   const seekToSegment = useCallback((startTime) => {
     seekMediaToSeconds(mediaRef.current, startTime);
@@ -41,17 +41,8 @@ export default function MeetingDetail({
   }, []);
 
   return (
-    <div className="w-full min-w-0 h-full xl:h-auto xl:flex-1 min-h-0 flex flex-col xl:flex-row gap-4 xl:gap-5 items-stretch pb-0 xl:overflow-hidden">
-      {/* CỘT TRÁI: Video Player */}
-      <div className="w-full min-w-0 xl:w-[48%] min-h-0 xl:h-full flex flex-col gap-4 xl:overflow-hidden">
-        <MeetingVideoPlayer
-          meetingId={meeting?.id}
-          fileName={meeting?.fileName || meeting?.title}
-          mimeType={meeting?.mimeType}
-          fileType={fileType}
-          mediaRef={mediaRef}
-          durationSeconds={meeting?.durationSeconds}
-        />
+    <div className="meeting-detail-columns grid w-full min-w-0 flex-1 min-h-0 grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr] xl:overflow-hidden">
+      <div className="w-full min-w-0 min-h-[520px] xl:min-h-0 xl:h-full flex flex-col overflow-hidden">
         <TranscriptPanel
           ref={transcriptPanelRef}
           meetingId={meeting?.id}
@@ -66,8 +57,7 @@ export default function MeetingDetail({
         />
       </div>
 
-      {/* CỘT PHẢI: AI Summary, Task và Speaker */}
-      <div className="w-full min-w-0 xl:w-[52%] min-h-0 xl:h-full flex flex-col">
+      <div className="w-full min-w-0 min-h-[520px] xl:min-h-0 xl:h-full flex flex-col overflow-hidden">
         <MeetingTabs 
           speakers={speakers}
           mediaRef={mediaRef}

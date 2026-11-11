@@ -54,6 +54,7 @@ test('maps persisted Results API records, stable ids and real millisecond timest
   ] });
   assert.deepEqual(result.map((segment) => segment.id), ['first', 'later']);
   assert.equal(result[0].speaker, 'An');
+  assert.equal(result[0].speakerFilterKey, 'speaker-1');
   assert.equal(result[0].text, 'Trước');
   assert.equal(result[0].startTimeMs / 1000, 0.5);
   assert.equal(formatTranscriptTime(15000), '00:15');
@@ -267,8 +268,17 @@ test('transcript timestamp seek retains millisecond precision although labels sh
 test('search and speaker filters still narrow real transcript segments', () => {
   const segments = transcriptSegments();
   assert.deepEqual(filterTranscriptSegments(segments, 'SECOND', 'All').map((segment) => segment.id), ['seg-21']);
-  assert.deepEqual(filterTranscriptSegments(segments, '', 'An').map((segment) => segment.id), ['seg-15']);
+  assert.deepEqual(filterTranscriptSegments(segments, '', 'speaker-1').map((segment) => segment.id), ['seg-15']);
   assert.deepEqual(filterTranscriptSegments(segments, 'missing', 'All'), []);
+});
+
+test('speaker filtering uses stable speaker ids when display names collide', () => {
+  const segments = mapTranscriptResults({ transcripts: [
+    { id: 'one', startTimeMs: 0, endTimeMs: 1000, textContent: 'First', speakerId: 'id-1', speakerLabel: 'Same name' },
+    { id: 'two', startTimeMs: 1000, endTimeMs: 2000, textContent: 'Second', speakerId: 'id-2', speakerLabel: 'Same name' },
+  ] });
+  assert.deepEqual(filterTranscriptSegments(segments, '', 'id-1').map((segment) => segment.id), ['one']);
+  assert.deepEqual(filterTranscriptSegments(segments, '', 'id-2').map((segment) => segment.id), ['two']);
 });
 
 test('active row scroll targets only its container without scroll-event feedback handling', () => {
@@ -316,21 +326,24 @@ test('keyboard scroll intent is recognized without treating media/programmatic e
   assert.equal(isTranscriptScrollKey(null), false);
 });
 
-test('meeting layout puts Transcript below the single media player and keeps only three right tabs', () => {
+test('meeting layout puts the compact player in the header and transcript beside the AI workspace', () => {
   const meetingDetail = readFileSync(new URL('./MeetingDetail.jsx', import.meta.url), 'utf8');
   const meetingTabs = readFileSync(new URL('./MeetingTabs.jsx', import.meta.url), 'utf8');
   const speakerPanel = readFileSync(new URL('./SpeakerManagementPanel.jsx', import.meta.url), 'utf8');
   const detailPage = readFileSync(new URL('../../pages/meeting/MeetingDetailPage.jsx', import.meta.url), 'utf8');
   const transcriptData = readFileSync(new URL('./transcriptData.js', import.meta.url), 'utf8');
-  assert.ok(meetingDetail.indexOf('<MeetingVideoPlayer') < meetingDetail.indexOf('<TranscriptPanel'));
   assert.ok(meetingDetail.indexOf('<TranscriptPanel') < meetingDetail.indexOf('<MeetingTabs'));
-  assert.equal((meetingTabs.match(/label: '(AI Summary|Task|Speaker)'/g) || []).length, 3);
+  assert.ok(detailPage.indexOf('<MeetingVideoPlayer') < detailPage.indexOf('<MeetingDetail'));
+  assert.equal((meetingTabs.match(/label:\s*["'](AI Summary|Task|Speaker)["']/g) || []).length, 3);
   assert.doesNotMatch(meetingTabs, /TranscriptPanel|label: 'Transcript'/);
-  assert.match(meetingTabs, /id: 'summary'/);
-  assert.match(meetingTabs, /id: 'task'/);
-  assert.match(meetingTabs, /id: 'speaker'/);
+  assert.match(meetingTabs, /id:\s*["']summary["']/);
+  assert.match(meetingTabs, /id:\s*["']task["']/);
+  assert.match(meetingTabs, /id:\s*["']speaker["']/);
   assert.match(meetingDetail, /mediaRef=\{mediaRef\}/);
   assert.match(meetingTabs, /mediaRef=\{mediaRef\}/);
+  assert.match(meetingTabs, /Không gian phân tích AI/);
+  assert.match(detailPage, /ShareMeetingModal/);
+  assert.match(detailPage, /meeting-details-page/);
   assert.match(speakerPanel, /subscribeSpeakerTimelineMedia\(mediaRef\.current, speakerTimeline/);
   assert.match(detailPage, /mapSpeakerManagementSegments\(segments\)/);
   assert.match(transcriptData, /formatMediaTimeSeconds\(segment\.startTime\)/);
@@ -344,6 +357,9 @@ test('transcript rows are keyboard buttons with a visible focus style and access
   assert.match(panel, /aria-label=\{`Seek to/);
   assert.match(panel, /onClick=\{\(\) => handleSegmentClick\(segment\)\}/);
   assert.match(panel, /useState\(true\)/);
+  assert.match(panel, /if \(playing && !isPlayingRef\.current\) setAutoFollow\(true\)/);
+  assert.match(panel, /disabled=\{isPlaying\}/);
+  assert.match(panel, /if \(!filtered\.some\(\(segment\) => segment\.id === activeSegmentId\)\)/);
   assert.match(panel, /onWheel=\{suspendAutoFollow\}/);
   assert.match(panel, /onTouchStart=\{suspendAutoFollow\}/);
   assert.match(panel, /onPointerDown=\{suspendAutoFollow\}/);
@@ -367,18 +383,22 @@ test('desktop Meeting Details constrains the app shell and keeps the viewport co
   assert.match(page, /meeting-details-page[^\n]*min-h-0/);
 });
 
-test('tab header stays separate from the speaker scroll region and actions remain outside it', () => {
+test('tab header stays separate from the speaker scroll region and save actions remain outside it', () => {
   const tabs = readFileSync(new URL('./MeetingTabs.jsx', import.meta.url), 'utf8');
   const speakers = readFileSync(new URL('./SpeakerManagementPanel.jsx', import.meta.url), 'utf8');
   assert.match(tabs, /role="tablist"[\s\S]*?overflow-y-hidden/);
-  assert.match(tabs, /activeTab === 'speaker' \? 'overflow-hidden' : 'overflow-y-auto'/);
+  assert.match(tabs, /activeTab === ["']speaker["'] \? ["']overflow-hidden["'] : ["']overflow-y-auto["']/);
+  assert.doesNotMatch(tabs, /<AudioAiStatus/);
+  assert.match(tabs, /JobProcessingNotice/);
+  assert.doesNotMatch(tabs, /<h2 className="text-sm font-semibold text-white">Người nói<\/h2>/);
   assert.match(speakers, /aria-label="Speaker cards" tabIndex=\{0\} className="[^"]*overflow-y-auto/);
-  assert.match(speakers, /pb-64/);
-  assert.ok(speakers.indexOf('aria-label="Speaker cards"') < speakers.indexOf('/* Global Checkbox */'));
-  assert.ok(speakers.indexOf('/* Global Checkbox */') < speakers.indexOf('/* Footer Actions */'));
+  assert.match(speakers, /pb-2/);
+  assert.ok(speakers.indexOf('aria-label="Speaker cards"') < speakers.indexOf('/* Footer Actions */'));
   assert.match(speakers, /aria-expanded=\{isOpen\}/);
-  assert.match(speakers, /role="listbox" aria-label="Workspace members"/);
-  assert.match(speakers, /role="option"[\s\S]*?aria-selected=\{isSelected\}/);
+  assert.match(speakers, /role="dialog" aria-label=\{`Display name for \$\{originalLabel\}`\}/);
+  assert.doesNotMatch(speakers, /WORKSPACE_MEMBERS|Anh Quyền|Nguyễn Văn A/);
+  assert.doesNotMatch(speakers, /applyToAll|type="checkbox"/);
+  assert.match(speakers, /px-3 py-2\.5[\s\S]*?text-sm font-bold text-white tracking-tight/);
   assert.match(speakers, /focus-visible:outline/);
 });
 
@@ -391,7 +411,9 @@ test('transcript and media keep independent usable areas without restricting mob
   assert.match(panel, /role="region"[\s\S]*?tabIndex=\{0\}[\s\S]*?overflow-y-auto/);
   assert.match(panel, /scrollContainerRef/);
   assert.match(media, /shrink-0/);
-  assert.match(media, /max-h-\[36vh\]/);
-  assert.match(detail, /xl:flex-row/);
+  assert.match(media, /type="range"/);
+  assert.match(media, /aria-label="Media progress"/);
+  assert.match(media, /getMeetingPlaybackUrl\(id, controller.signal\)/);
+  assert.match(detail, /xl:grid-cols-\[0\.9fr_1\.1fr\]/);
   assert.match(styles, /@media \(max-width: 1279px\)[\s\S]*?\.meeting-details-page\s*\{[^}]*overflow:\s*visible/s);
 });

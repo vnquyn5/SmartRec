@@ -26,6 +26,7 @@ const TranscriptPanel = forwardRef(function TranscriptPanel({ meetingId, jobId, 
   const scrollContainerRef = useRef(null);
   const segmentNodesRef = useRef(new Map());
   const lastAutoScrolledSegmentIdRef = useRef(null);
+  const isPlayingRef = useRef(false);
   const status = String(jobStatus || '').toUpperCase();
   const effectiveStatus = status;
 
@@ -38,23 +39,43 @@ const TranscriptPanel = forwardRef(function TranscriptPanel({ meetingId, jobId, 
     setActiveSegmentId((currentId) => currentId === nextId ? currentId : nextId);
   }, []);
   const updatePlaying = useCallback((nextPlaying) => {
-    setIsPlaying((current) => current === nextPlaying ? current : nextPlaying);
+    const playing = Boolean(nextPlaying);
+    if (playing && !isPlayingRef.current) setAutoFollow(true);
+    isPlayingRef.current = playing;
+    setIsPlaying((current) => current === playing ? current : playing);
   }, []);
 
   useEffect(() => {
     if (!segments.length || !mediaRef?.current) {
       setActiveSegmentId(null);
+      isPlayingRef.current = false;
       setIsPlaying(false);
       return undefined;
     }
     return subscribeTranscriptMedia(mediaRef.current, segments, updateActiveSegment, updatePlaying);
   }, [mediaRef, segments, updateActiveSegment, updatePlaying]);
 
-  const speakers = useMemo(() => [...new Set(segments.map((segment) => segment.speaker))], [segments]);
+  const speakers = useMemo(() => {
+    const byId = new Map();
+    segments.forEach((segment) => {
+      if (segment.speakerFilterKey != null && !byId.has(segment.speakerFilterKey)) {
+        byId.set(segment.speakerFilterKey, segment.speaker);
+      }
+    });
+    return [...byId.entries()].map(([id, name]) => ({ id, name }));
+  }, [segments]);
   const filtered = useMemo(
     () => filterTranscriptSegments(segments, searchTerm, selectedSpeaker),
     [segments, searchTerm, selectedSpeaker],
   );
+
+  useEffect(() => {
+    if (!isPlaying || activeSegmentId == null) return;
+    if (!filtered.some((segment) => segment.id === activeSegmentId)) {
+      setSearchTerm('');
+      setSelectedSpeaker('All');
+    }
+  }, [activeSegmentId, filtered, isPlaying]);
 
   const scrollActiveSegmentIntoView = useCallback((segmentId = activeSegmentId) => {
     const container = scrollContainerRef.current;
@@ -89,11 +110,13 @@ const TranscriptPanel = forwardRef(function TranscriptPanel({ meetingId, jobId, 
   }), [segments, onEvidenceSeek, updateActiveSegment]);
 
   const suspendAutoFollow = () => {
+    if (isPlayingRef.current) return;
     lastAutoScrolledSegmentIdRef.current = null;
     setAutoFollow(false);
   };
 
   const handleAutoFollowToggle = () => {
+    if (isPlayingRef.current) return;
     const resume = !autoFollow;
     setAutoFollow(resume);
     if (!resume) return;
@@ -137,10 +160,13 @@ const TranscriptPanel = forwardRef(function TranscriptPanel({ meetingId, jobId, 
           <button
             type="button"
             onClick={handleAutoFollowToggle}
-            aria-pressed={autoFollow}
-            className="px-2.5 py-1 bg-[#141d33] text-slate-300 border border-[#233357] rounded-lg text-[11px] font-medium hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
+            aria-pressed={autoFollow || isPlaying}
+            aria-label={isPlaying ? 'Auto-follow đang bật khi media phát' : `Auto-follow ${autoFollow ? 'On' : 'Off'}`}
+            title={isPlaying ? 'Transcript sẽ theo đoạn đang phát' : undefined}
+            disabled={isPlaying}
+            className="px-2.5 py-1 bg-[#141d33] text-slate-300 border border-[#233357] rounded-lg text-[11px] font-medium hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38bdf8] disabled:cursor-default disabled:text-sky-300"
           >
-            Auto-follow {autoFollow ? 'On' : 'Off'}
+            Auto-follow {autoFollow || isPlaying ? 'On' : 'Off'}
           </button>
           <button
             type="button"
@@ -168,7 +194,7 @@ const TranscriptPanel = forwardRef(function TranscriptPanel({ meetingId, jobId, 
           className="bg-[#11192e] border border-[#223152] rounded-xl px-2.5 py-1.5 text-xs text-slate-300 max-w-[160px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
         >
           <option value="All">All Speakers</option>
-          {speakers.map((speaker) => <option key={speaker} value={speaker}>{speaker}</option>)}
+          {speakers.map((speaker) => <option key={speaker.id} value={speaker.id}>{speaker.name}</option>)}
         </select>
       </div>
       <div

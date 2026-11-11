@@ -57,7 +57,7 @@ test("speaker rename submits stable ids and refreshes speaker and task result ma
   assert.match(page, /api\.get\(`\/meetings\/\$\{id\}\/speakers`\)/);
   assert.match(page, /api\.get\(`\/meetings\/\$\{id\}\/jobs\/\$\{job\.id\}\/results`\)/);
   assert.match(page, /resultsSnapshotRef\.current\s*=\s*mappedResults/);
-  assert.ok(panel.indexOf("await onSave(payload, applyToAll)") < panel.indexOf("setStatus('success')"));
+  assert.ok(panel.indexOf("await onSave(payload)") < panel.indexOf("setStatus('success')"));
   assert.match(panel, /setStatus\('error'\)[\s\S]*setErrorMessage/);
 });
 
