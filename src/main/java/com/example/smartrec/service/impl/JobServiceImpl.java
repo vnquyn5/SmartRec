@@ -25,6 +25,7 @@ import com.example.smartrec.repository.JobStageRepository;
 import com.example.smartrec.repository.MediaFileRepository;
 import com.example.smartrec.repository.SpeakerSegmentRepository;
 import com.example.smartrec.service.JobService;
+import com.example.smartrec.service.JobStateMachine;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.AIResultService;
 
@@ -47,6 +48,7 @@ public class JobServiceImpl implements JobService {
     private static final Set<String> AI_ENRICHMENT_OUTCOMES = Set.of(
             "AI_ENRICHMENT_FAILED", "AI_ENRICHMENT_DISABLED");
     private final JobRepository jobRepository;
+    private final JobStateMachine stateMachine = new JobStateMachine();
     private final JobDispatchOutboxRepository outboxRepository;
     private final JobStageRepository jobStageRepository;
     private final MediaFileRepository mediaFileRepository;
@@ -95,7 +97,7 @@ public class JobServiceImpl implements JobService {
                 .updatedAt(now)
                 .build();
 
-        job.setStatus(JobStatus.QUEUED);
+        stateMachine.transition(job, JobStatus.QUEUED);
         job.setUpdatedAt(Instant.now());
         jobRepository.save(job);
         meeting.setActive_job_id(job.getId());
@@ -115,7 +117,7 @@ public class JobServiceImpl implements JobService {
         }
 
         // cap nhat job sang queue
-        job.setStatus(JobStatus.QUEUED);
+        stateMachine.transition(job, JobStatus.QUEUED);
         jobRepository.save(job);
         enqueueJob(job.getId());
         return toResponse(job);
@@ -197,7 +199,7 @@ public class JobServiceImpl implements JobService {
             System.out.println("Job chưa có currentStage: " + job.getId());
             return;
         }
-        job.setStatus(JobStatus.PROCESSING);
+        stateMachine.transition(job, JobStatus.PROCESSING);
         jobRepository.save(job);
         markMeetingProcessing(job);
 
@@ -217,12 +219,11 @@ public class JobServiceImpl implements JobService {
                     "Chỉ Job FAILED, DLQ hoặc CANCELLED mới được retry thủ công");
         }
         List<JobStage> stages = jobStageRepository.findByJobIdOrderByStageAsc(jobId);
-        JobStage failedStage = stages
-                .stream()
-                .filter(stage -> stage.getStatus() == JobStageStatus.FAILED)
+        JobStage failedStage = stages.stream()
+                .filter(stage -> stage.getStatus() != JobStageStatus.SUCCESS)
                 .findFirst()
-                .orElse(stages.stream().filter(stage -> stage.getStage() == PipelineStage.FFMPEG)
-                .findFirst().orElseThrow());
+                .orElseThrow(() -> new BusinessException(HttpStatus.CONFLICT, "NO_RETRYABLE_STAGE",
+                        "Job không còn stage nào cần xử lý lại"));
 
         Meeting meeting = meetingRepository.findById(job.getMeetingId()).orElse(null);
         if (meeting != null && meeting.getActive_job_id() != null && !jobId.equals(meeting.getActive_job_id())) {
@@ -235,18 +236,20 @@ public class JobServiceImpl implements JobService {
             }
         }
 
-        // Celery restarts the complete processor when a task is retried.
+        // Keep successful stages as checkpoints; the existing Worker control response exposes them.
         stages.forEach(stage -> {
-            stage.setStatus(JobStageStatus.PENDING);
-            stage.setRetryCount(0);
-            stage.setStartedAt(null);
-            stage.setCompletedAt(null);
-            stage.setErrorCode(null);
-            stage.setErrorMessage(null);
+            if (stage.getStatus() != JobStageStatus.SUCCESS) {
+                stateMachine.transition(stage, JobStageStatus.PENDING);
+                stage.setRetryCount(0);
+                stage.setStartedAt(null);
+                stage.setCompletedAt(null);
+                stage.setErrorCode(null);
+                stage.setErrorMessage(null);
+            }
         });
         jobStageRepository.saveAll(stages);
-        job.setCurrentStage(PipelineStage.FFMPEG);
-        job.setStatus(JobStatus.RETRYING);
+        job.setCurrentStage(failedStage.getStage());
+        stateMachine.transition(job, JobStatus.RETRYING);
         job.setRetryCount(0);
         job.setLastRetryAt(Instant.now());
         job.setErrorCode(null);
@@ -295,16 +298,16 @@ public class JobServiceImpl implements JobService {
         Instant now = Instant.now();
         job.setPauseRequestedAt(now);
         if (Set.of(JobStatus.PENDING, JobStatus.QUEUED).contains(job.getStatus()) && !hasLiveLease(job, now)) {
-            job.setStatus(JobStatus.PAUSED);
-            if (job.getExecutionId() == null) job.setExecutionId(UUID.randomUUID());
+            stateMachine.transition(job, JobStatus.PAUSED);
+            job.setExecutionId(null);
             job.setLeaseExpiresAt(null);
             jobStageRepository.findByJobIdAndStage(jobId, job.getCurrentStage()).ifPresent(stage -> {
-                stage.setStatus(JobStageStatus.PAUSED);
+                stateMachine.transition(stage, JobStageStatus.PAUSED);
                 jobStageRepository.save(stage);
             });
             updateMeetingLifecycle(job, MeetingStatus.PAUSED);
         } else {
-            job.setStatus(JobStatus.PAUSE_REQUESTED);
+            stateMachine.transition(job, JobStatus.PAUSE_REQUESTED);
             updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
         }
         jobRepository.save(job);
@@ -327,7 +330,7 @@ public class JobServiceImpl implements JobService {
                         && !hasLiveLease(job, now)) {
             completeCancellation(job, now);
         } else {
-            job.setStatus(JobStatus.CANCEL_REQUESTED);
+            stateMachine.transition(job, JobStatus.CANCEL_REQUESTED);
             updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
         }
         jobRepository.save(job);
@@ -342,15 +345,14 @@ public class JobServiceImpl implements JobService {
         if (job.getStatus() != JobStatus.PAUSED) {
             throw new BusinessException(HttpStatus.CONFLICT, "INVALID_JOB_STATUS", "Chỉ Job PAUSED mới được tiếp tục");
         }
-        if (job.getExecutionId() == null) job.setExecutionId(UUID.randomUUID());
         jobStageRepository.findByJobIdAndStage(jobId, job.getCurrentStage()).ifPresent(stage -> {
-            stage.setStatus(JobStageStatus.PENDING);
+            stateMachine.transition(stage, JobStageStatus.PENDING);
             stage.setCompletedAt(null);
             stage.setErrorCode(null);
             stage.setErrorMessage(null);
             jobStageRepository.save(stage);
         });
-        job.setStatus(JobStatus.QUEUED);
+        stateMachine.transition(job, JobStatus.QUEUED);
         job.setLastHeartbeatAt(null);
         job.setLeaseExpiresAt(null);
         job.setPauseRequestedAt(null);
@@ -386,6 +388,7 @@ public class JobServiceImpl implements JobService {
         if (sameExecution && job.getExecutionId() != null && !liveLease) {
             return workerControl(job, false);
         }
+        // A replacement execution can claim only after the old lease has expired.
         boolean leaseExpired = !liveLease;
         if (!sameExecution && job.getExecutionId() != null && !leaseExpired) {
             return workerControl(job, false);
@@ -394,7 +397,7 @@ public class JobServiceImpl implements JobService {
         job.setLeaseExpiresAt(now.plusSeconds(heartbeatTimeoutSeconds));
         job.setLastHeartbeatAt(now);
         if (Set.of(JobStatus.QUEUED, JobStatus.PENDING, JobStatus.RETRYING).contains(job.getStatus())) {
-            job.setStatus(JobStatus.PROCESSING);
+            stateMachine.transition(job, JobStatus.PROCESSING);
             updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
         }
         jobRepository.save(job);
@@ -416,13 +419,13 @@ public class JobServiceImpl implements JobService {
     }
 
     private void completeCancellation(Job job, Instant now) {
-        job.setStatus(JobStatus.CANCELLED);
+        stateMachine.transition(job, JobStatus.CANCELLED);
         job.setExecutionId(null);
         job.setLeaseExpiresAt(null);
         JobStage currentStage = job.getCurrentStage() == null ? null
                 : jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).orElse(null);
         if (currentStage != null) {
-            currentStage.setStatus(JobStageStatus.CANCELLED);
+            stateMachine.transition(currentStage, JobStageStatus.CANCELLED);
             currentStage.setCompletedAt(now);
             jobStageRepository.save(currentStage);
             markDownstreamStagesSkipped(job, currentStage);
@@ -449,12 +452,12 @@ public class JobServiceImpl implements JobService {
                 job.setErrorCode("CANCEL_RECOVERED_AFTER_WORKER_LOST");
                 job.setErrorMessage("Cancellation was finalized after the execution lease expired.");
             } else if (job.getStatus() == JobStatus.PAUSE_REQUESTED) {
-                job.setStatus(JobStatus.PAUSED);
+                stateMachine.transition(job, JobStatus.PAUSED);
                 job.setExecutionId(null);
                 job.setLeaseExpiresAt(null);
                 if (job.getCurrentStage() != null) {
                     jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).ifPresent(stage -> {
-                        stage.setStatus(JobStageStatus.PAUSED);
+                        stateMachine.transition(stage, JobStageStatus.PAUSED);
                         stage.setErrorCode(null);
                         stage.setErrorMessage(null);
                         jobStageRepository.save(stage);
@@ -462,7 +465,7 @@ public class JobServiceImpl implements JobService {
                 }
                 updateMeetingLifecycle(job, MeetingStatus.PAUSED);
             } else {
-                job.setStatus(JobStatus.FAILED);
+                stateMachine.transition(job, JobStatus.FAILED);
                 job.setErrorCode("WORKER_LOST");
                 job.setErrorMessage("AI worker heartbeat timed out; worker may have stopped unexpectedly.");
                 job.setFailedAt(now);
@@ -470,7 +473,7 @@ public class JobServiceImpl implements JobService {
                 job.setLeaseExpiresAt(null);
                 if (job.getCurrentStage() != null) {
                     jobStageRepository.findByJobIdAndStage(job.getId(), job.getCurrentStage()).ifPresent(stage -> {
-                        stage.setStatus(JobStageStatus.FAILED);
+                        stateMachine.transition(stage, JobStageStatus.FAILED);
                         stage.setErrorCode("WORKER_LOST");
                         stage.setErrorMessage(job.getErrorMessage());
                         stage.setCompletedAt(now);
@@ -509,7 +512,7 @@ public class JobServiceImpl implements JobService {
     // if(job.getStatus() == JobStatus.COMPLETED){
     // return;
     // }
-    // job.setStatus(JobStatus.PROCESSING);
+    // stateMachine.transition(job, JobStatus.PROCESSING);
     // jobRepository.save(job);
     // }
 
@@ -553,6 +556,11 @@ public class JobServiceImpl implements JobService {
                     HttpStatus.BAD_REQUEST,
                     "INVALID_CALLBACK",
                     "Stage không được để trống");
+        }
+        if (!Set.of(JobStageStatus.PROCESSING, JobStageStatus.SUCCESS, JobStageStatus.FAILED,
+                JobStageStatus.PAUSED, JobStageStatus.CANCELLED).contains(request.getStatus())) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_CALLBACK_STATUS",
+                    "Callback status không hợp lệ cho Worker");
         }
         if (request.getExecutionId() == null || !request.getExecutionId().equals(job.getExecutionId())) {
             throw new BusinessException(HttpStatus.CONFLICT, "STALE_EXECUTION_CALLBACK",
@@ -632,9 +640,9 @@ public class JobServiceImpl implements JobService {
         }
         if (request.getStatus() == JobStageStatus.SUCCESS && job.getStatus() == JobStatus.CANCEL_REQUESTED) {
             Instant now = Instant.now();
-            jobStage.setStatus(JobStageStatus.CANCELLED);
+            stateMachine.transition(jobStage, JobStageStatus.CANCELLED);
             jobStage.setCompletedAt(now);
-            job.setStatus(JobStatus.CANCELLED);
+            stateMachine.transition(job, JobStatus.CANCELLED);
             job.setLeaseExpiresAt(null);
             markDownstreamStagesSkipped(job, jobStage);
             updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
@@ -657,11 +665,10 @@ public class JobServiceImpl implements JobService {
 
         if (request.getStatus() == JobStageStatus.PROCESSING) {
             if (job.getStatus() != JobStatus.PAUSE_REQUESTED && job.getStatus() != JobStatus.CANCEL_REQUESTED) {
-                job.setStatus(JobStatus.PROCESSING);
+                stateMachine.transition(job, JobStatus.PROCESSING);
             }
 
-            jobStage.setStatus(
-                    JobStageStatus.PROCESSING);
+            stateMachine.transition(jobStage, JobStageStatus.PROCESSING);
             if (jobStage.getStartedAt() == null) {
                 jobStage.setStartedAt(Instant.now());
             }
@@ -675,7 +682,7 @@ public class JobServiceImpl implements JobService {
                 aiResultService.saveAIResult(request.getAiResult());
             }
 
-            jobStage.setStatus(JobStageStatus.SUCCESS);
+            stateMachine.transition(jobStage, JobStageStatus.SUCCESS);
             jobStage.setCompletedAt(Instant.now());
 
             if (request.getStage() == PipelineStage.OUTPUT
@@ -711,17 +718,18 @@ public class JobServiceImpl implements JobService {
             if (job.getStatus() != JobStatus.PAUSE_REQUESTED && job.getStatus() != JobStatus.PAUSED) {
                 throw new BusinessException(HttpStatus.CONFLICT, "PAUSE_NOT_REQUESTED", "Job chưa có yêu cầu tạm dừng");
             }
-            jobStage.setStatus(JobStageStatus.PAUSED);
-            job.setStatus(JobStatus.PAUSED);
+            stateMachine.transition(jobStage, JobStageStatus.PAUSED);
+            stateMachine.transition(job, JobStatus.PAUSED);
+            job.setExecutionId(null);
             job.setLeaseExpiresAt(null);
             updateMeetingLifecycle(job, MeetingStatus.PAUSED);
         } else if (request.getStatus() == JobStageStatus.CANCELLED) {
             if (job.getStatus() != JobStatus.CANCEL_REQUESTED && job.getStatus() != JobStatus.CANCELLED) {
                 throw new BusinessException(HttpStatus.CONFLICT, "CANCEL_NOT_REQUESTED", "Job chưa có yêu cầu hủy");
             }
-            jobStage.setStatus(JobStageStatus.CANCELLED);
+            stateMachine.transition(jobStage, JobStageStatus.CANCELLED);
             jobStage.setCompletedAt(Instant.now());
-            job.setStatus(JobStatus.CANCELLED);
+            stateMachine.transition(job, JobStatus.CANCELLED);
             job.setLeaseExpiresAt(null);
             markDownstreamStagesSkipped(job, jobStage);
             updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
@@ -812,7 +820,7 @@ public class JobServiceImpl implements JobService {
         // lay vt hien tai cua stage trong enum . ordinal() trả về index bắt đầu từ 0
         int index = currentStage.getStage().ordinal();
         if (index == stages.length - 1) {
-            job.setStatus(JobStatus.COMPLETED);
+            stateMachine.transition(job, JobStatus.COMPLETED);
             job.setCurrentStage(null);
             if (job.getMeetingId() != null) {
                 meetingRepository.findById(job.getMeetingId()).ifPresent(meeting -> {
@@ -825,7 +833,7 @@ public class JobServiceImpl implements JobService {
         // lay stage tieo theo
         PipelineStage nextStage = stages[index + 1];
         if (job.getStatus() != JobStatus.PAUSE_REQUESTED && job.getStatus() != JobStatus.CANCEL_REQUESTED) {
-            job.setStatus(JobStatus.QUEUED);
+            stateMachine.transition(job, JobStatus.QUEUED);
         }
         job.setCurrentStage(nextStage);
     }
@@ -838,11 +846,11 @@ public class JobServiceImpl implements JobService {
         String errorCode = request.getErrorCode() == null || request.getErrorCode().isBlank()
                 ? "STAGE_PROCESSING_ERROR"
                 : request.getErrorCode();
-        jobStage.setStatus(JobStageStatus.FAILED);
+        stateMachine.transition(jobStage, JobStageStatus.FAILED);
         jobStage.setErrorCode(errorCode);
         jobStage.setErrorMessage(request.getErrorMessage());
 
-        job.setStatus(JobStatus.FAILED);
+        stateMachine.transition(job, JobStatus.FAILED);
         job.setErrorCode(errorCode);
         job.setErrorMessage(request.getErrorMessage());
         job.setFailedAt(Instant.now());
@@ -858,17 +866,20 @@ public class JobServiceImpl implements JobService {
 
         if (jobStage.getRetryCount() < maxRetry) {
             jobStage.setRetryCount(jobStage.getRetryCount() + 1);
-            jobStage.setStatus(JobStageStatus.RETRYING);
+            stateMachine.transition(jobStage, JobStageStatus.RETRYING);
 
-            job.setStatus(JobStatus.RETRYING);
+            stateMachine.transition(job, JobStatus.RETRYING);
             job.setRetryCount((job.getRetryCount() == null ? 0 : job.getRetryCount()) + 1);
             job.setLastRetryAt(Instant.now());
+            job.setExecutionId(null);
+            job.setLeaseExpiresAt(null);
 
             jobStageRepository.save(jobStage);
             jobRepository.save(job);
+            enqueueJob(job.getId());
 
         } else {
-            job.setStatus(JobStatus.DLQ);
+            stateMachine.transition(job, JobStatus.DLQ);
             jobRepository.save(job);
             markMeetingFailed(job);
         }
@@ -882,7 +893,7 @@ public class JobServiceImpl implements JobService {
         for (JobStage stage : stages) {
             if (stage.getStage().ordinal() > failedStage.getStage().ordinal()
                     && stage.getStatus() == JobStageStatus.PENDING) {
-                stage.setStatus(JobStageStatus.SKIPPED);
+                stateMachine.transition(stage, JobStageStatus.SKIPPED);
                 stage.setErrorCode(failedStage.getErrorCode());
                 stage.setErrorMessage("Skipped because stage " + failedStage.getStage() + " failed");
                 stage.setCompletedAt(Instant.now());

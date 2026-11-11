@@ -3,6 +3,8 @@ package com.example.smartrec.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -30,6 +32,7 @@ import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.enums.PipelineStage;
+import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
 import com.example.smartrec.model.dto.AIResponse;
 import com.example.smartrec.repository.JobRepository;
@@ -108,6 +111,20 @@ class JobLifecycleTest {
     }
 
     @Test
+    void replacementExecutionClaimsExpiredLeaseAndFencesPreviousWorker() {
+        UUID oldExecution = UUID.randomUUID();
+        UUID newExecution = UUID.randomUUID();
+        job.setExecutionId(oldExecution);
+        job.setLeaseExpiresAt(Instant.now().minusSeconds(1));
+        when(mediaFileRepository.findById(job.getMediaFileId())).thenReturn(Optional.empty());
+        when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of());
+
+        assertTrue(service.workerHeartbeat(jobId, newExecution).isExecutionAllowed());
+        assertEquals(newExecution, job.getExecutionId());
+        assertFalse(service.workerHeartbeat(jobId, oldExecution).isExecutionAllowed());
+    }
+
+    @Test
     void resumeEnqueuesOnlyOnceWhenRepeated() {
         job.setStatus(JobStatus.PAUSED);
         JobStage stage = JobStage.builder().jobId(jobId).stage(PipelineStage.FFMPEG)
@@ -119,6 +136,35 @@ class JobLifecycleTest {
 
         assertEquals(JobStatus.QUEUED, job.getStatus());
         assertEquals(JobStageStatus.PENDING, stage.getStatus());
+        verify(outboxRepository).save(any(JobDispatchOutbox.class));
+    }
+
+    @Test
+    void manualRetryPreservesSuccessfulStagesAndStartsAtFirstIncompleteStage() {
+        job.setStatus(JobStatus.FAILED);
+        job.setCurrentStage(PipelineStage.WEBRTC);
+        JobStage ffmpeg = JobStage.builder().jobId(jobId).stage(PipelineStage.FFMPEG)
+                .status(JobStageStatus.SUCCESS).retryCount(1).build();
+        JobStage webrtc = JobStage.builder().jobId(jobId).stage(PipelineStage.WEBRTC)
+                .status(JobStageStatus.FAILED).retryCount(2).build();
+        JobStage pyannote = JobStage.builder().jobId(jobId).stage(PipelineStage.PYANNOTE)
+                .status(JobStageStatus.SKIPPED).build();
+        JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.PENDING).build();
+        when(jobStageRepository.findByJobIdOrderByStageAsc(jobId))
+                .thenReturn(List.of(ffmpeg, webrtc, pyannote, output));
+        when(mediaFileRepository.findById(job.getMediaFileId())).thenReturn(Optional.empty());
+
+        service.manualRetry(jobId);
+
+        assertEquals(JobStatus.RETRYING, job.getStatus());
+        assertEquals(PipelineStage.WEBRTC, job.getCurrentStage());
+        assertEquals(JobStageStatus.SUCCESS, ffmpeg.getStatus());
+        assertEquals(JobStageStatus.PENDING, webrtc.getStatus());
+        assertEquals(JobStageStatus.PENDING, pyannote.getStatus());
+        assertEquals(JobStageStatus.PENDING, output.getStatus());
+        var control = service.workerHeartbeat(jobId, UUID.randomUUID());
+        assertEquals(List.of(PipelineStage.FFMPEG), control.getSuccessfulStages());
         verify(outboxRepository).save(any(JobDispatchOutbox.class));
     }
 
@@ -381,6 +427,23 @@ class JobLifecycleTest {
                         .build()));
 
         assertEquals(JobStageStatus.PROCESSING, ffmpeg.getStatus());
+    }
+
+    @Test
+    void callbackForNonCurrentStageIsRejected() {
+        UUID executionId = UUID.randomUUID();
+        job.setExecutionId(executionId);
+        job.setLeaseExpiresAt(Instant.now().plusSeconds(60));
+        JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.PENDING).build();
+        when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT)).thenReturn(Optional.of(output));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.handleWorkerCallback(jobId, WorkerCallbackRequest.builder()
+                        .executionId(executionId).stage(PipelineStage.OUTPUT).status(JobStageStatus.SUCCESS).build()));
+
+        assertEquals("INVALID_STAGE", exception.getCode());
+        assertEquals(JobStageStatus.PENDING, output.getStatus());
     }
 
     @Test
