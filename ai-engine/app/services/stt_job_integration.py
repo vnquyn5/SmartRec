@@ -18,6 +18,11 @@ from app.services.artifact_provenance import (
 )
 from app.core.path_security import get_workspace_root
 from app.services.whisper_asr_service import WhisperASRService
+from app.services.confidence_scorer import (
+    extract_transcript_signals,
+    build_transcript_confidence_sidecar,
+    verify_transcript_confidence_sidecar,
+)
 
 logger = logging.getLogger("smartrec.stt_job")
 
@@ -102,16 +107,108 @@ def _load_stt_checkpoint(checkpoint_path, audio_path, meeting_id, job_id):
         alignment_version = provenance.get("speaker_alignment_version", 1)
         if not isinstance(alignment_version, int) or isinstance(alignment_version, bool):
             return None
-        return (payload.model_dump(mode="json", exclude_none=True), timeline_mode, smoothing_enabled,
-                smoothing_threshold, alignment_version)
+        verified_payload = payload.model_dump(mode="json", exclude_none=True)
+        confidence_metadata = _load_stt_confidence_sidecar(
+            checkpoint_path,
+            provenance,
+            verified_payload,
+            meeting_id,
+            job_id,
+        )
+        return (
+            verified_payload,
+            timeline_mode,
+            smoothing_enabled,
+            smoothing_threshold,
+            alignment_version,
+            confidence_metadata,
+        )
     except (OSError, KeyError, TypeError, ValueError, PermissionError) as exc:
         logger.warning("STT checkpoint rejected job_id=%s reason=%s", job_id, type(exc).__name__)
         return None
 
 
+def _load_stt_confidence_sidecar(
+    checkpoint_path,
+    provenance,
+    payload,
+    meeting_id,
+    job_id,
+):
+    """Load verified confidence metadata, or return None when unavailable."""
+    source_data = provenance.get("confidence_source")
+    if source_data is None:
+        return None
+
+    try:
+        root, payload_path, _ = _checkpoint_files(checkpoint_path)
+        source = LocalSource.from_dict(source_data)
+
+        expected_path = payload_path.with_suffix(
+            ".confidence.json"
+        ).relative_to(root).as_posix()
+
+        if source.workspace_path != expected_path:
+            raise ValueError("Confidence sidecar path mismatch")
+
+        raw = read_verified_source(root, source, meeting_id, job_id)
+        sidecar = json.loads(raw)
+
+        return verify_transcript_confidence_sidecar(
+            sidecar=sidecar,
+            meeting_id=meeting_id,
+            job_id=job_id,
+            transcript_segments=payload["segments"],
+        )
+    except (OSError, ValueError, TypeError, KeyError, PermissionError):
+        logger.warning(
+            "STT confidence sidecar unresolved job_id=%s",
+            job_id,
+        )
+        return None
+
+
+def _save_stt_confidence_sidecar(
+    checkpoint_path,
+    payload,
+    confidence_metadata,
+    meeting_id,
+    job_id,
+) -> LocalSource:
+    """Persist AI-owned confidence metadata without changing STT payload."""
+
+    root, payload_path, _ = _checkpoint_files(checkpoint_path)
+
+    sidecar_path = payload_path.with_suffix(".confidence.json")
+
+    sidecar = build_transcript_confidence_sidecar(
+        meeting_id=meeting_id,
+        job_id=job_id,
+        transcript_segments=payload["segments"],
+        confidence_metadata=confidence_metadata,
+    )
+
+    # Reject mismatched metadata before writing anything.
+    verify_transcript_confidence_sidecar(
+        sidecar=sidecar,
+        meeting_id=meeting_id,
+        job_id=job_id,
+        transcript_segments=payload["segments"],
+    )
+
+    _atomic_json(sidecar_path, sidecar)
+
+    return capture_local_source(
+        root,
+        sidecar_path,
+        meeting_id,
+        job_id,
+    )
+
 def _save_stt_checkpoint(
     checkpoint_path, audio_path, payload, meeting_id, job_id, timeline_mode,
     smoothing_enabled=False, smoothing_max_fragment_ms=None,
+    confidence_metadata=None,
 ):
     if checkpoint_path is None:
         return
@@ -125,6 +222,17 @@ def _save_stt_checkpoint(
     _atomic_json(payload_path, validated.model_dump(mode="json", exclude_none=True))
     payload_source = capture_local_source(root, payload_path, meeting_id, job_id)
     audio_source = capture_local_source(root, Path(audio_path), meeting_id, job_id)
+    confidence_source = None
+
+    if confidence_metadata is not None:
+        confidence_source = _save_stt_confidence_sidecar(
+            checkpoint_path,
+            validated.model_dump(mode="json", exclude_none=True),
+            confidence_metadata,
+            meeting_id,
+            job_id,
+        )
+
     _atomic_json(provenance_path, {
         "schema_version": "1.3",
         "timeline_mode": timeline_mode,
@@ -133,6 +241,11 @@ def _save_stt_checkpoint(
         "speaker_alignment_version": 2,
         "payload_source": payload_source.to_dict(),
         "audio_source": audio_source.to_dict(),
+        "confidence_source": (
+            confidence_source.to_dict()
+            if confidence_source is not None
+            else None
+        ),
     })
 
 
@@ -241,8 +354,9 @@ def run_stt_for_job(
     payload = None
     transcription = None
     whisper_segments = None
+    confidence_metadata = None
     selected_identity = (timeline_mode, smoothing_enabled, smoothing_max_fragment_ms, 2)
-    cached_identity = cached_checkpoint[1:] if cached_checkpoint is not None else None
+    cached_identity = cached_checkpoint[1:5] if cached_checkpoint is not None else None
     checkpoint_needs_save = cached_checkpoint is None or cached_identity != selected_identity
     if cached_checkpoint is not None and cached_identity == selected_identity:
         payload = cached_checkpoint[0]
@@ -252,7 +366,7 @@ def run_stt_for_job(
         )
     elif cached_checkpoint is not None:
         (cached_payload, cached_mode, cached_smoothing_enabled, cached_smoothing_threshold,
-         cached_alignment_version) = cached_checkpoint
+         cached_alignment_version, cached_confidence_metadata) = cached_checkpoint
         logger.info(
             "STT checkpoint realignment job_id=%s old_identity=%s new_identity=%s; reusing verified text/timestamps",
             job_uuid, (cached_mode, cached_smoothing_enabled, cached_smoothing_threshold, cached_alignment_version),
@@ -299,21 +413,44 @@ def run_stt_for_job(
             word_assignments = attribution.word_assignments
             split_runs = []
             if word_assignments:
-                for word_start, word_end, word_text, speaker_key in word_assignments:
-                    if (split_runs and split_runs[-1]["speaker_key"] == speaker_key
-                            and abs(split_runs[-1]["end"] - word_start) <= 0.001):
+                source_words = getattr(segment, "words", None) or ()
+
+                # Aligner chỉ trả word_assignments khi mọi word được xác minh
+                # và nội dung ghép lại khớp với Whisper segment gốc.
+                for word_index, (word_start, word_end, word_text, speaker_key) in enumerate(word_assignments):
+                    source_word = source_words[word_index]
+
+                    if (
+                        split_runs
+                        and split_runs[-1]["speaker_key"] == speaker_key
+                        and abs(split_runs[-1]["end"] - word_start) <= 0.001
+                    ):
                         split_runs[-1]["end"] = word_end
                         split_runs[-1]["text"] += word_text
+                        split_runs[-1]["source_word_indices"].append(word_index)
                     else:
                         split_runs.append({
-                            "start": word_start, "end": word_end,
-                            "text": word_text, "speaker_key": speaker_key,
+                            "start": word_start,
+                            "end": word_end,
+                            "text": word_text,
+                            "speaker_key": speaker_key,
+                            "source_word_indices": [word_index],
                         })
+
             if split_runs:
                 for run in split_runs:
                     output_index = len(output_segments)
                     output_segments.append(SimpleNamespace(
-                        start=run["start"], end=run["end"], text=run["text"].strip(),
+                        start=run["start"],
+                        end=run["end"],
+                        text=run["text"].strip(),
+                        source_segment_index=source_index,
+                        source_word_indices=tuple(run["source_word_indices"]),
+                        confidence_granularity="WORD_LEVEL_SPLIT",
+                        words=tuple(
+                            source_words[word_index]
+                            for word_index in run["source_word_indices"]
+                        ),
                     ))
                     speaker_labels[output_index] = id_to_label[speaker_keys[run["speaker_key"]]]
                     attribution_statuses[output_index] = "ATTRIBUTED"
@@ -326,6 +463,31 @@ def run_stt_for_job(
                 aligned_id = speaker_keys.get(attribution.speaker_key)
                 if aligned_id is not None:
                     speaker_labels[output_index] = id_to_label[aligned_id]
+
+                # Collect confidence-related metadata without changing STT output.
+        confidence_metadata = []
+
+        for output_index, output_segment in enumerate(output_segments):
+            is_split = (
+                getattr(output_segment, "confidence_granularity", None)
+                == "WORD_LEVEL_SPLIT"
+            )
+
+            metadata = extract_transcript_signals(
+                output_segment,
+                adapter=(transcription.get("adapter") or "unknown"),
+                model_identifier=transcription.get("model"),
+                model_version=transcription.get("model_version"),
+                source_segment_id=str(
+                    getattr(output_segment, "source_segment_index", output_index)
+                ),
+            )
+
+            if is_split:
+                # Source-segment scores must not be assigned to split runs.
+                assert metadata["provenance"]["rawSignals"] == []
+
+            confidence_metadata.append(metadata)
 
         payload = build_transcript_payload(
             meeting_id=meeting_uuid, processing_job_id=job_uuid,
@@ -340,6 +502,7 @@ def run_stt_for_job(
         _save_stt_checkpoint(
             checkpoint_path, audio_path, payload, str(meeting_uuid), str(job_uuid), timeline_mode,
             smoothing_enabled, smoothing_max_fragment_ms,
+            confidence_metadata=confidence_metadata,
         )
 
     if checkpoint is not None:

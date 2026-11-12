@@ -4,8 +4,11 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from app.adapters.whisper_adapter import create_whisper_adapter
-
+from app.adapters.whisper_adapter import (
+    WhisperCppPredictor,
+    WhisperPredictor,
+    create_whisper_adapter,
+)
 
 class WhisperASRService:
     """Own one job's STT lifecycle and expose the existing segment contract."""
@@ -54,6 +57,12 @@ class WhisperASRService:
         )
 
         predictor = getattr(self._adapter, "_predictor", None)
+        if isinstance(predictor, WhisperCppPredictor):
+            backend = "whisper.cpp"
+        elif isinstance(predictor, WhisperPredictor):
+            backend = "faster-whisper"
+        else:
+            backend = "unknown"
         actual_device = getattr(predictor, "actual_device", None)
         if not actual_device or actual_device == "not_run":
             actual_device = getattr(self._adapter, "device", "unknown")
@@ -62,6 +71,8 @@ class WhisperASRService:
             "detected_language": getattr(info, "language", None),
             "segments": segments,
             "model": getattr(self._adapter, "model_name", "unknown"),
+            "adapter": backend,
+            "model_version": getattr(self._adapter, "version", None),
             "device": actual_device,
             "inference_time_ms": max(0, int((time.monotonic() - started) * 1000)),
         }

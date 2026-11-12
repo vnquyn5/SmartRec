@@ -1,3 +1,4 @@
+from importlib import metadata
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -249,7 +250,7 @@ def test_reliable_word_times_split_cross_boundary_text_without_inventing_timesta
     segment = SimpleNamespace(
         start=0.0, end=2.0, text="Hello world",
         words=[SimpleNamespace(start=0.2, end=0.8, word="Hello "),
-               SimpleNamespace(start=1.2, end=1.8, word="world")],
+            SimpleNamespace(start=1.2, end=1.8, word="world")],
     )
     timeline = [
         {"speakerLabel": "SPEAKER_A", "startTime": 0.0, "endTime": 1.0},
@@ -267,6 +268,105 @@ def test_reliable_word_times_split_cross_boundary_text_without_inventing_timesta
     assert [(item["startTimeMs"], item["endTimeMs"], item["text"], item["speakerLabel"])
             for item in payload["segments"]] == [
         (200, 800, "Hello", "SPEAKER_A"), (1200, 1800, "world", "SPEAKER_B"),
+    ]
+
+
+
+def test_split_speaker_runs_preserve_source_segment_provenance():
+    """Split runs retain source identity without inheriting segment-level scores."""
+    meeting_id, job_id = str(uuid4()), str(uuid4())
+    callback = MagicMock()
+    callback.send_stt_result.return_value = True
+
+    source_segment = SimpleNamespace(
+        start=0.0,
+        end=2.0,
+        text="Hello world",
+        avg_logprob=-0.25,
+        no_speech_prob=0.03,
+        compression_ratio=1.2,
+        words=[
+            SimpleNamespace(
+                start=0.2, end=0.8, word="Hello ", probability=0.91
+            ),
+            SimpleNamespace(
+                start=1.2, end=1.8, word="world", probability=0.87
+            ),
+        ],
+    )
+
+    timeline = [
+        {"speakerLabel": "SPEAKER_A", "startTime": 0.0, "endTime": 1.0},
+        {"speakerLabel": "SPEAKER_B", "startTime": 1.0, "endTime": 2.0},
+    ]
+
+    captured_segments = []
+
+    from app.services import stt_job_integration
+
+    original_builder = stt_job_integration.build_transcript_payload
+
+    def capture_builder(**kwargs):
+        captured_segments.extend(kwargs["segments"])
+        return original_builder(**kwargs)
+
+    with (
+        patch("app.services.stt_job_integration.WhisperASRService") as factory,
+        patch(
+            "app.services.stt_job_integration.build_transcript_payload",
+            side_effect=capture_builder,
+        ),
+    ):
+        factory.return_value.__enter__.return_value.transcribe.return_value = {
+            "language": "en",
+            "segments": [source_segment],
+        }
+
+        run_stt_for_job(
+            audio_path="audio.wav",
+            formatted_segments=timeline,
+            meeting_id=meeting_id,
+            job_id=job_id,
+            callback_client=callback,
+            backend_base_url="http://localhost:8082/api/v1",
+            internal_token="test-token",
+        )
+
+    assert len(captured_segments) == 2
+
+    assert [
+        segment.source_word_indices
+        for segment in captured_segments
+    ] == [
+        (0,),
+        (1,),
+    ]
+
+    assert [
+        [word.probability for word in segment.words]
+        for segment in captured_segments
+    ] == [
+        [0.91],
+        [0.87],
+    ]
+
+    assert captured_segments[0].words[0] is source_segment.words[0]
+    assert captured_segments[1].words[0] is source_segment.words[1]
+
+
+    for segment in captured_segments:
+        assert segment.source_segment_index == 0
+        assert segment.confidence_granularity == "WORD_LEVEL_SPLIT"
+
+        # Segment-level signals must not be copied to split runs.
+        assert not hasattr(segment, "avg_logprob")
+        assert not hasattr(segment, "no_speech_prob")
+        assert not hasattr(segment, "compression_ratio")
+
+    assert [(segment.start, segment.end, segment.text)
+            for segment in captured_segments] == [
+        (0.2, 0.8, "Hello"),
+        (1.2, 1.8, "world"),
     ]
 
 
@@ -406,3 +506,344 @@ def test_stt_checkpoint_smoothing_identity_change_realigns_without_whisper(tmp_p
     provenance = checkpoint_path.with_suffix(".provenance.json").read_text(encoding="utf-8")
     assert '"schema_version": "1.3"' in provenance
     assert '"smoothing_max_fragment_ms": 100' in provenance
+
+def test_stt_integration_extracts_word_level_confidence_without_changing_payload():
+    """Capture scorer output and verify split runs retain word-level signals only."""
+    meeting_id, job_id = str(uuid4()), str(uuid4())
+    callback = MagicMock()
+    callback.send_stt_result.return_value = True
+
+    source_segment = SimpleNamespace(
+        start=0.0,
+        end=2.0,
+        text="Hello world",
+        avg_logprob=-0.25,
+        no_speech_prob=0.03,
+        compression_ratio=1.2,
+        words=[
+            SimpleNamespace(start=0.2, end=0.8, word="Hello ", probability=0.91),
+            SimpleNamespace(start=1.2, end=1.8, word="world", probability=0.87),
+        ],
+    )
+
+    timeline = [
+        {"speakerLabel": "SPEAKER_A", "startTime": 0.0, "endTime": 1.0},
+        {"speakerLabel": "SPEAKER_B", "startTime": 1.0, "endTime": 2.0},
+    ]
+
+    captured_metadata = []
+
+    from app.services import stt_job_integration
+
+    original_extractor = stt_job_integration.extract_transcript_signals
+
+    def capture_extractor(segment, **kwargs):
+        metadata = original_extractor(segment, **kwargs)
+        captured_metadata.append(metadata)
+        return metadata
+
+    with (
+        patch("app.services.stt_job_integration.WhisperASRService") as factory,
+        patch(
+            "app.services.stt_job_integration.extract_transcript_signals",
+            side_effect=capture_extractor,
+        ),
+    ):
+        factory.return_value.__enter__.return_value.transcribe.return_value = {
+            "language": "en",
+            "model": "faster-whisper-small",
+            "segments": [source_segment],
+        }
+
+        payload = run_stt_for_job(
+            audio_path="audio.wav",
+            formatted_segments=timeline,
+            meeting_id=meeting_id,
+            job_id=job_id,
+            callback_client=callback,
+            backend_base_url="http://localhost:8082/api/v1",
+            internal_token="test-token",
+        )
+
+    assert len(captured_metadata) == 2
+
+    assert [
+        item["provenance"]["words"][0]["probability"]
+        for item in captured_metadata
+    ] == [0.91, 0.87]
+
+    assert all(
+        item["provenance"]["rawSignals"] == []
+        for item in captured_metadata
+    )
+
+    assert all(item["score"] is None for item in captured_metadata)
+    assert all(item["status"] == "UNSCORED" for item in captured_metadata)
+
+    assert [segment["text"] for segment in payload["segments"]] == [
+        "Hello",
+        "world",
+    ]
+
+    assert all(
+        "confidenceMetadata" not in segment
+        for segment in payload["segments"]
+    )
+
+    callback.send_stt_result.assert_called_once()
+
+
+def test_stt_integration_preserves_unsplit_segment_confidence_signals():
+    """Unsplit Whisper segments retain their original ASR signals."""
+    meeting_id, job_id = str(uuid4()), str(uuid4())
+    callback = MagicMock()
+    callback.send_stt_result.return_value = True
+
+    source_segment = SimpleNamespace(
+        start=0.0,
+        end=1.5,
+        text="Hello everyone",
+        avg_logprob=-0.25,
+        no_speech_prob=0.03,
+        compression_ratio=1.2,
+        words=[
+            SimpleNamespace(
+                start=0.2,
+                end=0.6,
+                word="Hello ",
+                probability=0.91,
+            ),
+            SimpleNamespace(
+                start=0.7,
+                end=1.3,
+                word="everyone",
+                probability=0.87,
+            ),
+        ],
+    )
+
+    timeline = [
+        {
+            "speakerLabel": "SPEAKER_A",
+            "startTime": 0.0,
+            "endTime": 2.0,
+        },
+    ]
+
+    captured_metadata = []
+
+    from app.services import stt_job_integration
+
+    original_extractor = stt_job_integration.extract_transcript_signals
+
+    def capture_extractor(segment, **kwargs):
+        metadata = original_extractor(segment, **kwargs)
+        captured_metadata.append(metadata)
+        return metadata
+
+    with (
+        patch("app.services.stt_job_integration.WhisperASRService") as factory,
+        patch(
+            "app.services.stt_job_integration.extract_transcript_signals",
+            side_effect=capture_extractor,
+        ),
+    ):
+        factory.return_value.__enter__.return_value.transcribe.return_value = {
+            "language": "en",
+            "model": "faster-whisper-small",
+            "adapter": "faster-whisper",
+            "model_version": "3.0",
+            "segments": [source_segment],
+        }
+
+        payload = run_stt_for_job(
+            audio_path="audio.wav",
+            formatted_segments=timeline,
+            meeting_id=meeting_id,
+            job_id=job_id,
+            callback_client=callback,
+            backend_base_url="http://localhost:8082/api/v1",
+            internal_token="test-token",
+        )
+
+    assert len(captured_metadata) == 1
+
+    metadata = captured_metadata[0]
+
+    assert metadata["provenance"]["adapter"] == "faster-whisper"
+    assert metadata["provenance"]["modelIdentifier"] == "faster-whisper-small"
+    assert metadata["provenance"]["modelVersion"] == "3.0"
+    assert metadata["score"] is None
+    assert metadata["status"] == "UNSCORED"
+
+    signals = {
+        item["name"]: item["value"]
+        for item in metadata["provenance"]["rawSignals"]
+    }
+
+    assert signals == {
+        "avg_logprob": -0.25,
+        "no_speech_prob": 0.03,
+        "compression_ratio": 1.2,
+    }
+
+    assert [
+        word["probability"]
+        for word in metadata["provenance"]["words"]
+    ] == [0.91, 0.87]
+
+    assert metadata["provenance"]["sourceSegmentId"] == "0"
+    assert metadata["provenance"]["granularity"] == "SOURCE_SEGMENT"
+
+    assert len(payload["segments"]) == 1
+    assert payload["segments"][0]["text"] == "Hello everyone"
+    assert payload["segments"][0]["speakerLabel"] == "SPEAKER_A"
+    assert "confidenceMetadata" not in payload["segments"][0]
+
+    callback.send_stt_result.assert_called_once()
+
+
+def test_stt_confidence_sidecar_persistence_and_checksum(tmp_path, monkeypatch):
+    """Persist and verify an AI-owned confidence sidecar."""
+    import json
+
+    from app.services.stt_job_integration import _save_stt_confidence_sidecar
+    from app.services.artifact_provenance import read_verified_source
+    from app.services.confidence_scorer import (
+        verify_transcript_confidence_sidecar,
+    )
+
+    root = tmp_path.resolve(strict=True)
+    monkeypatch.setenv("SMARTREC_WORKSPACE_ROOT", str(root))
+
+    meeting_id, job_id = str(uuid4()), str(uuid4())
+    job_dir = root / job_id
+    job_dir.mkdir()
+
+    checkpoint_path = job_dir / "04_stt_result.json"
+
+    payload = {
+        "segments": [
+            {
+                "text": "Hoàn thành báo cáo",
+                "startTimeMs": 1000,
+                "endTimeMs": 2000,
+                "speakerLabel": "SPEAKER_00",
+            }
+        ]
+    }
+
+    metadata = [
+        {
+            "score": None,
+            "status": "UNSCORED",
+            "calibrationStatus": "NOT_AVAILABLE",
+        }
+    ]
+
+    source = _save_stt_confidence_sidecar(
+        checkpoint_path,
+        payload,
+        metadata,
+        meeting_id,
+        job_id,
+    )
+
+    sidecar_path = job_dir / "04_stt_result.confidence.json"
+
+    assert sidecar_path.is_file()
+    assert len(source.sha256) == 64
+
+    raw = read_verified_source(root, source, meeting_id, job_id)
+    sidecar = json.loads(raw)
+
+    verified = verify_transcript_confidence_sidecar(
+        sidecar=sidecar,
+        meeting_id=meeting_id,
+        job_id=job_id,
+        transcript_segments=payload["segments"],
+    )
+
+    assert verified == metadata
+    assert sidecar["meetingId"] == meeting_id
+    assert sidecar["processingJobId"] == job_id
+
+
+def test_stt_confidence_sidecar_reader_valid_missing_and_tampered(
+    tmp_path, monkeypatch
+):
+    """Verify valid metadata and reject missing or modified sidecars."""
+    import json
+
+    from app.services.stt_job_integration import (
+        _save_stt_checkpoint,
+        _load_stt_confidence_sidecar,
+    )
+
+    root = tmp_path.resolve(strict=True)
+    monkeypatch.setenv("SMARTREC_WORKSPACE_ROOT", str(root))
+
+    meeting_id, job_id = str(uuid4()), str(uuid4())
+    job_dir = root / job_id
+    job_dir.mkdir()
+
+    audio_path = job_dir / "02_cleaned.wav"
+    audio_path.write_bytes(b"mock audio")
+
+    checkpoint_path = job_dir / "04_stt_result.json"
+    provenance_path = checkpoint_path.with_suffix(".provenance.json")
+
+    payload = {
+        "meetingId": meeting_id,
+        "processingJobId": job_id,
+        "success": True,
+        "language": "vi",
+        "modelName": "whisper",
+        "segments": [{
+            "speakerLabel": "SPEAKER_00",
+            "startTimeMs": 1000,
+            "endTimeMs": 2000,
+            "text": "Hoàn thành báo cáo",
+        }],
+    }
+
+    metadata = [{
+        "score": None,
+        "status": "UNSCORED",
+        "calibrationStatus": "NOT_AVAILABLE",
+    }]
+
+    _save_stt_checkpoint(
+        checkpoint_path,
+        str(audio_path),
+        payload,
+        meeting_id,
+        job_id,
+        "raw",
+        confidence_metadata=metadata,
+    )
+
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    saved_payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+
+    restored = _load_stt_confidence_sidecar(
+        checkpoint_path, provenance, saved_payload, meeting_id, job_id
+    )
+    assert restored == metadata
+
+    missing = _load_stt_confidence_sidecar(
+        checkpoint_path,
+        {**provenance, "confidence_source": None},
+        saved_payload,
+        meeting_id,
+        job_id,
+    )
+    assert missing is None
+
+    sidecar_path = job_dir / "04_stt_result.confidence.json"
+    sidecar_path.write_text('{"tampered": true}', encoding="utf-8")
+
+    tampered = _load_stt_confidence_sidecar(
+        checkpoint_path, provenance, saved_payload, meeting_id, job_id
+    )
+    assert tampered is None
