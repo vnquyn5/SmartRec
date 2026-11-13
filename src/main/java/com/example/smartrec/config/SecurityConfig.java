@@ -45,6 +45,8 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
+                // Guest bỏ qua JWT duy nhất trên share routes; các API meeting vẫn yêu cầu đăng nhập.
+                .requestMatchers("/public/share/**").permitAll()
                 .requestMatchers("/jobs/*/callback").permitAll()
                 .requestMatchers(HttpMethod.POST, "/internal/jobs/*/ai-result").permitAll()
                 .requestMatchers(HttpMethod.POST, "/internal/stt/callback").permitAll()
@@ -82,7 +84,8 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(allowedOrigins);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Origin", "X-Request-Id", "X-Internal-Token"));
+        // Browser cần header này để gửi grant passcode sau khi verify thành công.
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Origin", "X-Request-Id", "X-Internal-Token", "X-Share-Access-Token"));
         configuration.setExposedHeaders(List.of("Authorization"));
         configuration.setAllowCredentials(true);
 
