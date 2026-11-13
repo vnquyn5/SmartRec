@@ -34,6 +34,7 @@ public final class InternalLLMContracts {
             UUID meetingId,
             String taskType,
             String systemPrompt,
+            String fallbackSystemPrompt,
             String prompt,
             List<String> allowedSourceRefs,
             String schemaVersion) {}
@@ -47,6 +48,7 @@ public final class InternalLLMContracts {
             String systemPrompt,
             String prompt,
             List<String> allowedSourceRefs,
+            List<ContextEvidence> evidence,
             double temperature,
             int maxTokens) {}
 
@@ -76,7 +78,8 @@ public final class InternalLLMContracts {
             UUID meetingId,
             String taskType,
             String rawOutput,
-            List<String> allowedSourceRefs) {}
+            List<String> allowedSourceRefs,
+            List<ContextEvidence> evidence) {}
 
     public record ValidateResponse(
             String contractVersion,

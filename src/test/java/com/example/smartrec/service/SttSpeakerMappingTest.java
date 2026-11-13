@@ -185,6 +185,32 @@ class SttSpeakerMappingTest {
     }
 
     @Test
+    void crossSpeakerBoundary_shouldPersistWithoutInventingSpeakerIdentity() {
+        UUID meetingId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        stubJob(meetingId, jobId);
+        when(transcriptRepository.findByProcessingJobIdOrderByStartTimeMsAsc(jobId))
+                .thenReturn(List.of());
+        SttResultRequest request = request(meetingId, jobId, null, null);
+        request.getSegments().get(0).setAttributionStatus("CROSS_SPEAKER_BOUNDARY");
+
+        service.receiveResult(request);
+
+        verifyNoInteractions(speakerRepository);
+        verify(transcriptRepository).saveAll(argThat(segments -> {
+            var iterator = segments.iterator();
+            if (!iterator.hasNext()) return false;
+            Transcript saved = iterator.next();
+            return saved.getSpeakerId() == null
+                    && "CROSS_SPEAKER_BOUNDARY".equals(saved.getAttributionStatus())
+                    && saved.getStartTimeMs() == 1000L
+                    && saved.getEndTimeMs() == 2000L
+                    && "Hoàn thành tích hợp STT.".equals(saved.getTextContent())
+                    && !iterator.hasNext();
+        }));
+    }
+
+    @Test
     void speakerFromOtherMeeting_shouldBeRejected() {
         UUID meetingId = UUID.randomUUID();
         UUID otherMeetingId = UUID.randomUUID();

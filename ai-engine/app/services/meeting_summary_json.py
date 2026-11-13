@@ -3,7 +3,7 @@
 import json
 import re
 from enum import Enum
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -12,22 +12,28 @@ from app.schemas.meeting_summary import (
     ClassificationExtraction,
     MeetingSummary,
 )
+from app.services.meeting_summary_evidence import evidence_consistency_issues
 
 
 class SummaryErrorCode(str, Enum):
     GENERATION_ERROR = "GENERATION_ERROR"
-    GENERATION_TRUNCATED = "GENERATION_TRUNCATED"
     JSON_PARSE_ERROR = "JSON_PARSE_ERROR"
     SCHEMA_VALIDATION_ERROR = "SCHEMA_VALIDATION_ERROR"
     SOURCE_REFERENCE_ERROR = "SOURCE_REFERENCE_ERROR"
+    EVIDENCE_CONSISTENCY_ERROR = "EVIDENCE_CONSISTENCY_ERROR"
 
 
 class SummaryValidationError(ValueError):
     """An AI-layer error; not a Backend error contract."""
 
-    def __init__(self, code: SummaryErrorCode, message: str, diagnostics=None):
+    def __init__(
+        self,
+        code: SummaryErrorCode,
+        message: str,
+        validation_diagnostics: tuple[dict, ...] = (),
+    ):
         self.code = code
-        self.diagnostics = tuple(diagnostics or ())
+        self.validation_diagnostics = validation_diagnostics
         super().__init__(message)
 
 
@@ -38,6 +44,34 @@ SUPPORTED_MODELS = (
     ClassificationExtraction,
     MeetingSummary,
 )
+
+_SAFE_LOCATION_FIELDS = {
+    "schema_version", "executive_summary", "executive_summary_refs",
+    "key_points", "kind", "decisions", "action_items", "title",
+    "assignee", "deadline", "deadline_raw", "source_refs", "text",
+    "open_issues", "next_steps", "conflicts", "description",
+    "proposals",
+}
+
+
+def _validation_diagnostics(exc: ValidationError) -> tuple[dict, ...]:
+    """Keep only schema field paths and error type codes; omit input/context."""
+    diagnostics = []
+    for error in exc.errors(include_input=False, include_context=False, include_url=False):
+        location = []
+        for part in error.get("loc", ()):
+            if isinstance(part, int):
+                location.append(part)
+            elif isinstance(part, str) and part in _SAFE_LOCATION_FIELDS:
+                location.append(part)
+            else:
+                # Unknown keys can themselves contain untrusted model output.
+                location.append("<unknown>")
+        diagnostics.append({
+            "loc": location,
+            "type": str(error.get("type", "unknown")),
+        })
+    return tuple(diagnostics)
 
 
 def _remove_outer_fence(text: str) -> str:
@@ -147,42 +181,80 @@ def sanitize_json(raw_output: str) -> dict:
         raise SummaryValidationError(
             SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
             "Expected a JSON object",
-            diagnostics=({"path": "$", "type": "schema_validation", "code": "object_type"},),
         )
 
     return parsed
 
 
-def _collect_source_ref_paths(model: BaseModel) -> dict[str, set[str]]:
-    """Map citation field paths to their values without exposing those values."""
-    paths = {}
+def _collect_source_refs(model: BaseModel) -> set[str]:
+    """Collect all citation IDs from supported output models."""
+    refs = set()
 
-    def visit(value, path=""):
-        if isinstance(value, dict):
-            for key, child in value.items():
-                child_path = f"{path}.{key}" if path else key
-                if key in {"source_refs", "executive_summary_refs"} and isinstance(child, list):
-                    paths[child_path] = {ref for ref in child if isinstance(ref, str)}
-                else:
-                    visit(child, child_path)
-        elif isinstance(value, list):
-            for index, child in enumerate(value):
-                visit(child, f"{path}.{index}" if path else str(index))
+    if isinstance(model, MeetingSummary):
+        refs.update(model.executive_summary_refs)
 
-    visit(model.model_dump())
-    return paths
+        groups = (
+            model.key_points,
+            model.decisions,
+            model.action_items,
+            model.open_issues,
+            model.next_steps,
+            model.conflicts,
+        )
+
+    elif isinstance(model, ActionExtraction):
+        groups = (model.action_items,)
+
+    elif isinstance(model, ClassificationExtraction):
+        groups = (
+            model.decisions,
+            model.proposals,
+            model.open_issues,
+        )
+
+    else:
+        raise TypeError("Unsupported summary model")
+
+    for group in groups:
+        for item in group:
+            refs.update(item.source_refs)
+
+    return refs
+
+
+def _citation_arrays(model: BaseModel) -> list[tuple[list[Any], list[str]]]:
+    """Return per-claim paths and citations; reuse across claims is allowed."""
+    arrays: list[tuple[list[Any], list[str]]] = []
+    if isinstance(model, MeetingSummary):
+        arrays.append((["executive_summary_refs"], model.executive_summary_refs))
+        group_names = (
+            "key_points", "decisions", "action_items", "open_issues", "next_steps", "conflicts",
+        )
+    elif isinstance(model, ActionExtraction):
+        group_names = ("action_items",)
+    elif isinstance(model, ClassificationExtraction):
+        group_names = ("decisions", "proposals", "open_issues")
+    else:
+        raise TypeError("Unsupported summary model")
+
+    for group_name in group_names:
+        for index, item in enumerate(getattr(model, group_name)):
+            arrays.append(([group_name, index, "source_refs"], item.source_refs))
+    return arrays
 
 
 def validate_summary_output(
     raw_output: str,
     model_class: type[ModelT],
     allowed_source_refs: set[str],
+    evidence: list[object] | None = None,
 ) -> ModelT:
     """Parse, validate strict schema, and check citation allowlist.
 
-    allowed_source_refs must be supplied by a trusted caller after
-    source provenance verification. This does not verify source
-    contents, citation support, or persistent Backend artifact IDs.
+    allowed_source_refs and optional evidence must be supplied by a trusted
+    caller after source provenance verification. Evidence enables conservative
+    deterministic checks for assignment, named assignee, date, proposal, and
+    decision support; it does not replace semantic review of transcript accuracy.
     """
 
     if model_class not in SUPPORTED_MODELS:
@@ -204,42 +276,56 @@ def validate_summary_output(
             strict=True,
         )
     except ValidationError as exc:
-        diagnostics = []
-        for error in exc.errors(include_input=False, include_url=False)[:20]:
-            location = list(error["loc"])
-            # An unknown JSON key is model-controlled and could itself contain
-            # sensitive content. Keep its position, but never log its spelling.
-            if error["type"] == "extra_forbidden" and location:
-                location[-1] = "<unknown>"
-            diagnostics.append({
-                "path": ".".join(str(part) for part in location) or "$",
-                "type": "schema_validation",
-                "code": error["type"],
-            })
         raise SummaryValidationError(
             SummaryErrorCode.SCHEMA_VALIDATION_ERROR,
             "Pydantic validation failed",
-            diagnostics=tuple(diagnostics),
+            _validation_diagnostics(exc),
         ) from exc
 
-    ref_paths = _collect_source_ref_paths(validated)
-    output_refs = set().union(*ref_paths.values()) if ref_paths else set()
+    citation_arrays = _citation_arrays(validated)
+    duplicate_diagnostics = tuple(
+        {"loc": location, "type": "duplicate_evidence_reference"}
+        for location, refs in citation_arrays
+        if len(refs) != len(set(refs))
+    )
+    if duplicate_diagnostics:
+        raise SummaryValidationError(
+            SummaryErrorCode.SOURCE_REFERENCE_ERROR,
+            "Duplicate evidence references are not allowed within a claim",
+            duplicate_diagnostics,
+        )
+
+    output_refs = _collect_source_refs(validated)
     unknown_refs = output_refs - allowed_source_refs
 
     if unknown_refs:
-        diagnostics = tuple(
-            {
-                "path": path,
-                "type": "source_reference",
-                "code": "source_ref_not_allowed",
-            }
-            for path, refs in ref_paths.items()
-            if refs & unknown_refs
-        )[:20]
+        unknown_diagnostics = tuple(
+            {"loc": location, "type": "unknown_evidence_reference"}
+            for location, refs in citation_arrays
+            if any(ref not in allowed_source_refs for ref in refs)
+        )
         raise SummaryValidationError(
             SummaryErrorCode.SOURCE_REFERENCE_ERROR,
-            "Unknown citation IDs",
-            diagnostics=diagnostics,
+            "One or more citations are not in the trusted allowlist",
+            unknown_diagnostics,
         )
+
+    if evidence is not None:
+        evidence_refs = {
+            f"{getattr(item, 'source_type', '')}:{getattr(item, 'source_id', '')}"
+            for item in evidence
+        }
+        if evidence_refs != allowed_source_refs:
+            raise SummaryValidationError(
+                SummaryErrorCode.SOURCE_REFERENCE_ERROR,
+                "Verified evidence does not match the allowed source references",
+            )
+        issues = evidence_consistency_issues(validated, evidence)
+        if issues:
+            raise SummaryValidationError(
+                SummaryErrorCode.EVIDENCE_CONSISTENCY_ERROR,
+                "Output contains claims unsupported by verified evidence",
+                issues,
+            )
 
     return validated

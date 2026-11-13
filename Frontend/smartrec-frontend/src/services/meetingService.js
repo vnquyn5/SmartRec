@@ -40,13 +40,19 @@ export async function getMeetings({
   return normalizePageResponse(response);
 }
 
-export async function getAllMeetings() {
-  const firstPage = await getMeetings({ page: 0, size: 100 });
+export async function getAllMeetings({
+  status = "",
+  keyword = "",
+  folderId,
+  size = 100,
+} = {}) {
+  const filters = { status, keyword, folderId, size };
+  const firstPage = await getMeetings({ page: 0, ...filters });
   if (firstPage.totalPages <= 1) return firstPage;
 
   const remainingPages = await Promise.all(
     Array.from({ length: firstPage.totalPages - 1 }, (_, index) =>
-      getMeetings({ page: index + 1, size: 100 }),
+      getMeetings({ page: index + 1, ...filters }),
     ),
   );
 

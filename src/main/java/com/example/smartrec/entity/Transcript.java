@@ -34,8 +34,11 @@ public class Transcript {
     @Column (name = "processing_job_id",nullable = false)
     private UUID processingJobId;
 
-    @Column (name = "speaker_id",nullable = false)
+    @Column (name = "speaker_id")
     private UUID speakerId;
+
+    @Column(name = "attribution_status", nullable = false, length = 40)
+    private String attributionStatus;
 
     @Column (name = "start_time_ms",nullable = false)
     private Long startTimeMs;

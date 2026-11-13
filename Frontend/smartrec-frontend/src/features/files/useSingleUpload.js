@@ -3,9 +3,9 @@ import { toAppError } from "../../lib/http/errors.js";
 import { api, storageClient } from "../../lib/http/client.js";
 import { calculateFullSha256InWorker, calculateQuickFingerprint } from "../../utils/fileHash.ts";
 
-export async function presignSimpleUpload(file, title = "") {
+export async function presignSimpleUpload(file, title = "", fileName = file.name) {
   return api.post("/upload/presign", {
-    fileName: file.name,
+    fileName,
     fileSize: file.size,
     mimeType: file.type || "application/octet-stream",
     title,
@@ -37,6 +37,7 @@ export async function uploadSingleFile(
   onUploadProgress,
   onFinalize,
   onPendingUpload,
+  requestedFileName = file.name,
 ) {
   const startedAt = Date.now();
 
@@ -53,10 +54,10 @@ export async function uploadSingleFile(
       ? duplicateMetadata.fingerprintVersion ?? 2
       : 2;
     if (signal?.aborted) throw { kind: "canceled", message: "canceled" };
-    const presign = await presignSimpleUpload(file, meetingName);
+    const presign = await presignSimpleUpload(file, meetingName, requestedFileName);
     const pendingUploadRequest = {
       objectKey: presign.objectKey,
-      fileName: file.name,
+      fileName: requestedFileName,
       fileSize: file.size,
       mimeType: file.type || "application/octet-stream",
       title: meetingName,
@@ -131,7 +132,7 @@ export function useSingleUpload() {
     abortRef.current?.abort();
   }, []);
 
-  const upload = useCallback(async (file, meetingName = "") => {
+  const upload = useCallback(async (file, meetingName = "", requestedFileName = file.name) => {
     setError(null);
     setProgress(0);
 
@@ -153,6 +154,8 @@ export function useSingleUpload() {
           setProgress(100);
           setPhase("finalizing");
         },
+        undefined,
+        requestedFileName,
       );
 
       setProgress(100);

@@ -4,6 +4,7 @@ import tempfile
 import wave
 import shutil
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -12,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 import numpy as np
 from pyannote.core import Annotation, Segment
+from pyannote.audio.pipelines.speaker_diarization import DiarizeOutput
 import app.services.diarization_runtime as diarization_runtime_module
 
 from app.schemas.diarization_schemas import SpeakerSegment
@@ -121,6 +123,20 @@ def test_device_fallback_to_cpu_on_error():
         assert loaded_pipeline is mock_pipeline
 
 
+def test_reset_does_not_call_mps_cache_when_mps_is_unavailable():
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="cpu", hf_token="hf_mock_token")
+    test_mgr._pipeline = None
+
+    with patch("torch.cuda.is_available", return_value=False), \
+         patch("torch.backends.mps.is_available", return_value=False), \
+         patch("torch.mps.empty_cache") as empty_mps_cache:
+        test_mgr.reset()
+
+    empty_mps_cache.assert_not_called()
+
+
 def test_normalize_annotation_contract():
     """Kiểm chứng chuẩn hóa output về đúng Annotation contract."""
     test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
@@ -139,12 +155,31 @@ def test_normalize_annotation_contract():
     wrapper_obj = MockDiarizeOutput(ann)
     assert test_mgr._normalize_annotation(wrapper_obj) is ann
 
+    exclusive = Annotation()
+    exclusive[Segment(0.0, 1.0)] = "SPEAKER_00"
+    output_obj = DiarizeOutput(
+        speaker_diarization=ann,
+        exclusive_speaker_diarization=exclusive,
+    )
+    normalized = test_mgr._normalize_diarization_output(output_obj)
+    assert normalized.speaker_diarization is ann
+    assert normalized.exclusive_speaker_diarization is exclusive
+    assert normalized.output_type == "DiarizeOutput"
+
+    invalid_exclusive = test_mgr._normalize_diarization_output(SimpleNamespace(
+        speaker_diarization=ann,
+        exclusive_speaker_diarization={"not": "an annotation"},
+    ))
+    assert invalid_exclusive.speaker_diarization is ann
+    assert invalid_exclusive.exclusive_speaker_diarization is None
+    assert "not a pyannote.core.Annotation" in invalid_exclusive.exclusive_error
+
     # 3. Output sai kiểu
     try:
         test_mgr._normalize_annotation({"invalid": "type"})
         assert False, "Phải ném DiarizationInferenceError khi output không đúng kiểu Annotation"
     except DiarizationInferenceError as err:
-        assert "Kỳ vọng kiểu 'pyannote.core.Annotation'" in str(err)
+        assert "valid speaker_diarization Annotation" in str(err)
 
 
 def test_inference_mps_error_fallback_to_cpu():
@@ -165,6 +200,18 @@ def test_inference_mps_error_fallback_to_cpu():
     assert res is mock_annotation
     assert test_mgr.device == "cpu"
     mock_pipeline.to.assert_called_with(torch.device("cpu"))
+
+
+def test_diarize_forwards_optional_pyannote_speaker_constraints():
+    test_mgr = DiarizationRuntimeManager.__new__(DiarizationRuntimeManager)
+    test_mgr._initialized = False
+    test_mgr.__init__(prefer_device="cpu", hf_token="hf_mock_token")
+    annotation = Annotation()
+    mock_pipeline = MagicMock(return_value=annotation)
+    test_mgr._pipeline = mock_pipeline
+    with patch.object(diarization_runtime_module, "_audio_duration_and_label", return_value=(2.0, "test.wav")):
+        assert test_mgr.diarize("test.wav", min_speakers=2, max_speakers=4) is annotation
+    mock_pipeline.assert_called_once_with("test.wav", min_speakers=2, max_speakers=4)
 
 
 def test_multithreaded_mps_fallback_safety():

@@ -102,7 +102,10 @@ public class LocalLLMAdapterClient {
             return response.getBody();
         } catch (HttpStatusCodeException ex) {
             String code = responseCode(ex);
-            throw new AdapterException(code, inferenceRequest && isFallbackEligible(code), ex);
+            boolean modelOutputFailure = inferenceRequest && isGeneratedOutputFailure(code, ex);
+            boolean eligible = inferenceRequest && (isFallbackEligible(code)
+                    || modelOutputFailure);
+            throw new AdapterException(code, eligible, modelOutputFailure, ex);
         } catch (ResourceAccessException ex) {
             throw new AdapterException(
                     inferenceRequest ? "LOCAL_ADAPTER_UNAVAILABLE" : "AI_ENGINE_UNAVAILABLE",
@@ -125,35 +128,70 @@ public class LocalLLMAdapterClient {
             // Response bodies are untrusted; HTTP status remains the safe fallback signal.
         }
         int status = exception.getStatusCode().value();
-        return status == 502 || status == 503 || status == 504
-                ? "LOCAL_ADAPTER_UNAVAILABLE"
-                : "LOCAL_ADAPTER_REJECTED";
+        return switch (status) {
+            case 400 -> "AI_ENGINE_BAD_REQUEST";
+            case 401, 403 -> "AI_ENGINE_UNAUTHORIZED";
+            case 409 -> "AI_ENGINE_CONFLICT";
+            case 422 -> "AI_ENGINE_VALIDATION_FAILED";
+            case 502 -> "AI_ENGINE_BAD_GATEWAY";
+            case 503, 504 -> "LOCAL_ADAPTER_UNAVAILABLE";
+            default -> "LOCAL_ADAPTER_REJECTED";
+        };
     }
 
     private boolean isFallbackEligible(String code) {
         return switch (code) {
             case "LOCAL_MODEL_TIMEOUT", "LOCAL_MODEL_UNAVAILABLE", "LOCAL_MODEL_INVALID_RESPONSE",
-                    "LOCAL_ADAPTER_UNAVAILABLE", "JSON_PARSE_ERROR", "SCHEMA_VALIDATION_ERROR",
-                    "GENERATION_TRUNCATED",
-                    "SOURCE_REFERENCE_ERROR" -> true;
+                    "LOCAL_MODEL_TRUNCATED", "LOCAL_ADAPTER_UNAVAILABLE", "JSON_PARSE_ERROR",
+                    "SCHEMA_VALIDATION_ERROR" -> true;
             default -> false;
         };
+    }
+
+    private boolean isGeneratedOutputFailure(String code, HttpStatusCodeException exception) {
+        if (!("EVIDENCE_CONSISTENCY_ERROR".equals(code)
+                || "SOURCE_REFERENCE_ERROR".equals(code)
+                || "JSON_PARSE_ERROR".equals(code)
+                || "SCHEMA_VALIDATION_ERROR".equals(code)
+                || "LOCAL_MODEL_TIMEOUT".equals(code)
+                || "LOCAL_MODEL_UNAVAILABLE".equals(code)
+                || "LOCAL_MODEL_INVALID_RESPONSE".equals(code)
+                || "LOCAL_MODEL_TRUNCATED".equals(code)
+                || "LOCAL_MODEL_NOT_CONFIGURED".equals(code))
+                || (exception.getStatusCode().value() != 502
+                    && exception.getStatusCode().value() != 503)) {
+            return false;
+        }
+        try {
+            JsonNode detail = objectMapper.readTree(exception.getResponseBodyAsString()).path("detail");
+            return "MODEL_OUTPUT".equals(detail.path("origin").asText());
+        } catch (JsonProcessingException ignored) {
+            return false;
+        }
     }
 
     public static class AdapterException extends RuntimeException {
         private final String code;
         private final boolean fallbackEligible;
+        private final boolean modelOutputValidationFailure;
 
         public AdapterException(String code, boolean fallbackEligible) {
-            super(code);
-            this.code = code;
-            this.fallbackEligible = fallbackEligible;
+            this(code, fallbackEligible, false, null);
         }
 
         public AdapterException(String code, boolean fallbackEligible, Throwable cause) {
+            this(code, fallbackEligible, false, cause);
+        }
+
+        public AdapterException(
+                String code,
+                boolean fallbackEligible,
+                boolean modelOutputValidationFailure,
+                Throwable cause) {
             super(code, cause);
             this.code = code;
             this.fallbackEligible = fallbackEligible;
+            this.modelOutputValidationFailure = modelOutputValidationFailure;
         }
 
         public String getCode() {
@@ -162,6 +200,10 @@ public class LocalLLMAdapterClient {
 
         public boolean isFallbackEligible() {
             return fallbackEligible;
+        }
+
+        public boolean isModelOutputValidationFailure() {
+            return modelOutputValidationFailure;
         }
     }
 }

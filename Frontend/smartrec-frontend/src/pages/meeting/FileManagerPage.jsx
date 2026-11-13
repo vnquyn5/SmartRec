@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import DashboardLayout from "../../components/layout/DashboardLayout.jsx";
 import Pagination from "../../components/common/Pagination.jsx";
 import {
   DownloadIcon,
@@ -18,12 +17,12 @@ import {
 } from "../../components/common/icons.jsx";
 import DeleteMeetingModal from "../../components/meeting/DeleteMeetingModal.jsx";
 import MeetingStatusBadge from "../../components/meeting/MeetingStatusBadge.jsx";
-import { MEETING_STATUS } from "../../types/meeting.js";
+import { MEETING_STATUS, MEETING_STATUS_CONFIG } from "../../types/meeting.js";
 import {
   deleteMeeting,
   downloadMeeting,
   downloadMeetings,
-  getMeetings,
+  getAllMeetings,
   getJob,
   pauseJob,
   resumeJob,
@@ -39,7 +38,14 @@ import {
   moveMeetingsToFolder,
   renameFolder as renameFolderApi,
 } from "../../services/folderService.js";
+import {
+  getDateInputLimits,
+  getMeetingDateRange,
+  matchesMeetingDateRange,
+} from "../../utils/meetingDateFilter.js";
+import "./FileManagerPage.css";
 
+const PAGE_SIZE = 10;
 const EMPTY_PAGE = {
   content: [],
   pageNumber: 0,
@@ -119,6 +125,9 @@ export default function FileManagerPage() {
   const [error, setError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("");
+  const [dateFilter, setDateFilter] = useState("last30");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [page, setPage] = useState(0);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -168,12 +177,41 @@ export default function FileManagerPage() {
     return path;
   })();
 
+  const now = new Date();
+  const localDate = now.toDateString();
+  const dateInputLimits = getDateInputLimits(now);
+  const dateRange = useMemo(
+    () =>
+      getMeetingDateRange({
+        filter: dateFilter,
+        startDate: customStartDate,
+        endDate: customEndDate,
+        now: new Date(),
+      }),
+    [customEndDate, customStartDate, dateFilter, localDate],
+  );
+  const dateFilteredMeetings = useMemo(
+    () => data.content.filter((meeting) => matchesMeetingDateRange(meeting, dateRange)),
+    [data.content, dateRange],
+  );
+  const filteredTotalElements = dateFilteredMeetings.length;
+  const filteredTotalPages = Math.ceil(filteredTotalElements / PAGE_SIZE);
+  const currentPage = Math.min(page, Math.max(filteredTotalPages - 1, 0));
+  const visibleMeetings = dateFilteredMeetings.slice(
+    currentPage * PAGE_SIZE,
+    (currentPage + 1) * PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    if (!loading && page !== currentPage) setPage(currentPage);
+  }, [currentPage, loading, page]);
+
   const normalizedKeyword = keyword.trim();
-  const queryKey = JSON.stringify([page, status, normalizedKeyword, currentFolderId]);
+  const queryKey = JSON.stringify([status, normalizedKeyword, currentFolderId]);
   activeQueryKeyRef.current = queryKey;
 
   const loadMeetings = useCallback(async ({ background = false } = {}) => {
-    const requestKey = JSON.stringify([page, status, keyword.trim(), currentFolderId]);
+    const requestKey = JSON.stringify([status, keyword.trim(), currentFolderId]);
     const existingRequest = inFlightRequestsRef.current.get(requestKey);
     if (existingRequest) {
       if (!background) {
@@ -195,9 +233,8 @@ export default function FileManagerPage() {
 
     const request = (async () => {
       try {
-        const nextData = await getMeetings({
-          page,
-          size: 10,
+        const nextData = await getAllMeetings({
+          size: 100,
           status,
           keyword: keyword.trim(),
           folderId: currentFolderId || "root",
@@ -221,7 +258,7 @@ export default function FileManagerPage() {
 
     inFlightRequestsRef.current.set(requestKey, request);
     return request;
-  }, [currentFolderId, inFlightRequestsRef, keyword, page, status]);
+  }, [currentFolderId, keyword, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(loadMeetings, keyword ? 300 : 0);
@@ -321,21 +358,40 @@ export default function FileManagerPage() {
   }, [loadMeetings]);
 
   useEffect(() => {
-    const visibleIdSet = new Set(data.content.map((meeting) => meeting.id));
+    const visibleIdSet = new Set(
+      dateFilteredMeetings.map((meeting) => meeting.id),
+    );
     setSelectedIds((currentIds) => {
       const nextIds = new Set(
         Array.from(currentIds).filter((id) => visibleIdSet.has(id)),
       );
       return nextIds.size === currentIds.size ? currentIds : nextIds;
     });
-  }, [data.content]);
+  }, [dateFilteredMeetings]);
   const handleSearchChange = (event) => {
     setKeyword(event.target.value);
     setPage(0);
+    setSelectedIds(new Set());
   };
   const handleStatusChange = (event) => {
     setStatus(event.target.value);
     setPage(0);
+    setSelectedIds(new Set());
+  };
+  const handleDateFilterChange = (event) => {
+    setDateFilter(event.target.value);
+    setPage(0);
+    setSelectedIds(new Set());
+  };
+  const handleCustomStartDateChange = (event) => {
+    setCustomStartDate(event.target.value);
+    setPage(0);
+    setSelectedIds(new Set());
+  };
+  const handleCustomEndDateChange = (event) => {
+    setCustomEndDate(event.target.value);
+    setPage(0);
+    setSelectedIds(new Set());
   };
 
   const toggleMeeting = (meetingId) => {
@@ -347,12 +403,12 @@ export default function FileManagerPage() {
     });
   };
 
-  const visibleIds = data.content.map((meeting) => meeting.id);
-  const selectedMeetings = data.content.filter((meeting) =>
+  const visibleIds = visibleMeetings.map((meeting) => meeting.id);
+  const selectedMeetings = dateFilteredMeetings.filter((meeting) =>
     selectedIds.has(meeting.id),
   );
   const selectedCount = selectedMeetings.length;
-  const someVisibleSelected = selectedCount > 0;
+  const someVisibleSelected = visibleIds.some((id) => selectedIds.has(id));
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
 
@@ -606,7 +662,7 @@ export default function FileManagerPage() {
     navigate(`/meeting/${meeting.id}`, { state: { meeting } });
   };
 
-  const visibleBytes = data.content.reduce(
+  const visibleBytes = dateFilteredMeetings.reduce(
     (total, meeting) => total + (Number(meeting.fileSizeBytes) || 0),
     0,
   );
@@ -628,24 +684,13 @@ export default function FileManagerPage() {
         nextIds.delete(deletedMeetingId);
         return nextIds;
       });
-      setData((currentData) => {
-        const nextContent = currentData.content.filter(
+      setData((currentData) => ({
+        ...currentData,
+        content: currentData.content.filter(
           (meeting) => meeting.id !== deletedMeetingId,
-        );
-        const nextTotalElements = Math.max(0, currentData.totalElements - 1);
-        return {
-          ...currentData,
-          content: nextContent,
-          totalElements: nextTotalElements,
-          totalPages: currentData.pageSize
-            ? Math.ceil(nextTotalElements / currentData.pageSize)
-            : currentData.totalPages,
-        };
-      });
+        ),
+      }));
       setActionMessage("File đã được chuyển vào Thùng rác.");
-      if (data.content.length === 1 && page > 0) {
-        setPage((currentPage) => currentPage - 1);
-      }
     } catch (requestError) {
       setError(requestError?.message || "Không thể chuyển file vào Thùng rác.");
     } finally {
@@ -668,27 +713,13 @@ export default function FileManagerPage() {
       const deletedIds = new Set(selectedMeetings.map((meeting) => meeting.id));
       setBulkDeleteOpen(false);
       setSelectedIds(new Set());
-      setData((currentData) => {
-        const nextContent = currentData.content.filter(
+      setData((currentData) => ({
+        ...currentData,
+        content: currentData.content.filter(
           (meeting) => !deletedIds.has(meeting.id),
-        );
-        const nextTotalElements = Math.max(
-          0,
-          currentData.totalElements - selectedMeetings.length,
-        );
-        return {
-          ...currentData,
-          content: nextContent,
-          totalElements: nextTotalElements,
-          totalPages: currentData.pageSize
-            ? Math.ceil(nextTotalElements / currentData.pageSize)
-            : currentData.totalPages,
-        };
-      });
+        ),
+      }));
       setActionMessage(`${selectedMeetings.length} file đã được chuyển vào Thùng rác.`);
-      if (data.content.length === selectedMeetings.length && page > 0) {
-        setPage((currentPage) => currentPage - 1);
-      }
     } catch (requestError) {
       setError(
         requestError?.message ||
@@ -701,40 +732,8 @@ export default function FileManagerPage() {
 
   return (
     <>
-      <div className="mx-auto max-w-[1180px] space-y-5">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-[27px] font-extrabold leading-tight tracking-tight text-white">
-              Danh sách cuộc họp
-            </h1>
-            <p className="mt-1 text-[13px] text-slate-500">
-              Xem danh sách các file cuộc họp đã tải lên trong không gian cá
-              nhân
-            </p>
-          </div>
-          <button
-            className="sr-button sr-button-primary new-upload-btn"
-            onClick={() => navigate("/upload")}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 20 20"
-              fill="none"
-              style={{ marginRight: 8 }}
-            >
-              <path
-                d="M10 13V3m0 0L6 7m4-4 4 4M4 12v4a1 1 0 001 1h10a1 1 0 001-1v-4"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Tải lên
-          </button>
-        </header>
-        <section className="overflow-hidden rounded-xl border border-white/5 bg-[#101624] px-3 py-2.5">
+      <div className="history-page">
+        <section className="history-folder-section overflow-hidden rounded-xl border border-white/5 bg-[#101624] px-3 py-2.5">
           <nav aria-label="Đường dẫn thư mục" className="flex min-w-0 flex-wrap items-center gap-1 text-[13px]">
             <button type="button" onClick={() => { setCurrentFolderId(null); setPage(0); setSelectedIds(new Set()); }} className={`rounded px-2 py-1 ${currentFolderId ? "text-blue-300 hover:bg-white/5" : "font-semibold text-white"}`}>Thư mục gốc</button>
             {folderPath.map((folder, index) => <span key={folder.id} className="flex min-w-0 items-center gap-1">
@@ -760,7 +759,7 @@ export default function FileManagerPage() {
             </div>
           )}
         </section>
-        <section className="grid gap-3 md:grid-cols-3">
+        <section className="history-stats-section grid gap-3 md:grid-cols-3">
           <div className="flex min-h-[104px] items-center gap-4 rounded-xl border border-white/5 bg-[#101624] px-4 py-3.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
               ▰
@@ -768,7 +767,7 @@ export default function FileManagerPage() {
             <div>
               <p className="text-[11px] text-slate-500">Tổng số file</p>
               <strong className="mt-1 block text-xl text-white">
-                {data.totalElements}
+                {filteredTotalElements}
               </strong>
             </div>
             <span className="ml-auto self-start rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">
@@ -796,23 +795,23 @@ export default function FileManagerPage() {
             <div>
               <p className="text-[11px] text-slate-500">Đang xử lý AI</p>
               <strong className="mt-1 block text-xl text-white">
-                {data.content.filter(isMeetingActive).length}
+                {dateFilteredMeetings.filter(isMeetingActive).length}
               </strong>
               <span className="text-[10px] text-slate-600">
-                trên trang hiện tại
+                trong kết quả lọc
               </span>
             </div>
             <span className="ml-auto self-start rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-400">
               +
               {
-                data.content.filter(
+                dateFilteredMeetings.filter(
                   (meeting) => meeting.status === MEETING_STATUS.FAILED,
                 ).length
               }
             </span>
           </div>
         </section>
-        <section className="overflow-hidden rounded-xl border border-white/5 bg-[#101624] shadow-xl shadow-black/10">
+        <section className="history-table-panel rounded-xl border border-white/5 bg-[#101624] shadow-xl shadow-black/10">
           <div className="flex flex-col gap-3 border-b border-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-[235px]">
               <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
@@ -823,7 +822,7 @@ export default function FileManagerPage() {
                 className="w-full rounded-lg border border-slate-800 bg-[#171d31] py-2 pl-9 pr-3 text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="history-toolbar-actions flex flex-wrap items-center gap-2">
               {selectedCount > 0 && (
                 <>
                   <button
@@ -887,15 +886,53 @@ export default function FileManagerPage() {
               <select
                 value={status}
                 onChange={handleStatusChange}
+                aria-label="Lọc theo trạng thái"
                 className="rounded-lg border border-slate-800 bg-[#171d31] px-2.5 py-2 text-[11px] text-slate-400 outline-none focus:border-blue-500/60"
               >
                 <option value="">Tất cả trạng thái</option>
-                <option value="UNPROCESSED">Chưa xử lý</option>
-                <option value="PENDING">Chờ xử lý AI</option>
-                <option value="PROCESSING">Đang xử lý</option>
-                <option value="COMPLETED">Hoàn tất</option>
-                <option value="FAILED">Lỗi</option>
+                {Object.entries(MEETING_STATUS_CONFIG).map(([value, config]) => (
+                  <option key={value} value={value}>{config.label}</option>
+                ))}
               </select>
+              <select
+                value={dateFilter}
+                onChange={handleDateFilterChange}
+                aria-label="Lọc theo thời gian"
+                className="rounded-lg border border-slate-800 bg-[#171d31] px-2.5 py-2 text-[11px] text-slate-400 outline-none focus:border-blue-500/60"
+              >
+                <option value="all">Tất cả thời gian</option>
+                <option value="today">Hôm nay</option>
+                <option value="last7">7 ngày gần nhất</option>
+                <option value="last30">30 ngày gần nhất</option>
+                <option value="custom">Tùy chọn khoảng ngày</option>
+              </select>
+              {dateFilter === "custom" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="sr-only" htmlFor="history-date-start">Từ ngày</label>
+                  <input
+                    id="history-date-start"
+                    type="date"
+                    value={customStartDate}
+                    min={dateInputLimits.min}
+                    max={customEndDate || dateInputLimits.max}
+                    onChange={handleCustomStartDateChange}
+                    aria-label="Ngày bắt đầu"
+                    className="min-w-0 rounded-lg border border-slate-800 bg-[#171d31] px-2 py-2 text-[11px] text-slate-300 outline-none focus:border-blue-500/60"
+                  />
+                  <span className="text-[11px] text-slate-600">đến</span>
+                  <label className="sr-only" htmlFor="history-date-end">Đến ngày</label>
+                  <input
+                    id="history-date-end"
+                    type="date"
+                    value={customEndDate}
+                    min={customStartDate || dateInputLimits.min}
+                    max={dateInputLimits.max}
+                    onChange={handleCustomEndDateChange}
+                    aria-label="Ngày kết thúc"
+                    className="min-w-0 rounded-lg border border-slate-800 bg-[#171d31] px-2 py-2 text-[11px] text-slate-300 outline-none focus:border-blue-500/60"
+                  />
+                </div>
+              )}
               <button
                 type="button"
                 title="Tải lại"
@@ -906,6 +943,11 @@ export default function FileManagerPage() {
               </button>
             </div>
           </div>
+          {dateFilter === "custom" && dateRange.error && (
+            <p className="px-4 pb-3 text-xs text-amber-300" role="status">
+              {dateRange.error}
+            </p>
+          )}
           {actionMessage && (
             <div className="mx-4 mb-3 flex items-center justify-between rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
               <span>{actionMessage}</span>
@@ -924,7 +966,7 @@ export default function FileManagerPage() {
               {error}
             </div>
           )}
-          <div className="overflow-x-auto">
+          <div className="history-table-scroll">
             <table className="w-full min-w-[980px] table-fixed text-left text-sm">
               <thead className="border-y border-white/5 bg-white/[0.015] text-[10px] uppercase tracking-wide text-slate-600">
                 <tr>
@@ -956,7 +998,7 @@ export default function FileManagerPage() {
                         </td>
                       </tr>
                     ))
-                  : data.content.map((meeting) => {
+                  : visibleMeetings.map((meeting) => {
                       const fileName = meeting.fileName || meeting.title;
                       const displayFile = splitDisplayFileName(fileName);
 
@@ -1107,26 +1149,32 @@ export default function FileManagerPage() {
                         </tr>
                       );
                     })}
-                {!loading && data.content.length === 0 && (
+                {!loading && visibleMeetings.length === 0 && (
                   <tr>
                     <td
                       colSpan="6"
                       className="px-5 py-16 text-center text-sm text-slate-500"
                     >
-                      Không tìm thấy file phù hợp.
+                      {dateFilter === "custom" && dateRange.error
+                        ? "Chọn khoảng ngày hợp lệ để xem cuộc họp."
+                        : "Không tìm thấy cuộc họp phù hợp."}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-          <Pagination
-            currentPage={data.pageNumber}
-            totalPages={data.totalPages}
-            totalElements={data.totalElements}
-            pageSize={data.pageSize}
-            onPageChange={setPage}
-          />
+          <div className="history-pagination">
+            <Pagination
+              currentPage={currentPage}
+              totalPages={filteredTotalPages}
+              totalElements={filteredTotalElements}
+              pageSize={PAGE_SIZE}
+              itemLabel="cuộc họp"
+              loading={loading}
+              onPageChange={setPage}
+            />
+          </div>
         </section>
       </div>
       <DeleteMeetingModal

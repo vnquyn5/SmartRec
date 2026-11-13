@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
+import { usePageHeader } from "./PageHeaderContext.jsx";
+import { getPageHeader } from "./pageHeaderConfig.js";
 
 const TopBar = ({ hideSearch = false }) => {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { user } = useAuth();
+  const { pageHeader } = usePageHeader();
   const [avatarFailed, setAvatarFailed] = useState(false);
   useEffect(() => setAvatarFailed(false), [user?.avatarUrl]);
   const displayName = user?.name || "Đang tải...";
   const role = user?.role || "";
+  const routeHeader = getPageHeader(pathname);
+  const header = pageHeader || routeHeader;
 
   const initials = displayName
     .split(" ")
@@ -18,7 +24,7 @@ const TopBar = ({ hideSearch = false }) => {
     .toUpperCase();
 
   return (
-    <header className={`topbar${hideSearch ? " topbar--compact" : ""}`}>
+    <header className={`topbar${hideSearch ? " topbar--page" : ""}`}>
       {!hideSearch ? (
         <div className="topbar-search">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -42,6 +48,15 @@ const TopBar = ({ hideSearch = false }) => {
           />
         </div>
       ) : null}
+
+      <div className="topbar-page-title" aria-live="polite">
+        {header.title && (
+          <h1 title={header.title}>{header.title}</h1>
+        )}
+        {header.subtitle && (
+          <p title={header.subtitle}>{header.subtitle}</p>
+        )}
+      </div>
 
       <div className="topbar-right">
         <div

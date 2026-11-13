@@ -26,6 +26,9 @@ public class AIInferenceController {
     @Value("${smartrec.internal-token:}")
     private String configuredInternalToken;
 
+    @Value("${smartrec.llm.enabled:true}")
+    private boolean llmEnabled;
+
     @PostMapping("/{jobId}/ai-result")
     public ResponseEntity<AIResponse> generateAIResult(
             @PathVariable UUID jobId,
@@ -35,6 +38,10 @@ public class AIInferenceController {
                 || !configuredInternalToken.equals(internalToken.trim())) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED,
                     "INVALID_INTERNAL_TOKEN", "Internal authentication failed");
+        }
+        if (!llmEnabled) {
+            throw new BusinessException(HttpStatus.CONFLICT,
+                    "LLM_DISABLED", "LLM enrichment is disabled for this deployment");
         }
         return ResponseEntity.ok(modelRouter.generate(jobId, executionId));
     }

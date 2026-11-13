@@ -44,6 +44,8 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class JobServiceImpl implements JobService {
+    private static final Set<String> AI_ENRICHMENT_OUTCOMES = Set.of(
+            "AI_ENRICHMENT_FAILED", "AI_ENRICHMENT_DISABLED");
     private final JobRepository jobRepository;
     private final JobDispatchOutboxRepository outboxRepository;
     private final JobStageRepository jobStageRepository;
@@ -56,8 +58,6 @@ public class JobServiceImpl implements JobService {
     private int maxRetry;
     @Value("${job.heartbeat-timeout-seconds:90}")
     private long heartbeatTimeoutSeconds;
-    @Value("${smartrec.ai-router.enabled:true}")
-    private boolean llmEnabled = true;
 
     @Override
     @Transactional
@@ -383,6 +383,9 @@ public class JobServiceImpl implements JobService {
         if (awaitingPauseOrCancel && (!sameExecution || !liveLease)) {
             return workerControl(job, false);
         }
+        if (sameExecution && job.getExecutionId() != null && !liveLease) {
+            return workerControl(job, false);
+        }
         boolean leaseExpired = !liveLease;
         if (!sameExecution && job.getExecutionId() != null && !leaseExpired) {
             return workerControl(job, false);
@@ -438,8 +441,8 @@ public class JobServiceImpl implements JobService {
                 JobStatus.RETRYING,
                 JobStatus.PAUSE_REQUESTED,
                 JobStatus.CANCEL_REQUESTED);
-        for (Job candidate : jobRepository.findByStatusInOrderByUpdatedAtAsc(monitored, PageRequest.of(0, 100))) {
-            Job job = jobRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+        for (UUID candidateId : jobRepository.findIdsByStatusInOrderByUpdatedAtAsc(monitored, PageRequest.of(0, 100))) {
+            Job job = jobRepository.findByIdForUpdate(candidateId).orElse(null);
             if (job == null || !monitored.contains(job.getStatus()) || !isWorkerLeaseStale(job, cutoff, now)) continue;
             if (job.getStatus() == JobStatus.CANCEL_REQUESTED) {
                 completeCancellation(job, now);
@@ -585,6 +588,23 @@ public class JobServiceImpl implements JobService {
                 request.setErrorCode("AI_PROCESSING_FAILED");
             }
         }
+        boolean outputSuccess = request.getStage() == PipelineStage.OUTPUT
+                && request.getStatus() == JobStageStatus.SUCCESS;
+        if (outputSuccess && request.getAiResult() != null
+                && isAiEnrichmentOutcome(request.getErrorCode())) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "AI_STATUS_MISMATCH",
+                    "Successful AI result cannot carry an enrichment failure marker");
+        }
+        if (outputSuccess && request.getAiResult() == null
+                && isAiEnrichmentOutcome(request.getErrorCode())) {
+            job.setErrorCode(request.getErrorCode());
+            String diagnosticCode = request.getErrorMessage();
+            job.setErrorMessage("AI_ENRICHMENT_DISABLED".equals(request.getErrorCode())
+                    ? "Core processing completed; AI enrichment is disabled."
+                    : "Core processing completed, but AI enrichment failed."
+                            + (diagnosticCode != null && diagnosticCode.matches("[A-Z][A-Z0-9_]{1,63}")
+                                    ? " Code: " + diagnosticCode : ""));
+        }
 
         JobStage jobStage = jobStageRepository.findByJobIdAndStage(jobId, request.getStage())
                 .orElseThrow(() -> new BusinessException(
@@ -592,18 +612,6 @@ public class JobServiceImpl implements JobService {
                         "JOB_STAGE_NOT_FOUND",
                         "Không tìm thấy Job Stage"));
         if (isIdempotentCallback(job, jobStage, request)) return;
-
-        // Keep the legacy requirement while LLM inference is enabled. In M1 the
-        // Core Pipeline can complete without producing AI summary/tasks.
-        if (request.getStage() == PipelineStage.OUTPUT
-                && request.getStatus() == JobStageStatus.SUCCESS
-                && request.getAiResult() == null
-                && llmEnabled) {
-            throw new BusinessException(
-                    HttpStatus.BAD_REQUEST,
-                    "AI_RESULT_REQUIRED",
-                    "OUTPUT SUCCESS yêu cầu kết quả AI hợp lệ");
-        }
 
         if (Set.of(JobStatus.COMPLETED, JobStatus.DLQ, JobStatus.CANCELLED, JobStatus.PAUSED, JobStatus.FAILED)
                 .contains(job.getStatus())) {
@@ -757,6 +765,10 @@ public class JobServiceImpl implements JobService {
                     && request.getStatus() == JobStageStatus.FAILED && stage.getStatus() == JobStageStatus.FAILED)
                 || (job.getStatus() == JobStatus.RETRYING && stage.getStatus() == JobStageStatus.RETRYING
                     && request.getStatus() == JobStageStatus.FAILED);
+    }
+
+    private boolean isAiEnrichmentOutcome(String errorCode) {
+        return errorCode != null && AI_ENRICHMENT_OUTCOMES.contains(errorCode);
     }
 
     private void markMeetingProcessing(Job job) {

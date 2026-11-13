@@ -12,6 +12,8 @@ import {
   permanentDeleteMediaFile,
   restoreMediaFile,
 } from "../../services/trashService.js";
+import Pagination from "../../components/common/Pagination.jsx";
+import "./TrashPage.css";
 
 const EMPTY_PAGE = {
   content: [],
@@ -322,33 +324,10 @@ export default function TrashPage() {
     );
   };
 
-  const firstItem =
-    data.totalElements === 0 ? 0 : data.pageNumber * data.pageSize + 1;
-  const lastItem = Math.min(
-    (data.pageNumber + 1) * data.pageSize,
-    data.totalElements,
-  );
-
   return (
-    <div className="mx-auto max-w-[1180px] space-y-5">
-      <header className="space-y-4">
-        <div>
-          <h1 className="text-[30px] font-extrabold leading-tight tracking-tight text-white">
-            Thùng rác
-          </h1>
-          <div className="mt-4 inline-flex max-w-full items-center gap-2 rounded-lg border border-blue-500/25 bg-blue-500/10 px-4 py-3 text-sm text-slate-400">
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-400 text-[10px] font-bold text-slate-950">
-              i
-            </span>
-            <span>
-              Các tệp trong thùng rác sẽ tự động bị xóa vĩnh viễn sau 30 ngày.
-            </span>
-          </div>
-        </div>
-      </header>
-
-      <section className="space-y-3">
-        <div className="flex flex-col gap-4 border-b border-white/5 md:flex-row md:items-end md:justify-between">
+    <div className="trash-page">
+      <section className="trash-main">
+        <div className="trash-tabs flex flex-col gap-4 border-b border-white/5 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-7 overflow-x-auto">
             {tabs.map((tab) => (
               <button
@@ -372,7 +351,7 @@ export default function TrashPage() {
           <div className="mb-3 hidden md:block" />
         </div>
 
-        <div className="flex flex-col gap-3 rounded-xl border border-white/5 bg-[#101624] p-4 shadow-xl shadow-black/10 sm:flex-row sm:items-center sm:justify-between">
+        <div className="trash-toolbar flex flex-col gap-3 rounded-xl border border-white/5 bg-[#101624] p-4 shadow-xl shadow-black/10 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative w-full sm:max-w-[320px]">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
             <input
@@ -449,7 +428,7 @@ export default function TrashPage() {
         </div>
 
         {message && (
-          <div className="flex items-center justify-between rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
+          <div className="trash-page-message flex items-center justify-between rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
             <span>{message}</span>
             <button
               type="button"
@@ -463,15 +442,15 @@ export default function TrashPage() {
         )}
 
         {error && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <div className="trash-page-error rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {error}
           </div>
         )}
 
-        <section className="overflow-hidden rounded-xl border border-white/5 bg-[#101624] shadow-xl shadow-black/10">
-          <div className="overflow-x-auto">
+        <section className="trash-table-panel rounded-xl border border-white/5 bg-[#101624] shadow-xl shadow-black/10">
+          <div className="trash-table-scroll">
             <table className="w-full min-w-[980px] table-fixed text-left text-sm">
-              <thead className="border-b border-white/5 bg-white/[0.015] text-[10px] uppercase tracking-wide text-slate-500">
+              <thead className="trash-table-header border-b border-white/5 bg-white/[0.015] text-[10px] uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="w-12 px-5 py-4">
                     <input
@@ -591,28 +570,16 @@ export default function TrashPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex flex-col gap-3 border-t border-white/5 px-5 py-4 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Hiển thị {firstItem}-{lastItem} trong tổng {data.totalElements} tệp đã xóa
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={data.pageNumber === 0 || loading}
-                onClick={() => setPage((currentPage) => currentPage - 1)}
-                className="rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Trước
-              </button>
-              <button
-                type="button"
-                disabled={data.pageNumber >= data.totalPages - 1 || loading}
-                onClick={() => setPage((currentPage) => currentPage + 1)}
-                className="rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Sau
-              </button>
-            </div>
+          <div className="trash-pagination">
+            <Pagination
+              currentPage={data.pageNumber}
+              totalPages={data.totalPages}
+              totalElements={data.totalElements}
+              pageSize={data.pageSize}
+              itemLabel="tệp đã xóa"
+              loading={loading}
+              onPageChange={setPage}
+            />
           </div>
         </section>
       </section>

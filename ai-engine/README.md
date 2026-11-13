@@ -156,9 +156,9 @@ cp ai-engine/.env.example ai-engine/.env
 ```
 
 `docker compose` đọc **root `.env`** để nội suy Compose. Python native đọc
-`ai-engine/.env` (cần nạp file trước khi khởi chạy process để các biến
-`os.getenv()` cũng được áp dụng). Không chép giá trị secret vào README hoặc
-Git. Tạo token/password riêng trong file local và dùng cùng
+`ai-engine/.env` theo đường dẫn cố định khi import `app.core.config`, trước
+khi các module đọc `os.getenv()`; biến đã export vẫn được ưu tiên. Không chép
+giá trị secret vào README hoặc Git. Tạo token/password riêng trong file local và dùng cùng
 `SMARTREC_INTERNAL_TOKEN` ở Backend, FastAPI và Worker. MinIO user/password
 của Compose phải khớp với access/secret key mà Backend và native Worker dùng.
 
@@ -278,18 +278,11 @@ Mở Terminal thứ nhất:
 cd ai-engine
 source .venv/bin/activate
 
-set -a
-source .env
-set +a
-
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Nạp `.env` trước khi import source để các module
-đọc `os.getenv()` nhận đúng giá trị.
-
-Chỉ chạy `source` với file `.env` đáng tin cậy
-do chính bạn quản lý.
+`app.core.config` tự nạp `ai-engine/.env` trước khi các module
+đọc `os.getenv()`.
 
 ## 9. Chạy Celery Worker native
 
@@ -317,15 +310,12 @@ thứ hai:
 cd ai-engine
 source .venv/bin/activate
 
-set -a
-source .env
-set +a
-
 python -m celery -A app.celery_app:celery_app worker \
   --loglevel=INFO --pool=solo --concurrency=1
 ```
 
 `--pool=solo --concurrency=1` phù hợp với local MPS và giới hạn bộ nhớ.
+Nếu cần demo Whisper CPU, đặt `WHISPER_CPP_DEVICE=cpu` trong `ai-engine/.env`.
 Pyannote MPS được bật bằng `DIARIZATION_DEVICE=mps`. Whisper dùng CPU:
 `WHISPER_DEVICE=cpu`, `WHISPER_COMPUTE_TYPE=int8`, `WHISPER_MODEL_PATH` phải
 trỏ tới thư mục có `model.bin`. Local Paddle/PaddleOCR chưa được cài đặt

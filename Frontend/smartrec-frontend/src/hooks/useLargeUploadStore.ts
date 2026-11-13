@@ -30,6 +30,7 @@ export interface LargeUploadItem {
   recoveryKey: string;
   file: File;
   fileName: string;
+  sourceFileName: string;
   fileSize: number;
   lastModified: number;
   hasFile: boolean;
@@ -66,6 +67,7 @@ interface PersistedItem {
   recoveryKey?: string;
   uploadSessionId: string | null;
   fileName: string;
+  sourceFileName?: string;
   fileSize: number;
   fileType?: string;
   lastModified: number;
@@ -125,6 +127,7 @@ const persist = () => {
     recoveryKey: item.recoveryKey,
     uploadSessionId: item.uploadSessionId,
     fileName: item.fileName,
+    sourceFileName: item.sourceFileName || item.file.name,
     fileSize: item.fileSize,
     fileType: item.file.type,
     lastModified: item.lastModified,
@@ -201,7 +204,7 @@ const buildChunksFromMetadata = (
 
 const createFilePlaceholder = (item: PersistedItem) =>
   ({
-    name: item.fileName,
+    name: item.sourceFileName || item.fileName,
     size: item.fileSize,
     lastModified: item.lastModified,
     type: item.fileType || "application/octet-stream",
@@ -219,6 +222,7 @@ const buildRestoredItem = (persistedItem: PersistedItem): LargeUploadItem => {
     recoveryKey: persistedItem.recoveryKey || persistedItem.id,
     file: createFilePlaceholder(persistedItem),
     fileName: persistedItem.fileName,
+    sourceFileName: persistedItem.sourceFileName || persistedItem.fileName,
     fileSize: persistedItem.fileSize,
     lastModified: persistedItem.lastModified,
     hasFile: false,
@@ -258,7 +262,7 @@ const buildItem = (
 ): LargeUploadItem => {
   const persistedItem = readPersisted().find(
     (item) =>
-      item.fileName === file.name &&
+      (item.sourceFileName || item.fileName) === file.name &&
       item.fileSize === file.size &&
       item.lastModified === file.lastModified,
   );
@@ -278,7 +282,8 @@ const buildItem = (
     id: getFileKey(file),
     recoveryKey: persistedItem?.recoveryKey || createRecoveryKey(),
     file,
-    fileName: file.name,
+    fileName: persistedItem?.fileName || file.name,
+    sourceFileName: file.name,
     fileSize: file.size,
     lastModified: file.lastModified,
     hasFile: true,
@@ -332,7 +337,8 @@ const addItemsToQueue = (
           ? {
               ...existingItem,
               file: item.file,
-              fileName: item.fileName,
+              sourceFileName: item.sourceFileName,
+              fileName: existingItem.fileName,
               fileSize: item.fileSize,
               lastModified: item.lastModified,
               hasFile: true,
@@ -383,7 +389,7 @@ const ensureSession = async (item: LargeUploadItem) => {
   }
 
   const initResponse = await initChunkedUpload({
-    fileName: item.file.name,
+    fileName: item.fileName,
     fileSize: item.file.size,
     mimeType: item.file.type || "application/octet-stream",
     totalChunks: item.chunks.length,
@@ -687,7 +693,7 @@ const mergeUpload = async (item: LargeUploadItem) => {
     try {
       const confirmation = await mergeChunkedUpload(
         latestItem.uploadSessionId!,
-        latestItem.file.name,
+        latestItem.fileName,
       );
       if (confirmation.status !== "COMPLETED") {
         throw new Error("Backend chưa xác nhận lưu file.");
@@ -712,7 +718,7 @@ const mergeUpload = async (item: LargeUploadItem) => {
     try {
       const confirmation = await mergeChunkedUpload(
         latestItem.uploadSessionId,
-        latestItem.file.name,
+        latestItem.fileName,
       );
       if (confirmation.status !== "COMPLETED") {
         throw new Error("Backend chưa xác nhận lưu file.");
@@ -744,7 +750,7 @@ const mergeUpload = async (item: LargeUploadItem) => {
   try {
     const mergeResponse = await mergeChunkedUpload(
       latestItem.uploadSessionId,
-      latestItem.file.name,
+      latestItem.fileName,
     );
     let finalMergeResponse = mergeResponse;
     if (mergeResponse.status === "MERGING") {
@@ -757,7 +763,7 @@ const mergeUpload = async (item: LargeUploadItem) => {
       // second request is the user's explicit save and creates visible rows.
       finalMergeResponse = await mergeChunkedUpload(
         latestItem.uploadSessionId,
-        latestItem.file.name,
+        latestItem.fileName,
       );
     }
     if (finalMergeResponse.status !== "COMPLETED") {
@@ -1088,7 +1094,7 @@ export const largeUploadStore = {
     const item = state.items.find((candidate) => candidate.id === id);
     if (
       !item ||
-      file.name !== item.fileName ||
+      file.name !== (item.sourceFileName || item.fileName) ||
       file.size !== item.fileSize ||
       (Number.isFinite(item.lastModified) && file.lastModified !== item.lastModified)
     ) return;
@@ -1109,6 +1115,11 @@ export const largeUploadStore = {
       recoveryCheckPending: false,
       ...(required ? { phase: "paused", error: null } : {}),
     });
+  },
+  renameFile(id: string, fileName: string) {
+    const item = state.items.find((candidate) => candidate.id === id);
+    if (!item || item.phase !== "idle" || item.uploadSessionId) return;
+    updateItem(id, { fileName });
   },
   setRecoveryCheckPending(id: string, pending: boolean) {
     updateItem(id, { recoveryCheckPending: pending });

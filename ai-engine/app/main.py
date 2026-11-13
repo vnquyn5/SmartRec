@@ -1,4 +1,7 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -11,11 +14,43 @@ logger.info("Initializing SmartRec AI Engine")
 
 from app.api.routes import router as audio_router, internal_router
 from app.api.internal_llm_routes import router as internal_llm_router
+from app.core.config import settings
+from app.services.local_llm_debug import LocalLLMDebugStore
+
+
+async def _expire_local_llm_debug_captures():
+    while True:
+        try:
+            debug_dir = Path(settings.smartrec_llm_debug_dir)
+            if debug_dir.exists():
+                store = LocalLLMDebugStore(
+                    debug_dir,
+                    settings.smartrec_llm_debug_retention_hours,
+                    settings.smartrec_llm_debug_max_capture_bytes,
+                    settings.smartrec_llm_debug_max_total_bytes,
+                )
+                await asyncio.to_thread(store.prune)
+        except Exception:
+            # Debug-data cleanup must not affect FastAPI health or requests.
+            pass
+        await asyncio.sleep(3600)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    cleanup_task = asyncio.create_task(_expire_local_llm_debug_captures())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 app = FastAPI(
     title="SmartRec AI Engine - Audio Preprocessing Service",
     version="1.0.0",
-    description="Microservice tiền xử lý âm thanh: Trích xuất, chuẩn hóa 16kHz Mono và cắt phân đoạn cho pipeline AI."
+    description="Microservice tiền xử lý âm thanh: Trích xuất, chuẩn hóa 16kHz Mono và cắt phân đoạn cho pipeline AI.",
+    lifespan=lifespan,
 )
 
 register_exception_handlers(app)

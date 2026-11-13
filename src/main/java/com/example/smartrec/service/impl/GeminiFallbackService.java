@@ -38,13 +38,16 @@ public class GeminiFallbackService {
             throw new GeminiFallbackDeniedException("GEMINI_FALLBACK_NOT_CONFIGURED");
         }
 
+        int maxAttempts = Math.max(1, Math.min(
+                Math.min(properties.getGeminiMaxAttempts(), 2),
+                properties.getGeminiMaxRequestsPerJob()));
         var authorized = policy.authorizeAndRedact(
                 jobId,
                 meetingId,
                 requestId,
                 systemPrompt,
                 prompt,
-                Math.max(1, Math.min(properties.getGeminiMaxAttempts(), 2)),
+                maxAttempts,
                 properties.getGeminiMaxOutputTokens(),
                 properties.getGeminiMaxRequestsPerJob(),
                 properties.getGeminiMaxCostPerJobUsd());
@@ -52,7 +55,6 @@ public class GeminiFallbackService {
             throw new GeminiFallbackDeniedException("GEMINI_DATA_POLICY_DENIED");
         }
 
-        int maxAttempts = Math.max(1, Math.min(properties.getGeminiMaxAttempts(), 2));
         GeminiFallbackClient.GeminiProviderException lastFailure = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {

@@ -638,6 +638,24 @@ class OCRPostProcessor:
                 "error": slide.get("error"),
             })
 
+        successful_slides = sum(
+            slide["status"] == "SUCCESS" for slide in processed_slides
+        )
+        no_text_slides = sum(
+            slide["status"] == "NO_TEXT_DETECTED" for slide in processed_slides
+        )
+        failed_slides = sum(
+            slide["status"] == "FAILED" for slide in processed_slides
+        )
+        if not processed_slides:
+            ocr_status = "NO_SLIDES_DETECTED"
+        elif failed_slides:
+            ocr_status = "PARTIAL_FAILURE" if failed_slides < len(processed_slides) else "FAILED"
+        elif successful_slides:
+            ocr_status = "SUCCESS"
+        else:
+            ocr_status = "NO_TEXT_DETECTED"
+
         return {
             "schema_version": "1.0",
             "keyframe_run_id": ocr_result.get(
@@ -652,14 +670,10 @@ class OCRPostProcessor:
                 else "OCR_COMPLETED"
             ),
             "total_slides": len(processed_slides),
-            "successful_slides": sum(
-                slide["status"] == "SUCCESS"
-                for slide in processed_slides
-            ),
-            "failed_slides": sum(
-                slide["status"] == "FAILED"
-                for slide in processed_slides
-            ),
+            "successful_slides": successful_slides,
+            "no_text_slides": no_text_slides,
+            "failed_slides": failed_slides,
+            "ocr_status": ocr_status,
             "slides": processed_slides,
         }
 

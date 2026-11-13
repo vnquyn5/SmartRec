@@ -13,6 +13,7 @@ class TranscriptSegment(BaseModel):
 
     speakerId: Optional[UUID] = None
     speakerLabel: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    attributionStatus: str = Field(default="ATTRIBUTED", min_length=1, max_length=40)
     startTimeMs: int = Field(..., ge=0)
     endTimeMs: int = Field(..., ge=0)
     text: str = Field(..., min_length=1)
@@ -24,6 +25,8 @@ class TranscriptSegment(BaseModel):
 
         if data.get("speakerLabel") is None:
             data.pop("speakerLabel", None)
+        if data.get("attributionStatus") == "ATTRIBUTED":
+            data.pop("attributionStatus", None)
 
         return data
 

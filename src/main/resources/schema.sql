@@ -49,3 +49,9 @@ CREATE TABLE IF NOT EXISTS job_dispatch_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_job_dispatch_outbox_pending
     ON job_dispatch_outbox (available_at, created_at) WHERE dispatched_at IS NULL;
+
+-- Cross-speaker Whisper segments keep their source text/timing but have no
+-- single defensible speaker identity. Persist that state without inventing a
+-- synthetic speaker row; existing transcript rows remain ATTRIBUTED.
+ALTER TABLE transcripts ALTER COLUMN speaker_id DROP NOT NULL;
+ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS attribution_status VARCHAR(40) NOT NULL DEFAULT 'ATTRIBUTED';

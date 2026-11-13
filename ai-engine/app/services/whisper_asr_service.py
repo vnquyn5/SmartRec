@@ -1,5 +1,6 @@
-"""Speech-to-Text service sử dụng faster-whisper local."""
+"""Speech-to-Text service with selectable native local Whisper backends."""
 
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -7,7 +8,7 @@ from app.adapters.whisper_adapter import create_whisper_adapter
 
 
 class WhisperASRService:
-    """Quản lý model Whisper và thực hiện nhận dạng giọng nói."""
+    """Own one job's STT lifecycle and expose the existing segment contract."""
 
     def __init__(
         self,
@@ -44,6 +45,7 @@ class WhisperASRService:
         if not self._adapter.is_ready:
             raise RuntimeError("Whisper model chưa được load. Hãy gọi load_model().")
 
+        started = time.monotonic()
         segments, info = self._adapter.predict(
             str(path),
             language=self.language,
@@ -51,10 +53,17 @@ class WhisperASRService:
             word_timestamps=True,
         )
 
+        predictor = getattr(self._adapter, "_predictor", None)
+        actual_device = getattr(predictor, "actual_device", None)
+        if not actual_device or actual_device == "not_run":
+            actual_device = getattr(self._adapter, "device", "unknown")
         return {
             "language": self.language,
             "detected_language": getattr(info, "language", None),
             "segments": segments,
+            "model": getattr(self._adapter, "model_name", "unknown"),
+            "device": actual_device,
+            "inference_time_ms": max(0, int((time.monotonic() - started) * 1000)),
         }
 
     def unload(self) -> None:

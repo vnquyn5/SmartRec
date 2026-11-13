@@ -11,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -168,6 +170,28 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(errorResponseDTO);
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ErrorResponseDTO> handleMissingRequestHeader(
+            MissingRequestHeaderException ex) {
+        ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+        errorResponseDTO.setCode("MISSING_REQUIRED_HEADER");
+        errorResponseDTO.setMessage("Thiếu header bắt buộc: " + ex.getHeaderName());
+        errorResponseDTO.setDetail(List.of());
+        errorResponseDTO.setTimestamp(LocalDateTime.now());
+        return ResponseEntity.badRequest().body(errorResponseDTO);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponseDTO> handleArgumentTypeMismatch(
+            MethodArgumentTypeMismatchException ex) {
+        ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+        errorResponseDTO.setCode("INVALID_PARAMETER_FORMAT");
+        errorResponseDTO.setMessage("Giá trị tham số không đúng định dạng: " + ex.getName());
+        errorResponseDTO.setDetail(List.of());
+        errorResponseDTO.setTimestamp(LocalDateTime.now());
+        return ResponseEntity.badRequest().body(errorResponseDTO);
     }
 
     // 500 - Exception không xác định

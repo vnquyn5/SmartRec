@@ -176,7 +176,19 @@ public class SttServiceImpl implements SttService {
         }
         // 4. Kiem tra thoi gian tung doan
         for (TranscriptSegment segment : segments) {
-            if (segment.getSpeakerId() == null
+            String attributionStatus = hasText(segment.getAttributionStatus())
+                    ? segment.getAttributionStatus().trim().toUpperCase(Locale.ROOT)
+                    : "ATTRIBUTED";
+            if (!List.of("ATTRIBUTED", "CROSS_SPEAKER_BOUNDARY", "UNRESOLVED").contains(attributionStatus)) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST,
+                        "INVALID_ATTRIBUTION_STATUS", "Trạng thái gán speaker không hợp lệ");
+            }
+            boolean unresolvedAttribution = !"ATTRIBUTED".equals(attributionStatus);
+            if (unresolvedAttribution && (segment.getSpeakerId() != null || hasText(segment.getSpeakerLabel()))) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST,
+                        "AMBIGUOUS_SPEAKER_HAS_IDENTITY", "Đoạn transcript mơ hồ không được gán một speaker duy nhất");
+            }
+            if (!unresolvedAttribution && segment.getSpeakerId() == null
                     && (segment.getSpeakerLabel() == null
                             || segment.getSpeakerLabel().isBlank())) {
                 throw new BusinessException(
@@ -231,7 +243,13 @@ public class SttServiceImpl implements SttService {
 
             transcript.setMeetingId(meetingId);
             transcript.setProcessingJobId(jobId);
-            transcript.setSpeakerId(resolveSpeakerId(meetingId, segment));
+            String attributionStatus = hasText(segment.getAttributionStatus())
+                    ? segment.getAttributionStatus().trim().toUpperCase(Locale.ROOT)
+                    : "ATTRIBUTED";
+            transcript.setAttributionStatus(attributionStatus);
+            transcript.setSpeakerId("ATTRIBUTED".equals(attributionStatus)
+                    ? resolveSpeakerId(meetingId, segment)
+                    : null);
             transcript.setStartTimeMs(segment.getStartTimeMs());
             transcript.setEndTimeMs(segment.getEndTimeMs());
             transcript.setTextContent(segment.getText());

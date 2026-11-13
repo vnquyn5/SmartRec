@@ -73,3 +73,12 @@ __pycache__/
 # Local backups and Python test environments
 backups/
 .venv-test/
+
+# Local Spring Boot secrets
+/config/application-local-secrets.properties
+
+# Spring Boot local environment
+/.env.spring.local
+
+# Local persisted ASR test data
+/ai-engine/tests/fixtures/persisted_asr_*.json

@@ -1,11 +1,14 @@
 """Strict Pydantic schemas for SmartRec enterprise meeting summaries."""
 
+from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
 
 SCHEMA_VERSION = "smartrec.ai.meeting-summary.v1"
+NON_BLANK_PATTERN = r"^.*[^ \t\r\n].*$"
+ISO_DATE_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 
 
 class StrictSummaryModel(BaseModel):
@@ -32,19 +35,22 @@ class DiscussionPoint(StrictSummaryModel):
 class ActionItem(StrictSummaryModel):
     """An assigned or proposed task extracted from a meeting."""
 
-    title: StrictStr = Field(
-        min_length=1,
-        description="A task supported by meeting evidence; include every explicit assignment.",
-    )
+    title: StrictStr = Field(min_length=1)
     assignee: StrictStr | None
-    deadline: StrictStr | None
-    deadline_raw: StrictStr | None = Field(
-        description=(
-            "For a relative or ambiguous deadline, preserve the complete original "
-            "phrase verbatim, including relational words such as 'trước' or 'sau'."
-        ),
-    )
+    deadline: StrictStr | None = Field(pattern=ISO_DATE_PATTERN)
+    deadline_raw: StrictStr | None = Field(pattern=NON_BLANK_PATTERN)
     source_refs: list[StrictStr] = Field(min_length=1)
+
+    @field_validator("deadline")
+    @classmethod
+    def validate_deadline_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("deadline must be a valid YYYY-MM-DD calendar date") from exc
+        return value
 
 
 class SourceConflict(StrictSummaryModel):
@@ -57,28 +63,47 @@ class SourceConflict(StrictSummaryModel):
 class MeetingSummary(StrictSummaryModel):
     """AI-owned output contract, not the Backend persistence DTO."""
 
+    @staticmethod
+    def _json_schema_extra(schema: dict) -> None:
+        # Pydantic validators are runtime-only by default. Mirror the
+        # executive summary/reference cross-field invariant in the JSON
+        # Schema supplied to Ollama's constrained decoder.
+        schema["allOf"] = [
+            {
+                "anyOf": [
+                    {
+                        "properties": {
+                            "executive_summary": {"type": "string"},
+                            "executive_summary_refs": {"minItems": 1},
+                        }
+                    },
+                    {
+                        "properties": {
+                            "executive_summary": {"type": "null"},
+                            "executive_summary_refs": {"maxItems": 0},
+                        }
+                    },
+                ]
+            }
+        ]
+
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra=_json_schema_extra.__func__,
+    )
+
     schema_version: Literal["smartrec.ai.meeting-summary.v1"]
 
-    executive_summary: StrictStr | None = Field(
-        description=(
-            "A concise natural-language summary grounded in evidence; required "
-            "when evidence is provided, never a field label or source ID."
-        ),
-    )
+    executive_summary: StrictStr | None = Field(pattern=NON_BLANK_PATTERN)
 
-    executive_summary_refs: list[StrictStr] = Field(
-        description="Exact evidence source_ref IDs supporting executive_summary.",
-    )
+    executive_summary_refs: list[StrictStr]
 
     key_points: list[DiscussionPoint]
 
-    decisions: list[EvidenceItem] = Field(
-        description="All explicitly confirmed decisions, each grounded and cited.",
-    )
+    decisions: list[EvidenceItem]
 
-    action_items: list[ActionItem] = Field(
-        description="All explicit evidence-supported task assignments, each cited.",
-    )
+    action_items: list[ActionItem]
 
     open_issues: list[EvidenceItem]
 

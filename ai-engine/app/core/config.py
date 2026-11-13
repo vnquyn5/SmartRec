@@ -1,5 +1,14 @@
-from typing import Optional
+from pathlib import Path
+from typing import Literal, Optional
+
+from dotenv import load_dotenv
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Import this module before services that read os.environ at module scope.
+# The Docker image does not copy ai-engine/.env; Compose supplies its own env.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
 
 class Settings(BaseSettings):
@@ -20,14 +29,25 @@ class Settings(BaseSettings):
     local_llm_endpoint: Optional[str] = None
     local_llm_model: Optional[str] = None
     local_llm_connect_timeout_seconds: float = 5.0
-    local_llm_timeout_seconds: float = 120.0
-    # Keep legacy inference behavior unless an operator explicitly disables it.
+    local_llm_timeout_seconds: float = 180.0
     smartrec_llm_enabled: bool = True
+    smartrec_environment: Literal["development", "test", "production"] = "production"
+    smartrec_llm_debug_capture_enabled: bool = False
+    smartrec_llm_debug_dir: Path = Path("/var/lib/smartrec/llm-debug")
+    smartrec_llm_debug_retention_hours: int = Field(default=24, ge=1, le=168)
+    smartrec_llm_debug_max_capture_bytes: int = Field(default=524288, ge=1024, le=2097152)
+    smartrec_llm_debug_max_total_bytes: int = Field(default=16777216, ge=1048576, le=67108864)
 
     # Pyannote Speaker Diarization Settings
     hf_token: Optional[str] = None
     pyannote_model_id: str = "pyannote/speaker-diarization-3.1"
     pyannote_device: str = "auto"  # "auto", "mps", "cuda", "cpu"
+    pyannote_timeline_mode: Literal["raw", "exclusive"] = "raw"
+    pyannote_turn_smoothing_enabled: bool = False
+    pyannote_turn_smoothing_max_fragment_ms: int = Field(default=150, gt=0, le=10000)
+    pyannote_num_speakers: Optional[int] = Field(default=None, gt=0)
+    pyannote_min_speakers: Optional[int] = Field(default=None, gt=0)
+    pyannote_max_speakers: Optional[int] = Field(default=None, gt=0)
 
     # PaddleOCR Settings
     # Model paths can be mounted from Docker host storage.
@@ -40,11 +60,7 @@ class Settings(BaseSettings):
     ocr_enable_mkldnn: bool = False
     ocr_cpu_threads: int = 1
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
-    )
+    model_config = SettingsConfigDict(extra="ignore")
 
 
 settings = Settings()

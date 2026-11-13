@@ -59,7 +59,7 @@ export async function restoreChunkedFile(item, requestPermission = false) {
     const file = await handle.getFile();
     fileRestored = true;
     if (
-      file.name !== item.fileName ||
+      file.name !== (item.sourceFileName || item.fileName) ||
       file.size !== item.fileSize ||
       (Number.isFinite(item.lastModified) && file.lastModified !== item.lastModified)
     ) {

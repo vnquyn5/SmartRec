@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import BrandLink from "../../components/layout/BrandLink.jsx";
+import { getPageHeader } from "../../components/layout/pageHeaderConfig.js";
 import api from "../../api/axiosClient";
 import { useAuth } from "../../features/auth/AuthProvider.jsx";
 import { refreshTokenStore, tokenStore } from "../../lib/auth/tokenStore.js";
@@ -298,6 +299,7 @@ const permissionHeaders = [
 ];
 
 const ProfilePage = () => {
+  const pageHeader = getPageHeader("/profile");
   const navigate = useNavigate();
   const { updateUser: updateAuthUser } = useAuth();
   const [activeTab, setActiveTab] = useState("profile");
@@ -615,12 +617,15 @@ const ProfilePage = () => {
       {/* ── Main content ── */}
       <div className="dashboard-main">
         {/* Top bar */}
-        <header className="topbar">
-          <div style={{ flex: 1 }} />
+        <header className="topbar topbar--page">
+          <div className="topbar-page-title">
+            <h1 title={pageHeader.title}>{pageHeader.title}</h1>
+            <p title={pageHeader.subtitle}>{pageHeader.subtitle}</p>
+          </div>
           <div className="topbar-right">
-            <button className="profile-home-btn" onClick={() => navigate("/")}>
+            <button className="profile-home-btn" onClick={() => navigate("/history")}>
               {icons.home}
-              <span>Về trang chủ</span>
+              <span>Danh sách cuộc họp</span>
             </button>
             <div className="topbar-avatar">
               <AvatarDisplay

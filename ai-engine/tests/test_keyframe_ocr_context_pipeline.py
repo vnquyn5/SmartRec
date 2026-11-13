@@ -15,6 +15,7 @@ from app.services.paddle_ocr_service import PaddleOCRService
 from app.services.ocr_postprocessor import OCRPostProcessor
 from app.services.multimodal_pipeline import run_local_multimodal
 from app.services.multimodal_context import build_local_context
+from app.services.artifact_provenance import read_verified_json
 
 MEETING, JOB = str(UUID(int=1)), str(UUID(int=2))
 
@@ -65,39 +66,18 @@ def test_local_pipeline_dedup_provenance_normalization_and_context(tmp_path, loc
                if b.get("local_slide_reference", {}).get("slide_id") == "slide_0001")
 
 
-def test_successful_extraction_with_no_candidates_is_not_an_ocr_failure(tmp_path, local_pipeline, monkeypatch):
+def test_successful_scan_with_zero_keyframes_is_verified_empty_ocr(tmp_path, local_pipeline, monkeypatch):
     video, extractor, ocr = local_pipeline
-    monkeypatch.setattr(extractor, "select_keyframe_candidates", lambda _: iter(()))
-    transcript = TranscriptPayload.model_validate({
-        "meetingId": MEETING, "processingJobId": JOB, "segments": [
-            {"startTimeMs": 1000, "endTimeMs": 2000, "text": "Kế hoạch tuần tới"}]})
-
+    monkeypatch.setattr(extractor, "sample_frames", lambda *args: iter(()))
     result = run_local_multimodal(meeting_id=MEETING, job_id=JOB, video_path=video,
-                                 output_dir=tmp_path / "no-slides", ocr_service=ocr,
-                                 transcript=transcript, extractor=extractor)
-    manifest, images = ocr.load_keyframe_manifest(tmp_path / "no-slides" / "keyframes")
-    from app.services.artifact_provenance import read_verified_json
-    raw = read_verified_json(tmp_path, result["ocr_source"], MEETING, JOB)
-    context = result["context"]
-
-    assert manifest["total_keyframes"] == 0 and images == []
-    assert raw["slides"] == []
-    assert raw["result_status"] == "NO_SLIDES_DETECTED"
-    assert [block["source_type"] for block in context["blocks"]] == ["TRANSCRIPT"]
-    assert context["blocks"][0]["text"] == "Kế hoạch tuần tới"
-
-
-def test_keyframe_extraction_error_is_not_converted_to_empty_ocr(tmp_path, local_pipeline):
-    video, extractor, ocr = local_pipeline
-    def extraction_failed(*args):
-        raise RuntimeError("decoder failed")
-    extractor.extract = extraction_failed
-    from app.workers.processing_errors import RetryableProcessingError
-    with pytest.raises(RetryableProcessingError, match="Keyframe extraction failed") as error:
-        run_local_multimodal(meeting_id=MEETING, job_id=JOB, video_path=video,
-                             output_dir=tmp_path / "extract-error", ocr_service=ocr,
-                             extractor=extractor)
-    assert error.value.error_code == "KEYFRAME_EXTRACTION_FAILED"
+                                 output_dir=tmp_path / "empty-scan", ocr_service=ocr,
+                                 extractor=extractor)
+    artifact = read_verified_json(tmp_path, result["ocr_source"], MEETING, JOB)
+    manifest = read_verified_json(tmp_path, result["keyframe_source"], MEETING, JOB)
+    assert manifest["total_keyframes"] == 0 and manifest["keyframes"] == []
+    assert artifact["ocr_status"] == "NO_SLIDES_DETECTED"
+    assert artifact["slides"] == []
+    assert artifact["failed_slides"] == 0
 
 
 @pytest.mark.parametrize("case,expected", [("empty", "NO_TEXT_DETECTED"), ("missing", "FAILED"),

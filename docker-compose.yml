@@ -92,6 +92,12 @@ services:
       LOCAL_LLM_ENDPOINT: ${LOCAL_LLM_ENDPOINT:-http://host.docker.internal:11434/api/generate}
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}
       SMARTREC_LLM_ENABLED: ${SMARTREC_LLM_ENABLED:-true}
+      SMARTREC_ENVIRONMENT: ${SMARTREC_ENVIRONMENT:-production}
+      SMARTREC_LLM_DEBUG_CAPTURE_ENABLED: ${SMARTREC_LLM_DEBUG_CAPTURE_ENABLED:-false}
+      SMARTREC_LLM_DEBUG_DIR: /var/lib/smartrec/llm-debug
+      SMARTREC_LLM_DEBUG_RETENTION_HOURS: ${SMARTREC_LLM_DEBUG_RETENTION_HOURS:-24}
+      SMARTREC_LLM_DEBUG_MAX_CAPTURE_BYTES: ${SMARTREC_LLM_DEBUG_MAX_CAPTURE_BYTES:-524288}
+      SMARTREC_LLM_DEBUG_MAX_TOTAL_BYTES: ${SMARTREC_LLM_DEBUG_MAX_TOTAL_BYTES:-16777216}
       SMARTREC_INTERNAL_TOKEN: ${SMARTREC_INTERNAL_TOKEN:?Set SMARTREC_INTERNAL_TOKEN in your environment}
       SMARTREC_WORKSPACE_ROOT: /tmp/smartrec_workspace
       DIARIZATION_DEVICE: ${DIARIZATION_DEVICE:-cpu}
@@ -114,11 +120,16 @@ services:
     volumes:
       - ${SMARTREC_MODELS_DIR:?Set SMARTREC_MODELS_DIR to an absolute host path}:/models:ro
       - ${SMARTREC_HF_CACHE_DIR:?Set SMARTREC_HF_CACHE_DIR to an absolute path}:/root/.cache/huggingface:ro
+      - smartrec_llm_debug:/var/lib/smartrec/llm-debug
     restart: unless-stopped
     networks:
       - smartrec-net
 
   ai-worker:
+    # Compatibility-only: the supported local pipeline uses one native macOS
+    # worker. Ordinary compose up must not start a second queue consumer.
+    profiles:
+      - docker-worker-compat
     build:
       context: ./ai-engine
     container_name: smartrec-ai-worker
@@ -129,7 +140,6 @@ services:
         "app.celery_app.celery_app",
         "worker",
         "--loglevel=INFO",
-        "--pool=solo",
         "--concurrency=${CELERY_WORKER_CONCURRENCY:-1}",
       ]
     environment:
@@ -178,6 +188,7 @@ volumes:
   redis_data:
   minio_data:
   chroma_data:
+  smartrec_llm_debug:
 
 networks:
   smartrec-net:
