@@ -5,12 +5,25 @@ import MeetingVideoPlayer from "../../components/meeting/MeetingVideoPlayer";
 import ShareMeetingModal from "../../components/meeting/ShareMeetingModal";
 import { usePageHeader } from "../../components/layout/PageHeaderContext.jsx";
 import { api } from "../../lib/http/client";
-import { cancelJob, pauseJob, resumeJob, startMeetingProcessing } from "../../services/meetingService";
+import {
+  cancelJob,
+  pauseJob,
+  resumeJob,
+  startMeetingProcessing,
+} from "../../services/meetingService";
 import { mapSpeakerManagementSegments } from "../../components/meeting/transcriptData";
 import { mapMeetingResults } from "../../components/meeting/meetingResults";
 
 const POLL_INTERVAL_MS = 2500;
-const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING", "PROCESSING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
+const ACTIVE_STATUSES = new Set([
+  "PENDING",
+  "QUEUED",
+  "RUNNING",
+  "PROCESSING",
+  "RETRYING",
+  "PAUSE_REQUESTED",
+  "CANCEL_REQUESTED",
+]);
 const FAILURE_STATUSES = new Set(["FAILED", "DLQ", "CANCELLED"]);
 const COMPLETE_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED"]);
 const UNPROCESSED_STATUS = "UNPROCESSED";
@@ -36,9 +49,6 @@ export default function MeetingDetailPage() {
   const [job, setJob] = useState(null);
   const [jobLoading, setJobLoading] = useState(false);
   const [speakers, setSpeakers] = useState([]);
-  const [results, setResults] = useState(null);
-  const [resultsLoading, setResultsLoading] = useState(false);
-  const [resultsError, setResultsError] = useState("");
   const [speakersMeetingId, setSpeakersMeetingId] = useState(null);
   const [speakerLoading, setSpeakerLoading] = useState(false);
   const [pageState, setPageState] = useState("loading");
@@ -61,163 +71,227 @@ export default function MeetingDetailPage() {
     setShareMeeting(null);
   }, [id]);
 
-  const refresh = useCallback(async (isCancelled, { fetchMeeting = true } = {}) => {
-    const currentMeeting = fetchMeeting || !meetingSnapshotRef.current
-      ? await api.get(`/meetings/${id}`)
-      : meetingSnapshotRef.current;
-    if (isCancelled()) return { shouldPoll: false };
-    if (!currentMeeting || currentMeeting.id !== id) {
-      throw new Error("API không trả về đúng thông tin cuộc họp.");
-    }
-    meetingSnapshotRef.current = currentMeeting;
-    setMeeting(currentMeeting);
-    setMeetingId(id);
-    setMeetingLoading(false);
-    setMeetingError("");
-    const initialMeetingStatus = String(currentMeeting.status || "").toUpperCase();
-    if (initialMeetingStatus === UNPROCESSED_STATUS) {
-      setJob(null);
-      setJobLoading(false);
-      setSpeakers([]);
-      setResults(null);
-      setResultsError("");
-      setResultsLoading(false);
-      setSpeakersMeetingId(null);
-      setSpeakerLoading(false);
-      setSpeakerError("");
-      resultsSnapshotRef.current = null;
-      setResults(null);
-      setResultsLoading(false);
-      setResultsError("");
-      setLoadError("");
-      setPageState("unprocessed");
-      return { shouldPoll: false };
-    }
-    if (FAILURE_STATUSES.has(initialMeetingStatus)) {
-      setPageState("failed");
-    } else if (COMPLETE_STATUSES.has(initialMeetingStatus)) {
-      setPageState("completed-loading-speakers");
-      setSpeakerLoading(true);
-    } else if (ACTIVE_STATUSES.has(initialMeetingStatus)) {
-      setPageState(initialMeetingStatus === "PENDING" || initialMeetingStatus === "QUEUED" ? "queued" : "processing");
-    }
-
-    let currentJob = null;
-    let jobLoadError = "";
-    if (currentMeeting.activeJobId) {
-      const isFirstJobRequest = !requestedJobIdsRef.current.has(currentMeeting.activeJobId);
-      if (isFirstJobRequest) setJobLoading(true);
-      try {
-        currentJob = await api.get(`/jobs/${currentMeeting.activeJobId}`);
-        if (isCancelled()) return { shouldPoll: false };
-        requestedJobIdsRef.current.add(currentMeeting.activeJobId);
-      } catch (error) {
-        requestedJobIdsRef.current.add(currentMeeting.activeJobId);
-        // If meeting itself is terminal, its state still provides a definitive result.
-        if (!COMPLETE_STATUSES.has(String(currentMeeting.status || "").toUpperCase()) &&
-            !FAILURE_STATUSES.has(String(currentMeeting.status || "").toUpperCase())) {
-          jobLoadError = apiMessage(error, "Không thể tải trạng thái Audio AI.");
-        }
+  const refresh = useCallback(
+    async (isCancelled, { fetchMeeting = true } = {}) => {
+      const currentMeeting =
+        fetchMeeting || !meetingSnapshotRef.current
+          ? await api.get(`/meetings/${id}`)
+          : meetingSnapshotRef.current;
+      if (isCancelled()) return { shouldPoll: false };
+      if (!currentMeeting || currentMeeting.id !== id) {
+        throw new Error("API không trả về đúng thông tin cuộc họp.");
       }
-    }
-    setJob(currentJob);
-    setJobLoading(false);
-    setLoadError(jobLoadError);
-
-    const meetingStatus = String(currentMeeting.status || "").toUpperCase();
-    const jobStatus = String(currentJob?.status || "").toUpperCase();
-    const status = jobStatus || meetingStatus;
-
-    const resultsJobId = currentJob?.id || currentMeeting.activeJobId;
-    if (!resultsJobId) {
-      resultsSnapshotRef.current = null;
-      setResults(null);
-      setResultsError("");
-      setResultsLoading(false);
-    } else {
-      const hasCurrentResults = resultsSnapshotRef.current?.jobId === resultsJobId;
-      setResultsLoading(!hasCurrentResults);
-      try {
-        const resultPayload = await api.get(`/meetings/${id}/jobs/${resultsJobId}/results`);
-        if (isCancelled()) return { shouldPoll: false };
-        if (resultPayload?.meetingId !== id || resultPayload?.jobId !== resultsJobId) {
-          throw new Error("API trả kết quả không thuộc cuộc họp hoặc Job hiện tại.");
-        }
-        const mappedResults = mapMeetingResults(resultPayload);
-        resultsSnapshotRef.current = mappedResults;
-        setResults(mappedResults);
+      meetingSnapshotRef.current = currentMeeting;
+      setMeeting(currentMeeting);
+      setMeetingId(id);
+      setMeetingLoading(false);
+      setMeetingError("");
+      const initialMeetingStatus = String(
+        currentMeeting.status || "",
+      ).toUpperCase();
+      if (initialMeetingStatus === UNPROCESSED_STATUS) {
+        setJob(null);
+        setJobLoading(false);
+        setSpeakers([]);
+        setResults(null);
         setResultsError("");
-      } catch (error) {
-        if (isCancelled()) return { shouldPoll: false };
+        setResultsLoading(false);
+        setSpeakersMeetingId(null);
+        setSpeakerLoading(false);
+        setSpeakerError("");
         resultsSnapshotRef.current = null;
         setResults(null);
-        setResultsError(apiMessage(error, "Không thể tải kết quả AI của cuộc họp."));
-      } finally {
-        if (!isCancelled()) setResultsLoading(false);
+        setResultsLoading(false);
+        setResultsError("");
+        setLoadError("");
+        setPageState("unprocessed");
+        return { shouldPoll: false };
       }
-    }
+      if (FAILURE_STATUSES.has(initialMeetingStatus)) {
+        setPageState("failed");
+      } else if (COMPLETE_STATUSES.has(initialMeetingStatus)) {
+        setPageState("completed-loading-speakers");
+        setSpeakerLoading(true);
+      } else if (ACTIVE_STATUSES.has(initialMeetingStatus)) {
+        setPageState(
+          initialMeetingStatus === "PENDING" ||
+            initialMeetingStatus === "QUEUED"
+            ? "queued"
+            : "processing",
+        );
+      }
 
-    if (FAILURE_STATUSES.has(status) || (!jobStatus && FAILURE_STATUSES.has(meetingStatus))) {
-      setResults(null);
-      setResultsLoading(false);
-      setSpeakers([]);
-      setSpeakersMeetingId(id);
-      setSpeakerError("");
-      setPageState("failed");
-      return { shouldPoll: false };
-    }
+      let currentJob = null;
+      let jobLoadError = "";
+      if (currentMeeting.activeJobId) {
+        const isFirstJobRequest = !requestedJobIdsRef.current.has(
+          currentMeeting.activeJobId,
+        );
+        if (isFirstJobRequest) setJobLoading(true);
+        try {
+          currentJob = await api.get(`/jobs/${currentMeeting.activeJobId}`);
+          if (isCancelled()) return { shouldPoll: false };
+          requestedJobIdsRef.current.add(currentMeeting.activeJobId);
+        } catch (error) {
+          requestedJobIdsRef.current.add(currentMeeting.activeJobId);
+          // If meeting itself is terminal, its state still provides a definitive result.
+          if (
+            !COMPLETE_STATUSES.has(
+              String(currentMeeting.status || "").toUpperCase(),
+            ) &&
+            !FAILURE_STATUSES.has(
+              String(currentMeeting.status || "").toUpperCase(),
+            )
+          ) {
+            jobLoadError = apiMessage(
+              error,
+              "Không thể tải trạng thái Audio AI.",
+            );
+          }
+        }
+      }
+      setJob(currentJob);
+      setJobLoading(false);
+      setLoadError(jobLoadError);
 
-    if (COMPLETE_STATUSES.has(status) || (!jobStatus && COMPLETE_STATUSES.has(meetingStatus))) {
-      setPageState("completed-loading-speakers");
-      setSpeakerLoading(true);
-      setResultsLoading(true);
+      const meetingStatus = String(currentMeeting.status || "").toUpperCase();
+      const jobStatus = String(currentJob?.status || "").toUpperCase();
+      const status = jobStatus || meetingStatus;
+
       const resultsJobId = currentJob?.id || currentMeeting.activeJobId;
-      const [speakerOutcome, resultsOutcome] = await Promise.allSettled([
-        api.get(`/meetings/${id}/speakers`),
-        resultsJobId
-          ? api.get(`/meetings/${id}/jobs/${resultsJobId}/results`)
-          : Promise.reject(new Error("Không tìm thấy Processing Job của cuộc họp.")),
-      ]);
-      if (isCancelled()) return { shouldPoll: false };
-      if (speakerOutcome.status === "fulfilled") {
-        setSpeakers(groupSegments(Array.isArray(speakerOutcome.value) ? speakerOutcome.value : []));
-        setSpeakersMeetingId(id);
-        setSpeakerError("");
+      if (!resultsJobId) {
+        resultsSnapshotRef.current = null;
+        setResults(null);
+        setResultsError("");
+        setResultsLoading(false);
       } else {
+        const hasCurrentResults =
+          resultsSnapshotRef.current?.jobId === resultsJobId;
+        setResultsLoading(!hasCurrentResults);
+        try {
+          const resultPayload = await api.get(
+            `/meetings/${id}/jobs/${resultsJobId}/results`,
+          );
+          if (isCancelled()) return { shouldPoll: false };
+          if (
+            resultPayload?.meetingId !== id ||
+            resultPayload?.jobId !== resultsJobId
+          ) {
+            throw new Error(
+              "API trả kết quả không thuộc cuộc họp hoặc Job hiện tại.",
+            );
+          }
+          const mappedResults = mapMeetingResults(resultPayload);
+          resultsSnapshotRef.current = mappedResults;
+          setResults(mappedResults);
+          setResultsError("");
+        } catch (error) {
+          if (isCancelled()) return { shouldPoll: false };
+          resultsSnapshotRef.current = null;
+          setResults(null);
+          setResultsError(
+            apiMessage(error, "Không thể tải kết quả AI của cuộc họp."),
+          );
+        } finally {
+          if (!isCancelled()) setResultsLoading(false);
+        }
+      }
+
+      if (
+        FAILURE_STATUSES.has(status) ||
+        (!jobStatus && FAILURE_STATUSES.has(meetingStatus))
+      ) {
+        setResults(null);
+        setResultsLoading(false);
         setSpeakers([]);
         setSpeakersMeetingId(id);
-        setSpeakerError(apiMessage(speakerOutcome.reason, "Không thể tải kết quả người nói."));
+        setSpeakerError("");
+        setPageState("failed");
+        return { shouldPoll: false };
       }
-      if (resultsOutcome.status === "fulfilled") {
-        setResults(resultsOutcome.value);
-        setResultsError("");
-      } else {
-        setResults(null);
-        setResultsError(apiMessage(resultsOutcome.reason, "Không thể tải transcript/OCR của cuộc họp."));
-      }
-      setPageState("completed");
-      setSpeakerLoading(false);
-      setResultsLoading(false);
-      return { shouldPoll: false };
-    }
 
-    setResults(null);
-    setResultsError("");
-    setResultsLoading(false);
-    setSpeakers([]);
-    setSpeakersMeetingId(null);
-    setSpeakerError("");
-    if (status === "PAUSED" || meetingStatus === "PAUSED") {
-      setPageState("paused");
-      return { shouldPoll: false };
-    }
-    if (ACTIVE_STATUSES.has(status) || ACTIVE_STATUSES.has(meetingStatus)) {
-      const resolved = status || meetingStatus;
-      setPageState(resolved === "PAUSE_REQUESTED" ? "pause-requested" : resolved === "CANCEL_REQUESTED" ? "cancel-requested" : resolved === "PENDING" || resolved === "QUEUED" ? "queued" : "processing");
-      return { shouldPoll: Boolean(currentMeeting.activeJobId) };
-    }
-    throw new Error(`Trạng thái cuộc họp không được hỗ trợ: ${status || "không xác định"}`);
-  }, [id]);
+      if (
+        COMPLETE_STATUSES.has(status) ||
+        (!jobStatus && COMPLETE_STATUSES.has(meetingStatus))
+      ) {
+        setPageState("completed-loading-speakers");
+        setSpeakerLoading(true);
+        setResultsLoading(true);
+        const resultsJobId = currentJob?.id || currentMeeting.activeJobId;
+        const [speakerOutcome, resultsOutcome] = await Promise.allSettled([
+          api.get(`/meetings/${id}/speakers`),
+          resultsJobId
+            ? api.get(`/meetings/${id}/jobs/${resultsJobId}/results`)
+            : Promise.reject(
+                new Error("Không tìm thấy Processing Job của cuộc họp."),
+              ),
+        ]);
+        if (isCancelled()) return { shouldPoll: false };
+        if (speakerOutcome.status === "fulfilled") {
+          setSpeakers(
+            groupSegments(
+              Array.isArray(speakerOutcome.value) ? speakerOutcome.value : [],
+            ),
+          );
+          setSpeakersMeetingId(id);
+          setSpeakerError("");
+        } else {
+          setSpeakers([]);
+          setSpeakersMeetingId(id);
+          setSpeakerError(
+            apiMessage(
+              speakerOutcome.reason,
+              "Không thể tải kết quả người nói.",
+            ),
+          );
+        }
+        if (resultsOutcome.status === "fulfilled") {
+          setResults(resultsOutcome.value);
+          setResultsError("");
+        } else {
+          setResults(null);
+          setResultsError(
+            apiMessage(
+              resultsOutcome.reason,
+              "Không thể tải transcript/OCR của cuộc họp.",
+            ),
+          );
+        }
+        setPageState("completed");
+        setSpeakerLoading(false);
+        setResultsLoading(false);
+        return { shouldPoll: false };
+      }
+
+      setResults(null);
+      setResultsError("");
+      setResultsLoading(false);
+      setSpeakers([]);
+      setSpeakersMeetingId(null);
+      setSpeakerError("");
+      if (status === "PAUSED" || meetingStatus === "PAUSED") {
+        setPageState("paused");
+        return { shouldPoll: false };
+      }
+      if (ACTIVE_STATUSES.has(status) || ACTIVE_STATUSES.has(meetingStatus)) {
+        const resolved = status || meetingStatus;
+        setPageState(
+          resolved === "PAUSE_REQUESTED"
+            ? "pause-requested"
+            : resolved === "CANCEL_REQUESTED"
+              ? "cancel-requested"
+              : resolved === "PENDING" || resolved === "QUEUED"
+                ? "queued"
+                : "processing",
+        );
+        return { shouldPoll: Boolean(currentMeeting.activeJobId) };
+      }
+      throw new Error(
+        `Trạng thái cuộc họp không được hỗ trợ: ${status || "không xác định"}`,
+      );
+    },
+    [id],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -253,11 +327,17 @@ export default function MeetingDetailPage() {
       try {
         const result = await refresh(() => cancelled, { fetchMeeting });
         fetchMeeting = false;
-        if (!cancelled && result.shouldPoll) timer = window.setTimeout(poll, POLL_INTERVAL_MS);
+        if (!cancelled && result.shouldPoll)
+          timer = window.setTimeout(poll, POLL_INTERVAL_MS);
       } catch (error) {
         if (cancelled) return;
         setMeetingLoading(false);
-        setMeetingError(apiMessage(error, error?.message || "Không thể tải thông tin cuộc họp."));
+        setMeetingError(
+          apiMessage(
+            error,
+            error?.message || "Không thể tải thông tin cuộc họp.",
+          ),
+        );
         setPageState("error");
         setJobLoading(false);
         setSpeakerLoading(false);
@@ -284,7 +364,11 @@ export default function MeetingDetailPage() {
     setPageState("processing");
     try {
       await api.post(`/jobs/${job.id}/retry`);
-      setJob((current) => current ? { ...current, status: "RETRYING", errorMessage: null } : current);
+      setJob((current) =>
+        current
+          ? { ...current, status: "RETRYING", errorMessage: null }
+          : current,
+      );
       setLoadError("");
       setRefreshGeneration((generation) => generation + 1);
     } catch (error) {
@@ -316,8 +400,18 @@ export default function MeetingDetailPage() {
     setLifecycleAction(true);
     try {
       await action(job.id);
-      setJob((current) => current ? { ...current, status: nextStatus } : current);
-      setPageState(nextStatus === "PAUSED" ? "paused" : nextStatus === "PAUSE_REQUESTED" ? "pause-requested" : nextStatus === "CANCEL_REQUESTED" ? "cancel-requested" : "queued");
+      setJob((current) =>
+        current ? { ...current, status: nextStatus } : current,
+      );
+      setPageState(
+        nextStatus === "PAUSED"
+          ? "paused"
+          : nextStatus === "PAUSE_REQUESTED"
+            ? "pause-requested"
+            : nextStatus === "CANCEL_REQUESTED"
+              ? "cancel-requested"
+              : "queued",
+      );
       setRefreshGeneration((generation) => generation + 1);
     } catch (error) {
       setLoadError(apiMessage(error, "Không thể cập nhật trạng thái xử lý."));
@@ -327,13 +421,18 @@ export default function MeetingDetailPage() {
   };
 
   const handleSaveSpeakers = async (updatedSpeakers) => {
-    if (speakersMeetingId !== id) throw new Error("Dữ liệu người nói không thuộc cuộc họp hiện tại.");
+    if (speakersMeetingId !== id)
+      throw new Error("Dữ liệu người nói không thuộc cuộc họp hiện tại.");
     const refreshSpeakerAndResultData = async () => {
       const [speakerResponse, resultPayload] = await Promise.all([
         api.get(`/meetings/${id}/speakers`),
-        job?.id ? api.get(`/meetings/${id}/jobs/${job.id}/results`) : Promise.resolve(null),
+        job?.id
+          ? api.get(`/meetings/${id}/jobs/${job.id}/results`)
+          : Promise.resolve(null),
       ]);
-      const nextSpeakers = groupSegments(Array.isArray(speakerResponse) ? speakerResponse : []);
+      const nextSpeakers = groupSegments(
+        Array.isArray(speakerResponse) ? speakerResponse : [],
+      );
       setSpeakers(nextSpeakers);
       setSpeakersMeetingId(id);
       if (resultPayload?.meetingId === id && resultPayload?.jobId === job.id) {
@@ -345,7 +444,7 @@ export default function MeetingDetailPage() {
     try {
       for (const speaker of updatedSpeakers) {
         const nextName = speaker.name?.trim();
-        const currentName = speaker.currentName || speaker.nameAtLoad || '';
+        const currentName = speaker.currentName || speaker.nameAtLoad || "";
         if (nextName && nextName !== currentName) {
           await api.put(`/meetings/${id}/speakers/rename`, {
             speakerId: speaker.speakerId || speaker.id,
@@ -364,28 +463,64 @@ export default function MeetingDetailPage() {
   };
 
   const isCurrentMeeting = meetingId === id && meeting?.id === id;
-  const currentSpeakers = isCurrentMeeting && speakersMeetingId === id ? speakers : [];
-  const displayState = meetingLoading || !isCurrentMeeting ? "loading" : meetingError ? "error" : pageState;
-  const currentLlmStatus = results?.jobId === job?.id ? results?.llmStatus : null;
-  const enrichmentStatus = currentLlmStatus === "FAILED" || job?.errorCode === "AI_ENRICHMENT_FAILED"
-    ? "enrichment_failed"
-    : currentLlmStatus === "DISABLED" || job?.errorCode === "AI_ENRICHMENT_DISABLED"
-      ? "enrichment_disabled" : null;
-  const aiStatus = displayState === "completed"
-    ? enrichmentStatus || (speakerError ? "completed" : currentSpeakers.length === 0 ? "empty" : "completed")
-    : displayState === "completed-loading-speakers" ? enrichmentStatus || "completed"
-      : displayState === "failed" ? "failed"
-      : displayState === "paused" ? "paused"
-      : displayState === "pause-requested" ? "pause-requested"
-      : displayState === "cancel-requested" ? "cancel-requested"
-      : displayState === "error" ? "error"
-        : displayState === "unprocessed" ? "unprocessed"
-          : displayState === "queued" ? "queued" : "processing";
-  const fileName = isCurrentMeeting ? (meeting.fileName || meeting.title || "Cuộc họp") : "Cuộc họp";
-  const fileType = isCurrentMeeting && (meeting.mimeType?.startsWith("audio/") || /\.(mp3|wav|m4a|flac|ogg)$/i.test(meeting.fileName || "")) ? "audio" : "video";
-  const failureMessage = job?.errorMessage && !/(?:\n|\r|Traceback|Exception:|Error:|\bat\s+[\w.$]+\()/i.test(job.errorMessage)
-    ? job.errorMessage
-    : `Xử lý âm thanh thất bại${job?.errorCode ? ` (${job.errorCode})` : ""}.`;
+  const currentSpeakers =
+    isCurrentMeeting && speakersMeetingId === id ? speakers : [];
+  const displayState =
+    meetingLoading || !isCurrentMeeting
+      ? "loading"
+      : meetingError
+        ? "error"
+        : pageState;
+  const currentLlmStatus =
+    results?.jobId === job?.id ? results?.llmStatus : null;
+  const enrichmentStatus =
+    currentLlmStatus === "FAILED" || job?.errorCode === "AI_ENRICHMENT_FAILED"
+      ? "enrichment_failed"
+      : currentLlmStatus === "DISABLED" ||
+          job?.errorCode === "AI_ENRICHMENT_DISABLED"
+        ? "enrichment_disabled"
+        : null;
+  const aiStatus =
+    displayState === "completed"
+      ? enrichmentStatus ||
+        (speakerError
+          ? "completed"
+          : currentSpeakers.length === 0
+            ? "empty"
+            : "completed")
+      : displayState === "completed-loading-speakers"
+        ? enrichmentStatus || "completed"
+        : displayState === "failed"
+          ? "failed"
+          : displayState === "paused"
+            ? "paused"
+            : displayState === "pause-requested"
+              ? "pause-requested"
+              : displayState === "cancel-requested"
+                ? "cancel-requested"
+                : displayState === "error"
+                  ? "error"
+                  : displayState === "unprocessed"
+                    ? "unprocessed"
+                    : displayState === "queued"
+                      ? "queued"
+                      : "processing";
+  const fileName = isCurrentMeeting
+    ? meeting.fileName || meeting.title || "Cuộc họp"
+    : "Cuộc họp";
+  const fileType =
+    isCurrentMeeting &&
+    (meeting.mimeType?.startsWith("audio/") ||
+      /\.(mp3|wav|m4a|flac|ogg)$/i.test(meeting.fileName || ""))
+      ? "audio"
+      : "video";
+  const failureMessage =
+    job?.errorMessage &&
+    !/(?:\n|\r|Traceback|Exception:|Error:|\bat\s+[\w.$]+\()/i.test(
+      job.errorMessage,
+    )
+      ? job.errorMessage
+      : `Xử lý âm thanh thất bại${job?.errorCode ? ` (${job.errorCode})` : ""}.`;
 
   useEffect(() => {
     const subtitle = meetingError
@@ -407,19 +542,37 @@ export default function MeetingDetailPage() {
     <div className="meeting-details-page w-full min-w-0 min-h-0 font-sans flex flex-col">
       <div className="meeting-detail-toolbar mb-3 flex min-w-0 shrink-0 items-center justify-between gap-3 border-b border-[#1b2742] pb-3">
         <div className="meeting-detail-heading flex min-w-0 items-center gap-3">
-          <button type="button" onClick={() => navigate("/history")} className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#141d33] border border-[#233357] text-slate-300 hover:text-white hover:bg-[#1a2642] transition shadow-sm shrink-0" title="Quay lại danh sách cuộc họp">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+          <button
+            type="button"
+            onClick={() => navigate("/history")}
+            className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#141d33] border border-[#233357] text-slate-300 hover:text-white hover:bg-[#1a2642] transition shadow-sm shrink-0"
+            title="Quay lại danh sách cuộc họp"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
           </button>
         </div>
         <div className="meeting-detail-toolbar-actions flex min-w-0 items-center justify-end gap-2">
-          {isCurrentMeeting && <MeetingVideoPlayer
-            meetingId={meeting?.id}
-            fileName={meeting?.fileName || meeting?.title}
-            mimeType={meeting?.mimeType}
-            fileType={fileType}
-            mediaRef={mediaRef}
-            durationSeconds={meeting?.durationSeconds}
-          />}
+          {isCurrentMeeting && (
+            <MeetingVideoPlayer
+              meetingId={meeting?.id}
+              fileName={meeting?.fileName || meeting?.title}
+              mimeType={meeting?.mimeType}
+              fileType={fileType}
+              mediaRef={mediaRef}
+              durationSeconds={meeting?.durationSeconds}
+            />
+          )}
           <button
             type="button"
             onClick={() => setShareMeeting(meeting)}
@@ -427,40 +580,102 @@ export default function MeetingDetailPage() {
             className="meeting-share-button flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[#2a3b60] bg-[#141d33] px-3 text-xs font-semibold text-slate-200 transition hover:border-sky-400/60 hover:bg-[#1a2642] disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Chia sẻ cuộc họp"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.7 10.7 6.6-4.4M8.7 13.3l6.6 4.4" /></svg>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <path d="m8.7 10.7 6.6-4.4M8.7 13.3l6.6 4.4" />
+            </svg>
             <span>Chia sẻ</span>
           </button>
         </div>
       </div>
-      {displayState === "loading" && <p role="status" className="text-sm text-slate-400 mb-4 shrink-0">Đang tải cuộc họp…</p>}
-      {displayState === "error" && <p role="alert" className="text-sm text-red-300 mb-4 shrink-0">{meetingError || "Không thể tải thông tin cuộc họp."}</p>}
-      {isCurrentMeeting && loadError && <p role="alert" className="text-sm text-amber-200 mb-4 shrink-0">{loadError}</p>}
-      {isCurrentMeeting && displayState !== "loading" && <MeetingDetail
-        key={id}
-        meeting={meeting}
-        mediaRef={mediaRef}
-        jobId={job?.id || meeting?.activeJobId}
-        jobStatus={job?.status || meeting?.status}
-        speakers={currentSpeakers}
-        aiStatus={aiStatus}
-        jobLoading={jobLoading}
-        aiError={displayState === "failed" ? failureMessage : ""}
-        speakerError={speakerError}
-        speakerLoading={speakerLoading}
-        results={results}
-        resultsLoading={resultsLoading}
-        resultsError={resultsError}
-        onRetry={displayState === "failed" ? handleRetry : undefined}
-        onPause={job && ["PROCESSING", "RUNNING", "RETRYING", "QUEUED"].includes(String(job.status).toUpperCase()) ? () => handleLifecycleAction(pauseJob, "PAUSE_REQUESTED") : undefined}
-        onResume={displayState === "paused" ? () => handleLifecycleAction(resumeJob, "QUEUED") : undefined}
-        onCancel={job && !["COMPLETED", "FAILED", "DLQ", "CANCELLED", "CANCEL_REQUESTED"].includes(String(job.status).toUpperCase()) ? () => handleLifecycleAction(cancelJob, "CANCEL_REQUESTED") : undefined}
-        lifecycleAction={lifecycleAction}
-        onStartProcessing={displayState === "unprocessed" ? handleStartProcessing : undefined}
-        startingProcess={startingProcess}
-        retrying={retrying}
-        onSaveSpeakers={displayState === "completed" && !speakerError ? handleSaveSpeakers : undefined}
-      />}
-      {shareMeeting && <ShareMeetingModal meeting={shareMeeting} onClose={() => setShareMeeting(null)} />}
+      {displayState === "loading" && (
+        <p role="status" className="text-sm text-slate-400 mb-4 shrink-0">
+          Đang tải cuộc họp…
+        </p>
+      )}
+      {displayState === "error" && (
+        <p role="alert" className="text-sm text-red-300 mb-4 shrink-0">
+          {meetingError || "Không thể tải thông tin cuộc họp."}
+        </p>
+      )}
+      {isCurrentMeeting && loadError && (
+        <p role="alert" className="text-sm text-amber-200 mb-4 shrink-0">
+          {loadError}
+        </p>
+      )}
+      {isCurrentMeeting && displayState !== "loading" && (
+        <MeetingDetail
+          key={id}
+          meeting={meeting}
+          mediaRef={mediaRef}
+          jobId={job?.id || meeting?.activeJobId}
+          jobStatus={job?.status || meeting?.status}
+          speakers={currentSpeakers}
+          aiStatus={aiStatus}
+          jobLoading={jobLoading}
+          aiError={displayState === "failed" ? failureMessage : ""}
+          speakerError={speakerError}
+          speakerLoading={speakerLoading}
+          results={results}
+          resultsLoading={resultsLoading}
+          resultsError={resultsError}
+          onRetry={displayState === "failed" ? handleRetry : undefined}
+          onPause={
+            job &&
+            ["PROCESSING", "RUNNING", "RETRYING", "QUEUED"].includes(
+              String(job.status).toUpperCase(),
+            )
+              ? () => handleLifecycleAction(pauseJob, "PAUSE_REQUESTED")
+              : undefined
+          }
+          onResume={
+            displayState === "paused"
+              ? () => handleLifecycleAction(resumeJob, "QUEUED")
+              : undefined
+          }
+          onCancel={
+            job &&
+            ![
+              "COMPLETED",
+              "FAILED",
+              "DLQ",
+              "CANCELLED",
+              "CANCEL_REQUESTED",
+            ].includes(String(job.status).toUpperCase())
+              ? () => handleLifecycleAction(cancelJob, "CANCEL_REQUESTED")
+              : undefined
+          }
+          lifecycleAction={lifecycleAction}
+          onStartProcessing={
+            displayState === "unprocessed" ? handleStartProcessing : undefined
+          }
+          startingProcess={startingProcess}
+          retrying={retrying}
+          onSaveSpeakers={
+            displayState === "completed" && !speakerError
+              ? handleSaveSpeakers
+              : undefined
+          }
+        />
+      )}
+      {shareMeeting && (
+        <ShareMeetingModal
+          meeting={shareMeeting}
+          onClose={() => setShareMeeting(null)}
+        />
+      )}
     </div>
   );
 }

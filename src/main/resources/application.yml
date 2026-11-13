@@ -10,8 +10,6 @@ spring:
     name: smartrec-backend
   profiles:
     active: dev
-
-  config:
     import: optional:file:./config/application-local-secrets.properties
   # 1. CSDL PostgreSQL
   datasource:
