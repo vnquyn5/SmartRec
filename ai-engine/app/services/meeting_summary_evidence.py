@@ -675,6 +675,8 @@ def _deadline_refs_are_linked(
     assignment_refs: set[str],
     by_ref: dict[str, Any],
     transcript_order: list[str],
+    *,
+    text_feature_cache: dict[str, tuple[bool, str]] | None = None,
 ) -> bool:
     if date_ref in assignment_refs:
         return True
@@ -684,9 +686,25 @@ def _deadline_refs_are_linked(
     date_text = str(_value(date_item, "text", ""))
     # A neighboring segment that starts another explicit assignment belongs
     # to that task; its date cannot be borrowed by the preceding assignment.
-    if _has_assignment_cue(date_text):
-        return False
-    normalized_date_text = _normalize(date_text)
+    if text_feature_cache is None:
+        has_assignment = _has_assignment_cue(date_text)
+        if has_assignment:
+            return False
+        normalized_date_text = _normalize(date_text)
+    else:
+        features = text_feature_cache.get(date_text)
+        if features is None:
+            has_assignment = _has_assignment_cue(date_text)
+            normalized_date_text = (
+                "" if has_assignment else _normalize(date_text)
+            )
+            features = (has_assignment, normalized_date_text)
+            text_feature_cache[date_text] = features
+
+        if features[0]:
+            return False
+        normalized_date_text = features[1]
+
     if (
         not _DEADLINE_CONTEXT.search(normalized_date_text)
         or not _ADJACENT_DEADLINE_CUE.search(normalized_date_text)
@@ -733,6 +751,23 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
     ]
     issues: list[dict] = []
     represented_assignment_refs: set[str] = set()
+
+    # Cache lifetime is restricted to one evidence consistency call.
+    deadline_text_features: dict[str, tuple[bool, str]] = {}
+
+    def _linked_deadline_refs(
+        date_ref: str,
+        assignment_refs: set[str],
+        by_ref: dict[str, Any],
+        transcript_order: list[str],
+    ) -> bool:
+        return _deadline_refs_are_linked(
+            date_ref,
+            assignment_refs,
+            by_ref,
+            transcript_order,
+            text_feature_cache=deadline_text_features,
+        )
 
     def issue(location: list[Any], error_type: str) -> None:
         issues.append({"loc": location, "type": error_type})
@@ -813,7 +848,7 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
             _source_ref(source): str(_value(source, "text", ""))
             for source in cited
             if _source_ref(source) not in assignment_refs
-            and _deadline_refs_are_linked(
+            and _linked_deadline_refs(
                 _source_ref(source), assignment_refs, by_ref, transcript_order
             )
         }
@@ -842,14 +877,14 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
             for source in evidence_items
             if _value(source, "source_type") == "TRANSCRIPT"
             and _source_ref(source) not in assignment_refs
-            and _deadline_refs_are_linked(
+            and _linked_deadline_refs(
                 _source_ref(source), assignment_refs, by_ref, transcript_order
             )
         }
         explicit_dates = {
             value
             for ref, values in dates_by_ref.items()
-            if _deadline_refs_are_linked(ref, assignment_refs, by_ref, transcript_order)
+            if _linked_deadline_refs(ref, assignment_refs, by_ref, transcript_order)
             for value in values
         }
         linked_dates = {
@@ -861,7 +896,7 @@ def evidence_consistency_issues(summary: Any, evidence: Iterable[Any]) -> tuple[
         linked_date_refs = {
             ref
             for ref, values in dates_by_ref.items()
-            if values and _deadline_refs_are_linked(ref, assignment_refs, by_ref, transcript_order)
+            if values and _linked_deadline_refs(ref, assignment_refs, by_ref, transcript_order)
         }
         relative_evidence = any(_has_relative_deadline(text) for text in relevant_texts)
         deadline = getattr(item, "deadline", None)
