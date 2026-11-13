@@ -203,16 +203,17 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
             throw badRequest("SHARE_LINK_HAS_NO_PASSCODE", "This share link does not require a passcode");
         }
         String failuresKey = failureKey(link.getTokenHash());
-        Object existing = redisTemplate.opsForValue().get(failuresKey);
-        if (existing instanceof Number number && number.longValue() >= MAX_PASSCODE_FAILURES) {
+        // Reserve the attempt atomically before checking the password. A separate GET followed by
+        // INCR lets concurrent requests all pass the limit check with the same stale counter.
+        Long attempts = redisTemplate.opsForValue().increment(failuresKey);
+        if (attempts == null) throw new IllegalStateException("Share passcode attempt counter unavailable");
+        if (attempts == 1L) redisTemplate.expire(failuresKey, FAILURE_TTL);
+        if (attempts > MAX_PASSCODE_FAILURES) {
             throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "SHARE_PASSCODE_RATE_LIMITED",
                     "Too many passcode attempts; try again later");
         }
         if (passcode == null || !passwordEncoder.matches(passcode, link.getPasscodeHash())) {
-            // Redis INCR đếm atomic; lần thử đầu tạo TTL, lần thứ năm trở đi bị chặn.
-            Long failures = redisTemplate.opsForValue().increment(failuresKey);
-            if (failures != null && failures == 1L) redisTemplate.expire(failuresKey, FAILURE_TTL);
-            if (failures != null && failures >= MAX_PASSCODE_FAILURES) {
+            if (attempts >= MAX_PASSCODE_FAILURES) {
                 throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "SHARE_PASSCODE_RATE_LIMITED",
                         "Too many passcode attempts; try again later");
             }

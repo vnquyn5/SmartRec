@@ -20,6 +20,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -50,6 +51,7 @@ class PublicShareLinkServiceImplTest {
     @Mock UserRepository userRepository;
     @Mock PasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, Object> redisTemplate;
+    @Mock ValueOperations<String, Object> valueOperations;
     @InjectMocks PublicShareLinkServiceImpl service;
 
     private final UUID userId = UUID.randomUUID();
@@ -121,6 +123,30 @@ class PublicShareLinkServiceImplTest {
 
         assertThrows(Exception.class, () -> service.access(token, null));
         verify(meetingRepository, never()).findById(any());
+    }
+
+    @Test
+    void passcodeAttemptIsReservedBeforePasswordCheck() {
+        String token = "random-share-token";
+        PublicShareLink link = new PublicShareLink();
+        link.setTokenHash(sha256(token));
+        link.setMeetingId(meetingId);
+        link.setPasscodeHash("bcrypt-value");
+        link.setStatus(ShareLinkStatus.ACTIVE);
+        when(shareLinkRepository.findByTokenHash(sha256(token))).thenReturn(Optional.of(link));
+        Meeting sharedMeeting = meeting(userId);
+        sharedMeeting.setMedia_file_id(UUID.randomUUID());
+        when(meetingRepository.findById(meetingId)).thenReturn(Optional.of(sharedMeeting));
+        MediaFile media = new MediaFile();
+        when(mediaFileRepository.findById(any())).thenReturn(Optional.of(media));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(any(String.class))).thenReturn(6L);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.verify(token, "1234"));
+
+        assertEquals("SHARE_PASSCODE_RATE_LIMITED", error.getCode());
+        verify(passwordEncoder, never()).matches(any(), any());
     }
 
     private Meeting meeting(UUID owner) {
