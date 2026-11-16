@@ -48,6 +48,7 @@ jwt:
   # Thời gian sống của Token: 86400000 milliseconds = 24 giờ
   expiration: ${JWT_EXPIRATION:86400000}
   refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000}
+  guest-expiration: ${JWT_GUEST_EXPIRATION:900000} # TTL Guest JWT tính bằng mili giây; mặc định 15 phút.
 # 5. MinIO Object Storage Configuration
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}

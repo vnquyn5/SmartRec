@@ -81,21 +81,24 @@ public class PublicShareLinkController {
         return ResponseEntity.noContent().build();
     }
 
-    // Route guest duy nhất được permitAll; nếu link có passcode, client gửi grant qua header này.
-    // Grant không bắt buộc với link mở; service bắt buộc grant nếu link có passcode.
+    // Endpoint đọc public share; service vẫn tự kiểm tra link, expiry và passcode protection.
     @GetMapping("/public/share/{token}")
     public ResponseEntity<PublicMeetingShareResponse> access(
-            @PathVariable String token,
-            @RequestHeader(name = "X-Share-Access-Token", required = false) String accessToken) {
-        return ResponseEntity.ok(shareLinkService.access(token, accessToken));
+            @PathVariable String token, // Token chia sẻ nằm trong path, không phải JWT của phiên Guest.
+            @RequestHeader(name = "X-Share-Access-Token", required = false) String legacyAccessToken, // Header tương thích client cũ.
+            @RequestHeader(name = "Authorization", required = false) String authorization) { // Cách chuẩn: Bearer JWT.
+        // Nếu có Authorization Bearer thì ưu tiên JWT mới; nếu không, dùng header cũ.
+        String accessToken = authorization != null && authorization.startsWith("Bearer ")
+                ? authorization.substring("Bearer ".length()) : legacyAccessToken; // Service nhận chuỗi JWT thuần.
+        return ResponseEntity.ok(shareLinkService.access(token, accessToken)); // Trả metadata trong scope public hiện tại.
     }
 
     // Passcode không được gửi trong GET hoặc query string; endpoint này nhận JSON body qua HTTPS.
     // Nhận passcode trong JSON body thay vì URL để tránh lộ qua query/access log.
     @PostMapping("/public/share/{token}/verify")
     public ResponseEntity<VerifySharePasscodeResponse> verify(
-            @PathVariable String token,
-            @Valid @RequestBody VerifySharePasscodeRequest request) {
-        return ResponseEntity.ok(shareLinkService.verify(token, request.passcode()));
+            @PathVariable String token, // Token link dùng để xác định PublicShareLink cần xác minh.
+            @Valid @RequestBody VerifySharePasscodeRequest request) { // Bean Validation kiểm tra JSON/passcode.
+        return ResponseEntity.ok(shareLinkService.verify(token, request.passcode())); // Trả JWT nếu mọi điều kiện đều hợp lệ.
     }
 }

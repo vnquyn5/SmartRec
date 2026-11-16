@@ -10,6 +10,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.Date;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -44,6 +45,8 @@ import com.example.smartrec.repository.PublicShareLinkRepository;
 import com.example.smartrec.repository.ShareLinkAuditRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.PublicShareLinkService;
+import com.example.smartrec.security.JwtService;
+import io.jsonwebtoken.Claims;
 
 import lombok.RequiredArgsConstructor;
 
@@ -52,7 +55,6 @@ import lombok.RequiredArgsConstructor;
 public class PublicShareLinkServiceImpl implements PublicShareLinkService {
     // Grant chỉ sống 15 phút; số lần nhập sai được đếm riêng theo token trong cùng cửa sổ thời gian.
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final Duration GRANT_TTL = Duration.ofMinutes(15);
     private static final Duration FAILURE_TTL = Duration.ofMinutes(15);
     private static final long MAX_PASSCODE_FAILURES = 5;
 
@@ -64,6 +66,10 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
     private final PasswordEncoder passwordEncoder;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
+    private final JwtService jwtService;
+
+    @Value("${jwt.guest-expiration:900000}")
+    private long guestExpirationMillis;
 
     @Value("${server.servlet.context-path:}")
     private String contextPath;
@@ -178,17 +184,19 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
     @Override
     @Transactional(readOnly = true)
     public PublicMeetingShareResponse access(String token, String accessToken) {
-        // Mỗi lần truy cập đều kiểm tra trạng thái, hạn dùng và meeting/media; grant không thay token link.
-        PublicShareLink link = publicLink(token);
-        Meeting meeting = publicMeeting(link);
+        // Mỗi request kiểm tra lại link trong database; JWT không thay thế token link trong URL.
+        PublicShareLink link = publicLink(token); // Từ chối token link sai, revoked hoặc đã hết hạn.
+        Meeting meeting = publicMeeting(link); // Đảm bảo Meeting và media vẫn còn được phép truy cập.
         if (link.getPasscodeHash() != null) {
-            String grantHash = accessToken == null ? null : (String) redisTemplate.opsForValue()
-                    .get(grantKey(accessToken));
-            if (grantHash == null || !grantHash.equals(link.getPasscodeHash())) {
-                throw new BusinessException(HttpStatus.UNAUTHORIZED, "SHARE_PASSCODE_REQUIRED",
-                        "Passcode verification is required");
-            }
+            try {
+                Claims claims = jwtService.parseClaims(accessToken); // Xác minh chữ ký và thời hạn JWT.
+                // So khớp loại token và cả hai định danh để chặn dùng JWT của link/meeting khác.
+                if (!"GUEST".equals(claims.get("type", String.class))
+                        || !link.getId().toString().equals(claims.get("shareLinkId", String.class))
+                        || !link.getMeetingId().toString().equals(claims.get("meetingId", String.class))) throw publicNotFound();
+            } catch (RuntimeException ex) { throw publicNotFound(); } // Lỗi JWT trả cùng lỗi chung, không tiết lộ chi tiết.
         }
+        // Chỉ trả các metadata public; method này không trả object key, transcript hay kết quả AI.
         return new PublicMeetingShareResponse(meeting.getId(), meeting.getTitle(),
                 meeting.getStatus(), meeting.getCreated_at());
     }
@@ -197,33 +205,34 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
     @Transactional(readOnly = true)
     public VerifySharePasscodeResponse verify(String token, String passcode) {
         // Chỉ cấp grant sau khi token và meeting hợp lệ, passcode đúng và giới hạn thử sai chưa bị chạm.
-        PublicShareLink link = publicLink(token);
-        publicMeeting(link);
-        if (link.getPasscodeHash() == null) {
-            throw badRequest("SHARE_LINK_HAS_NO_PASSCODE", "This share link does not require a passcode");
-        }
-        String failuresKey = failureKey(link.getTokenHash());
+        PublicShareLink link = publicLink(token); // Link phải tồn tại, ACTIVE và chưa hết hạn.
+        publicMeeting(link); // Chặn cấp phiên cho meeting/media đã bị xóa hoặc đưa vào trash.
+        if (link.getPasscodeHash() == null) throw publicNotFound(); // Endpoint này chỉ cấp phiên sau xác minh passcode.
+        String failuresKey = failureKey(link.getTokenHash()); // Bộ đếm Redis được phân vùng theo từng link.
         // Reserve the attempt atomically before checking the password. A separate GET followed by
         // INCR lets concurrent requests all pass the limit check with the same stale counter.
-        Long attempts = redisTemplate.opsForValue().increment(failuresKey);
-        if (attempts == null) throw new IllegalStateException("Share passcode attempt counter unavailable");
-        if (attempts == 1L) redisTemplate.expire(failuresKey, FAILURE_TTL);
+        Long attempts = redisTemplate.opsForValue().increment(failuresKey); // Tăng nguyên tử để chống request đồng thời vượt hạn mức.
+        if (attempts == null) throw new IllegalStateException("Share passcode attempt counter unavailable"); // Redis lỗi thì fail closed.
+        if (attempts == 1L) redisTemplate.expire(failuresKey, FAILURE_TTL); // Bắt đầu cửa sổ đếm ở lần thử đầu tiên.
         if (attempts > MAX_PASSCODE_FAILURES) {
             throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "SHARE_PASSCODE_RATE_LIMITED",
                     "Too many passcode attempts; try again later");
         }
-        if (passcode == null || !passwordEncoder.matches(passcode, link.getPasscodeHash())) {
+        if (passcode == null || !passwordEncoder.matches(passcode, link.getPasscodeHash())) { // So khớp với BCrypt hash đã lưu.
             if (attempts >= MAX_PASSCODE_FAILURES) {
                 throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS, "SHARE_PASSCODE_RATE_LIMITED",
                         "Too many passcode attempts; try again later");
             }
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_SHARE_PASSCODE", "Invalid passcode");
+            throw publicNotFound();
         }
-        redisTemplate.delete(failuresKey);
+        redisTemplate.delete(failuresKey); // Xóa chuỗi lần sai sau khi xác minh thành công.
         // Grant ngẫu nhiên được giữ trong Redis với hash passcode hiện tại; đổi passcode sẽ vô hiệu grant cũ.
-        String grant = randomToken(32);
-        redisTemplate.opsForValue().set(grantKey(grant), link.getPasscodeHash(), GRANT_TTL);
-        return new VerifySharePasscodeResponse(grant, Instant.now().plus(GRANT_TTL));
+        Instant now = Instant.now(); // Mốc thời gian hiện tại để tính TTL phiên Guest.
+        Instant expiresAt = now.plusMillis(guestExpirationMillis); // TTL ngắn cấu hình trong application.yml.
+        if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(expiresAt)) expiresAt = link.getExpiresAt(); // Không sống lâu hơn link.
+        if (!expiresAt.isAfter(now)) throw publicNotFound(); // Không phát JWT đã hết hạn hoặc sắp hết hạn.
+        String guestJwt = jwtService.generateGuestToken(link.getId(), link.getMeetingId(), Date.from(expiresAt)); // Ký JWT gắn đúng link/meeting.
+        return new VerifySharePasscodeResponse(guestJwt, expiresAt); // Trả token và thời điểm hết hạn cho client.
     }
 
     private Meeting publicMeeting(PublicShareLink link) {
@@ -331,7 +340,6 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
         }
     }
 
-    private String grantKey(String token) { return "share:grant:" + sha256(token); }
     private String failureKey(String tokenHash) { return "share:fail:" + tokenHash; }
 
     private BusinessException badRequest(String code, String message) {

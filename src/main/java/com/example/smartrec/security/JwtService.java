@@ -5,8 +5,9 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
-import java.util.Date;
 import java.util.List;
+import java.util.Date;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +26,22 @@ public class JwtService {
                 .build()
                 .parseClaimsJws(token)
                 .getBody();
+    }
+
+    // Tạo phiên Guest bằng chính signing key đang dùng cho JWT của ứng dụng.
+    public String generateGuestToken(UUID shareLinkId, UUID meetingId, Date expiresAt) {
+        Date now = new Date(); // Ghi thời điểm phát hành theo UTC epoch của Java Date.
+        return Jwts.builder()
+                .setId(UUID.randomUUID().toString()) // jti riêng để có thể định danh phiên trong tương lai.
+                .setSubject("guest:" + shareLinkId) // Subject tách biệt với email/định danh của Owner.
+                .claim("type", "GUEST") // Filter dựa claim này để không coi Guest là Owner.
+                .claim("shareLinkId", shareLinkId.toString()) // Gắn phiên với đúng Public Share Link.
+                .claim("meetingId", meetingId.toString()) // Gắn phiên với đúng Meeting do link chia sẻ.
+                .claim("scope", List.of("meeting:read")) // Token chỉ khai báo phạm vi đọc.
+                .setIssuedAt(now) // Đặt thời gian phát hành vào claim iat.
+                .setExpiration(expiresAt) // Hết hạn theo TTL cấu hình, đã bị giới hạn bởi expiry của link.
+                .signWith(signingKey) // Ký để backend xác minh tính toàn vẹn bằng secret hiện có.
+                .compact(); // Tuần tự hóa header, claims và chữ ký thành chuỗi JWT.
     }
 
     public boolean isTokenValid(String token) {
