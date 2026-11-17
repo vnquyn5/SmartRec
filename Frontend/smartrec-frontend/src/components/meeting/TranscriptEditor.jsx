@@ -3,8 +3,11 @@ import mockSttData from '../../mocks/mock_stt.json';
 import { parseTimeToSeconds } from '../../utils/timeFormat';
 import {
   loadTranscriptOverrides,
+  resetTranscriptOverrides,
   saveTranscriptOverrides,
 } from '../../services/meetingReviewService';
+
+const MAX_TRANSCRIPT_LENGTH = 2000;
 
 function EditPencilIcon({ className = 'w-3.5 h-3.5', ...props }) {
   return (
@@ -16,6 +19,7 @@ function EditPencilIcon({ className = 'w-3.5 h-3.5', ...props }) {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
@@ -33,6 +37,7 @@ function RotateCcwIcon({ className = 'w-3.5 h-3.5', ...props }) {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -68,10 +73,18 @@ function renderHighlightedText(text, keyword) {
   }
 }
 
+function makeUniqueChunkKey(baseKey, seenCounts) {
+  const count = (seenCounts.get(baseKey) || 0) + 1;
+  seenCounts.set(baseKey, count);
+  return count === 1 ? baseKey : `${baseKey}#${count}`;
+}
+
 function buildTranscriptItems({ speakers, speakerNameMap, overrides }) {
   const rawList = Array.isArray(mockSttData)
     ? mockSttData
     : (mockSttData?.mock_stt || []);
+
+  const seenCounts = new Map();
 
   const baseItems =
     speakers.length > 0
@@ -86,7 +99,7 @@ function buildTranscriptItems({ speakers, speakerNameMap, overrides }) {
               timeEnd: seg.end || '00:00',
               seconds: Number(seg.startSeconds) || 0,
               endSeconds: Number(seg.endSeconds) || 0,
-              chunkKey: `${spk.id}-${seg.startSeconds}-${seg.endSeconds}`,
+              baseChunkKey: `${spk.id}-${seg.startSeconds}-${seg.endSeconds}`,
               rawText: seg.text || '',
             }))
           )
@@ -102,12 +115,14 @@ function buildTranscriptItems({ speakers, speakerNameMap, overrides }) {
             return {
               ...chunk,
               id: index + 1,
+              chunkKey: makeUniqueChunkKey(chunk.baseChunkKey, seenCounts),
               speakerName,
               originalText,
             };
           })
       : rawList.map((item, index) => {
           const speakerId = item.speaker_id || `Speaker ${(index % 3) + 1}`;
+          const baseKey = `${item.speaker_id || index}-${item.timestamp_start}-${item.timestamp_end}`;
           return {
             id: index + 1,
             speakerId,
@@ -120,7 +135,7 @@ function buildTranscriptItems({ speakers, speakerNameMap, overrides }) {
             timeEnd: item.timestamp_end || '00:05',
             seconds: parseTimeToSeconds(item.timestamp_start),
             endSeconds: parseTimeToSeconds(item.timestamp_end),
-            chunkKey: `${item.speaker_id || index}-${item.timestamp_start}-${item.timestamp_end}`,
+            chunkKey: makeUniqueChunkKey(baseKey, seenCounts),
             originalText: item.text || '',
           };
         });
@@ -188,7 +203,10 @@ function TranscriptSegmentCard({
       onCancelEdit();
       return;
     }
-    if ((event.key === 'Enter' && !event.shiftKey) || (event.key === 'Enter' && (event.ctrlKey || event.metaKey))) {
+    if (
+      (event.key === 'Enter' && !event.shiftKey) ||
+      (event.key === 'Enter' && (event.ctrlKey || event.metaKey))
+    ) {
       event.preventDefault();
       event.stopPropagation();
       commitEdit();
@@ -210,7 +228,7 @@ function TranscriptSegmentCard({
           : 'bg-[#0c1426] hover:bg-[#101b33] border border-[#18233c] cursor-pointer'
       }`}
     >
-      {/* Header Row: Timestamp + Speaker Name (Clickable to Rename) + Status Badges + Quick Actions */}
+      {/* Header Row */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div className="flex flex-wrap items-center gap-2 min-w-0">
           <span className="font-mono text-xs font-bold text-[#38bdf8] shrink-0">
@@ -278,13 +296,11 @@ function TranscriptSegmentCard({
 
       {/* Content or Inline Editor */}
       {isEditing ? (
-        <div
-          className="space-y-2 mt-2"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <div className="space-y-2 mt-2" onClick={(e) => e.stopPropagation()}>
           <textarea
             ref={textareaRef}
             rows={3}
+            maxLength={MAX_TRANSCRIPT_LENGTH}
             value={draftText}
             onChange={(e) => {
               setDraftText(e.target.value);
@@ -300,6 +316,13 @@ function TranscriptSegmentCard({
             }`}
           />
 
+          {item.isEdited && item.originalText && (
+            <div className="rounded-lg bg-[#091020] border border-[#1a2745] px-2.5 py-1.5 text-[11px] text-slate-400">
+              <span className="font-semibold text-slate-300">Bản gốc AI: </span>
+              <span className="italic">{item.originalText}</span>
+            </div>
+          )}
+
           {editError && (
             <p role="alert" className="text-[11px] text-rose-400">
               {editError}
@@ -308,7 +331,7 @@ function TranscriptSegmentCard({
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[10px] text-slate-400">
-              Enter để lưu · Shift+Enter xuống dòng · Esc để hủy
+              Enter lưu · Shift+Enter xuống dòng · Esc hủy · {draftText.length}/{MAX_TRANSCRIPT_LENGTH}
             </span>
             <div className="flex items-center gap-2 ml-auto">
               {item.isEdited && (
@@ -348,7 +371,9 @@ function TranscriptSegmentCard({
             onStartEdit(item);
           }}
           title="Nhấp đúp để chỉnh sửa câu thoại"
-          className={`text-xs leading-relaxed ${isActive ? 'text-white font-medium' : 'text-slate-300'}`}
+          className={`text-xs leading-relaxed ${
+            isActive ? 'text-white font-medium' : 'text-slate-300'
+          }`}
         >
           {renderHighlightedText(item.text, searchTerm)}
         </p>
@@ -371,6 +396,7 @@ export default function TranscriptEditor({
   const [overrides, setOverrides] = useState(() => loadTranscriptOverrides(meetingId));
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSpeaker, setSelectedSpeaker] = useState('All');
+  const [showEditedOnly, setShowEditedOnly] = useState(false);
   const [activeSegmentId, setActiveSegmentId] = useState(1);
   const [editingChunkKey, setEditingChunkKey] = useState(null);
   const [autoScroll, setAutoScroll] = useState(false);
@@ -382,6 +408,7 @@ export default function TranscriptEditor({
   useEffect(() => {
     setOverrides(loadTranscriptOverrides(meetingId));
     setEditingChunkKey(null);
+    setShowEditedOnly(false);
   }, [meetingId]);
 
   const transcripts = useMemo(
@@ -393,6 +420,8 @@ export default function TranscriptEditor({
     () => transcripts.filter((item) => item.isEdited).length,
     [transcripts]
   );
+
+  const effectiveShowEditedOnly = showEditedOnly && editedCount > 0;
 
   const speakerOptions = useMemo(
     () =>
@@ -407,6 +436,7 @@ export default function TranscriptEditor({
   const filteredTranscripts = useMemo(() => {
     const sTerm = (searchTerm || '').trim().toLowerCase();
     return transcripts.filter((item) => {
+      if (effectiveShowEditedOnly && !item.isEdited) return false;
       const matchSpeaker =
         selectedSpeaker === 'All' ||
         item.speakerId === selectedSpeaker ||
@@ -417,7 +447,7 @@ export default function TranscriptEditor({
         (item.speakerName || '').toLowerCase().includes(sTerm);
       return matchSpeaker && matchSearch;
     });
-  }, [transcripts, selectedSpeaker, searchTerm]);
+  }, [transcripts, selectedSpeaker, searchTerm, effectiveShowEditedOnly]);
 
   useEffect(() => {
     if (!selectedChunk?.chunkKey) return;
@@ -428,19 +458,19 @@ export default function TranscriptEditor({
   }, [selectedChunk, transcripts, activeSegmentId]);
 
   useEffect(() => {
-    if (!autoScroll || !Number.isFinite(currentTime)) return;
+    if (!autoScroll || editingChunkKey || !Number.isFinite(currentTime)) return;
     const matched = transcripts.find(
       (item) => item.seconds <= currentTime && currentTime < item.endSeconds
     );
     if (matched && matched.id !== activeSegmentId) {
       setActiveSegmentId(matched.id);
     }
-  }, [autoScroll, currentTime, transcripts, activeSegmentId]);
+  }, [autoScroll, editingChunkKey, currentTime, transcripts, activeSegmentId]);
 
   useEffect(() => {
     const container = listContainerRef.current;
     const target = activeSegmentId ? itemRefs.current[activeSegmentId] : null;
-    if (autoScroll && container && target) {
+    if (autoScroll && !editingChunkKey && container && target) {
       try {
         const containerTop = container.getBoundingClientRect().top;
         const targetTop = target.getBoundingClientRect().top;
@@ -454,7 +484,7 @@ export default function TranscriptEditor({
         // Safe fallback
       }
     }
-  }, [activeSegmentId, autoScroll]);
+  }, [activeSegmentId, autoScroll, editingChunkKey]);
 
   const handleSelectSegment = useCallback(
     (item) => {
@@ -474,38 +504,45 @@ export default function TranscriptEditor({
 
   const handleSaveEdit = useCallback(
     (item, nextText) => {
-      setOverrides((prev) => {
-        const next = { ...prev };
-        if (nextText === item.originalText) {
-          delete next[item.chunkKey];
-        } else {
-          next[item.chunkKey] = nextText;
-        }
-        void saveTranscriptOverrides(meetingId, next);
-        onTranscriptTextChange?.(item.chunkKey, nextText, next);
-        return next;
-      });
+      const next = { ...overrides };
+      if (nextText === item.originalText) {
+        delete next[item.chunkKey];
+      } else {
+        next[item.chunkKey] = nextText;
+      }
+      setOverrides(next);
       setEditingChunkKey(null);
+      void saveTranscriptOverrides(meetingId, next);
+      onTranscriptTextChange?.(item.chunkKey, nextText, next);
     },
-    [meetingId, onTranscriptTextChange]
+    [meetingId, overrides, onTranscriptTextChange]
   );
 
   const handleRestoreOriginal = useCallback(
     (item) => {
-      setOverrides((prev) => {
-        if (!Object.prototype.hasOwnProperty.call(prev, item.chunkKey)) return prev;
-        const next = { ...prev };
-        delete next[item.chunkKey];
-        void saveTranscriptOverrides(meetingId, next);
-        onTranscriptTextChange?.(item.chunkKey, item.originalText, next);
-        return next;
-      });
+      if (!Object.prototype.hasOwnProperty.call(overrides, item.chunkKey)) {
+        if (editingChunkKey === item.chunkKey) setEditingChunkKey(null);
+        return;
+      }
+      const next = { ...overrides };
+      delete next[item.chunkKey];
+      setOverrides(next);
       if (editingChunkKey === item.chunkKey) {
         setEditingChunkKey(null);
       }
+      void saveTranscriptOverrides(meetingId, next);
+      onTranscriptTextChange?.(item.chunkKey, item.originalText, next);
     },
-    [meetingId, editingChunkKey, onTranscriptTextChange]
+    [meetingId, overrides, editingChunkKey, onTranscriptTextChange]
   );
+
+  const handleRestoreAll = useCallback(() => {
+    resetTranscriptOverrides(meetingId);
+    setOverrides({});
+    setShowEditedOnly(false);
+    setEditingChunkKey(null);
+    onTranscriptTextChange?.(null, null, {});
+  }, [meetingId, onTranscriptTextChange]);
 
   const handleRequestRename = useCallback(
     (item) => {
@@ -527,27 +564,54 @@ export default function TranscriptEditor({
     [onRequestRenameSpeaker, speakers, transcripts]
   );
 
-  const handleCopyAll = () => {
+  const handleCopyAll = async () => {
     const fullText = filteredTranscripts
       .map((t) => `[${t.timeStart}] ${t.speakerName}:\n${t.text}`)
       .join('\n\n');
-    navigator.clipboard.writeText(fullText);
-    setCopyFeedback(true);
-    setTimeout(() => setCopyFeedback(false), 2000);
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(fullText);
+      }
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    } catch {
+      // Safe fallback when clipboard access is unavailable
+    }
   };
 
   return (
     <div className="w-full h-full min-h-[600px] flex-1 bg-[#090f1d] border border-[#1b2640] rounded-2xl flex flex-col overflow-hidden shadow-xl relative z-0 isolate">
       {/* Header */}
-      <div className="px-5 py-4 border-b border-[#18233c] flex items-center justify-between gap-2 bg-[#0a1122]">
-        <div className="flex items-center gap-2.5 min-w-0">
+      <div className="px-5 py-4 border-b border-[#18233c] flex flex-wrap items-center justify-between gap-2 bg-[#0a1122]">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
           <h2 className="text-sm font-bold text-white tracking-wider uppercase">
             TRANSCRIPT
           </h2>
           {editedCount > 0 && (
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-950/50 text-amber-300 border border-amber-500/40 whitespace-nowrap">
-              {editedCount} câu đã sửa
-            </span>
+            <>
+              <button
+                type="button"
+                onClick={() => setShowEditedOnly((prev) => !prev)}
+                aria-pressed={effectiveShowEditedOnly}
+                title="Nhấp để lọc các câu thoại đã chỉnh sửa"
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap transition ${
+                  effectiveShowEditedOnly
+                    ? 'bg-amber-500/25 text-amber-200 border-amber-400'
+                    : 'bg-amber-950/50 text-amber-300 border-amber-500/40 hover:bg-amber-900/50'
+                }`}
+              >
+                {editedCount} câu đã sửa
+              </button>
+              <button
+                type="button"
+                onClick={handleRestoreAll}
+                title="Khôi phục toàn bộ câu thoại về bản gốc AI"
+                className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border border-[#2a3b62] bg-[#111b33] hover:bg-[#1a294d] text-slate-300 hover:text-amber-300 whitespace-nowrap transition"
+              >
+                <RotateCcwIcon className="w-2.5 h-2.5" />
+                <span>Khôi phục tất cả</span>
+              </button>
+            </>
           )}
         </div>
 
@@ -566,7 +630,7 @@ export default function TranscriptEditor({
 
           <button
             type="button"
-            onClick={handleCopyAll}
+            onClick={() => void handleCopyAll()}
             className="px-3 py-1.5 bg-[#141d33] hover:bg-[#1a2642] text-slate-300 hover:text-white border border-[#233357] rounded-lg text-xs font-semibold transition"
           >
             {copyFeedback ? '✓ Copied' : 'Copy All'}
@@ -583,6 +647,7 @@ export default function TranscriptEditor({
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
+            aria-hidden="true"
           >
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -659,4 +724,3 @@ export default function TranscriptEditor({
     </div>
   );
 }
-

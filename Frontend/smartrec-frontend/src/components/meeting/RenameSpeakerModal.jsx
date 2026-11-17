@@ -172,13 +172,27 @@ export default function RenameSpeakerModal({
 
         {/* New Name Input */}
         <div className="mt-3">
-          <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
             <label htmlFor="rename-speaker-input" className="block text-xs text-slate-400 font-medium">
               Tên mới
             </label>
-            <span className="text-[11px] text-slate-500">
-              {newName.trim().length}/{MAX_SPEAKER_NAME_LENGTH}
-            </span>
+            <div className="flex items-center gap-2.5">
+              {newName.trim() !== speakerLabel && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewName(speakerLabel);
+                    setValidationError('');
+                  }}
+                  className="text-[11px] font-medium text-[#38bdf8] hover:text-white transition-colors"
+                >
+                  Đặt lại về mặc định ({speakerLabel})
+                </button>
+              )}
+              <span className="text-[11px] text-slate-500">
+                {newName.trim().length}/{MAX_SPEAKER_NAME_LENGTH}
+              </span>
+            </div>
           </div>
           <div className="relative">
             <input

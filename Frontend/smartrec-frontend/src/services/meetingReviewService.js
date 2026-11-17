@@ -88,6 +88,19 @@ export async function saveTranscriptOverrides(meetingId, overridesMap) {
 }
 
 /**
+ * Clears all saved transcript text overrides for a meeting.
+ */
+export function resetTranscriptOverrides(meetingId) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false;
+    window.localStorage.removeItem(buildKey('transcript_overrides', meetingId));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Loads local speaker display name overrides keyed by speakerId/originalLabel.
  */
 export function loadSpeakerNameOverrides(meetingId) {
