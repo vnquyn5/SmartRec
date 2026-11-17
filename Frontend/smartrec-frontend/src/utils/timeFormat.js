@@ -45,3 +45,32 @@ export function formatTimestamp(value, { forceHours = false } = {}) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+/**
+ * Validates and normalizes a user-entered timestamp ("mm:ss", "hh:mm:ss", or seconds).
+ * Returns a normalized timestamp string ("MM:SS" or "HH:MM:SS"), or null if invalid.
+ */
+export function normalizeTimestampInput(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+
+  if (!raw.includes(':')) {
+    if (!/^\d+$/.test(raw)) return null;
+    return formatTimestamp(Number(raw));
+  }
+
+  const parts = raw.split(':').map((p) => p.trim());
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  if (parts.some((p) => !/^\d+$/.test(p))) return null;
+
+  const nums = parts.map(Number);
+  if (parts.length === 2) {
+    const [minutes, seconds] = nums;
+    if (seconds >= 60) return null;
+    return formatTimestamp(minutes * 60 + seconds);
+  }
+
+  const [hours, minutes, seconds] = nums;
+  if (minutes >= 60 || seconds >= 60) return null;
+  return formatTimestamp(hours * 3600 + minutes * 60 + seconds, { forceHours: hours > 0 });
+}
+

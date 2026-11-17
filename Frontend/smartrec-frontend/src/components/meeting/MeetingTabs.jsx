@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import SlideGallery from './SlideGallery';
 import TaskTableEditor from './TaskTableEditor';
 import ExecutiveSummary from './ExecutiveSummary';
@@ -8,6 +8,16 @@ import AiUsageBadge from './AiUsageBadge';
 import mockSummaryData from '../../mocks/mock_summary.json';
 import mockOcrData from '../../mocks/mock_ocr.json';
 import { loadMeetingTasks } from '../../services/meetingReviewService';
+
+const DEFAULT_TASK_MEMBERS = [
+  'dev_team',
+  'dev_team_lead',
+  'Alex Nguyen',
+  'Sarah Lee',
+  'Michael Scott',
+  'David Park',
+  'Jessica Taylor',
+];
 
 export default function MeetingTabs({
   meetingId,
@@ -75,6 +85,19 @@ export default function MeetingTabs({
   const handleTasksChange = useCallback((updatedTasks) => {
     setTaskCount(Array.isArray(updatedTasks) ? updatedTasks.length : 0);
   }, []);
+
+  const taskMemberOptions = useMemo(() => {
+    const set = new Set();
+    speakers.forEach((speaker) => {
+      const resolved =
+        speakerNameMap?.[speaker.id] || speaker.name || speaker.originalLabel;
+      if (resolved && String(resolved).trim()) {
+        set.add(String(resolved).trim());
+      }
+    });
+    DEFAULT_TASK_MEMBERS.forEach((member) => set.add(member));
+    return Array.from(set);
+  }, [speakers, speakerNameMap]);
 
   const slideCount = Array.isArray(mockOcrData) ? mockOcrData.length : 0;
 
@@ -181,14 +204,15 @@ export default function MeetingTabs({
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
         {activeTab === 'summary' && <ExecutiveSummary />}
-        {activeTab === 'task' && (
+        <div className={activeTab === 'task' ? 'block' : 'hidden'}>
           <TaskTableEditor
             meetingId={meetingId}
+            memberOptions={taskMemberOptions}
             currentTime={currentTime}
             onSeekSegment={onSeekSegment}
             onTasksChange={handleTasksChange}
           />
-        )}
+        </div>
         {activeTab === 'transcript' && (
           <div className="h-full flex flex-col gap-4">
             {/* Audio AI Status Banner */}

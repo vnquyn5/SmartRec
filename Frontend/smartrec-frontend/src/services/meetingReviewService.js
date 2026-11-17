@@ -29,6 +29,14 @@ function writeStorageJson(key, value) {
 }
 
 /**
+ * Checks whether custom task edits are stored for a meeting.
+ */
+export function hasSavedMeetingTasks(meetingId) {
+  const saved = readStorageJson(buildKey('tasks', meetingId), null);
+  return Array.isArray(saved);
+}
+
+/**
  * Loads saved tasks for a meeting, falling back to default/mock tasks.
  */
 export function loadMeetingTasks(meetingId, fallbackTasks = []) {
@@ -44,6 +52,19 @@ export async function saveMeetingTasks(meetingId, tasks) {
   const normalized = Array.isArray(tasks) ? tasks : [];
   writeStorageJson(buildKey('tasks', meetingId), normalized);
   return normalized;
+}
+
+/**
+ * Clears saved task overrides for a meeting so it reverts to original AI tasks.
+ */
+export function resetMeetingTasks(meetingId) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false;
+    window.localStorage.removeItem(buildKey('tasks', meetingId));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
