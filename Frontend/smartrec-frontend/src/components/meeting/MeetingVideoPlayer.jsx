@@ -28,6 +28,8 @@ export default function MeetingVideoPlayer({
   mimeType,
   fileType = 'video',
   mediaRef,
+  onTimeUpdate,
+  onEnded,
 }) {
   const isAudio = fileType === 'audio';
   const unsupportedMkv = isMkvMedia(fileName, mimeType);
@@ -63,7 +65,8 @@ export default function MeetingVideoPlayer({
   }, []);
 
   useEffect(() => {
-    stopMedia(mediaRef?.current);
+    const mediaElement = mediaRef?.current;
+    stopMedia(mediaElement);
     setPlaybackUrl('');
     setLoadError('');
     setLoading(false);
@@ -78,7 +81,7 @@ export default function MeetingVideoPlayer({
 
     return () => {
       requestControllerRef.current?.abort();
-      stopMedia(mediaRef?.current);
+      stopMedia(mediaElement);
     };
   }, [meetingId, unsupportedMkv, requestPlaybackUrl, mediaRef]);
 
@@ -131,6 +134,8 @@ export default function MeetingVideoPlayer({
             controls
             preload="metadata"
             src={playbackUrl || undefined}
+            onTimeUpdate={onTimeUpdate}
+            onEnded={onEnded}
             onError={handleMediaError}
           >
             Trình duyệt không hỗ trợ phát âm thanh.
@@ -143,6 +148,8 @@ export default function MeetingVideoPlayer({
           controls
           preload="metadata"
           src={playbackUrl || undefined}
+          onTimeUpdate={onTimeUpdate}
+          onEnded={onEnded}
           onError={handleMediaError}
         >
           Trình duyệt không hỗ trợ phát video.

@@ -199,6 +199,8 @@ function SpeakerDropdown({ value, onChange, originalLabel, error, isOpen, onTogg
 
 export default function SpeakerManagementPanel({
   initialSpeakers = [],
+  speakerNameMap,
+  baselineNameMap,
   onSave,
   onSeekSegment,
   selectedChunkKey,
@@ -214,16 +216,33 @@ export default function SpeakerManagementPanel({
   const [expandedSpeakers, setExpandedSpeakers] = useState({});
   const [activeSegmentKey, setActiveSegmentKey] = useState(null);
 
+  const speakerNameMapRef = useRef(speakerNameMap);
+  speakerNameMapRef.current = speakerNameMap;
+
   useEffect(() => {
     const map = {};
     initialSpeakers.forEach(s => {
-      map[s.id] = s.name || s.originalLabel || '';
+      map[s.id] = speakerNameMapRef.current?.[s.id] || s.name || s.originalLabel || '';
     });
     setNames(map);
-    onNamesChange?.(map);
     setErrors({});
     setStatus('default');
   }, [initialSpeakers]);
+
+  useEffect(() => {
+    if (!speakerNameMap) return;
+    setNames(prev => {
+      let changed = false;
+      const next = { ...prev };
+      initialSpeakers.forEach(s => {
+        if (speakerNameMap[s.id] !== undefined && speakerNameMap[s.id] !== prev[s.id]) {
+          next[s.id] = speakerNameMap[s.id];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [speakerNameMap, initialSpeakers]);
 
   const handleChange = (id, val) => {
     setNames(prev => { 
@@ -258,10 +277,13 @@ export default function SpeakerManagementPanel({
     return valid;
   };
 
+  const getBaselineName = (s) =>
+    baselineNameMap?.[s.id] || s.name || s.originalLabel || '';
+
   const hasChanges = () => {
     return initialSpeakers.some(s => {
       const current = names[s.id] || '';
-      const original = s.name || s.originalLabel || '';
+      const original = getBaselineName(s);
       return current.trim() !== original.trim();
     });
   };
@@ -269,7 +291,7 @@ export default function SpeakerManagementPanel({
   const handleCancel = () => {
     const map = {};
     initialSpeakers.forEach(s => {
-      map[s.id] = s.name || s.originalLabel || '';
+      map[s.id] = getBaselineName(s);
     });
     setNames(map);
     onNamesChange?.(map);

@@ -13,23 +13,14 @@ import {
   resumeJob,
   startMeetingProcessing,
 } from "../../services/meetingService";
+import { renameSpeakerApi } from "../../services/meetingReviewService";
+import { formatTimestamp } from "../../utils/timeFormat";
 
 const POLL_INTERVAL_MS = 2500;
 const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING", "PROCESSING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
 const FAILURE_STATUSES = new Set(["FAILED", "DLQ", "CANCELLED"]);
 const COMPLETE_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED"]);
 const UNPROCESSED_STATUS = "UNPROCESSED";
-
-function formatTimestamp(value) {
-  const seconds = Math.max(0, Number(value) || 0);
-  const wholeSeconds = Math.floor(seconds);
-  const hours = Math.floor(wholeSeconds / 3600);
-  const minutes = Math.floor((wholeSeconds % 3600) / 60);
-  const remainder = wholeSeconds % 60;
-  return hours > 0
-    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
-}
 
 const DEFAULT_MOCK_SPEAKERS = [
   {
@@ -514,12 +505,16 @@ export default function MeetingDetailPage() {
   };
 
   const handleSaveSpeakers = async (updatedSpeakers) => {
-    if (speakersMeetingId !== id) throw new Error("Dữ liệu người nói không thuộc cuộc họp hiện tại.");
+    if (speakersMeetingId !== id) {
+      // Demo/offline fallback: local overrides are persisted in MeetingDetail
+      return;
+    }
     for (const speaker of updatedSpeakers) {
       const nextName = speaker.name?.trim();
-      if (nextName && nextName !== speaker.originalLabel) {
-        await api.put(`/meetings/${id}/speakers/rename`, {
-          speakerLabel: speaker.originalLabel,
+      const targetLabel = speaker.originalLabel || speaker.id;
+      if (nextName && targetLabel && (nextName !== speaker.originalLabel || updatedSpeakers.length === 1)) {
+        await renameSpeakerApi(id, {
+          speakerLabel: targetLabel,
           newName: nextName,
         });
       }
@@ -557,16 +552,18 @@ export default function MeetingDetailPage() {
 
   return (
     <div className="w-full min-w-0 font-sans flex flex-col bg-[#070c18] min-h-screen text-slate-100">
-      {/* Hidden audio element controlled by topbar inline player */}
-      <audio
-        ref={audioRef}
-        src={playbackUrl || undefined}
-        preload="metadata"
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
-        onEnded={() => setIsPlaying(false)}
-        className="hidden"
-      />
+      {/* Hidden audio element controlled by topbar inline player when fileType is audio */}
+      {fileType !== "video" && (
+        <audio
+          ref={audioRef}
+          src={playbackUrl || undefined}
+          preload="metadata"
+          onTimeUpdate={handleTimeUpdate}
+          onLoadedMetadata={handleLoadedMetadata}
+          onEnded={() => setIsPlaying(false)}
+          className="hidden"
+        />
+      )}
 
       {/* TOPBAR HEADER MATCHING SCREENSHOT: < | Title | Audio Player | Chia sẻ | Avatar */}
       <header className="meeting-topbar flex items-center justify-between gap-3 px-6 py-3.5 border-b border-[#18233c] bg-[#070c18] sticky top-0 z-30">
@@ -661,6 +658,9 @@ export default function MeetingDetailPage() {
           meeting={meeting || { id, fileName, title: fileName }}
           fileType={fileType}
           speakers={currentSpeakers}
+          currentTime={currentTime}
+          onTimeUpdate={handleTimeUpdate}
+          onEnded={() => setIsPlaying(false)}
           aiStatus={aiStatus}
           jobLoading={jobLoading}
           aiError={displayState === "failed" ? failureMessage : ""}

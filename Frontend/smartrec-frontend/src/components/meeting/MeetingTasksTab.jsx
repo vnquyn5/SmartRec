@@ -1,6 +1,6 @@
 import React from 'react';
-import TaskMatrixTable from './TaskMatrixTable';
+import TaskTableEditor from './TaskTableEditor';
 
-export default function MeetingTasksTab({ onSeekSegment }) {
-  return <TaskMatrixTable onSeekSegment={onSeekSegment} />;
+export default function MeetingTasksTab(props) {
+  return <TaskTableEditor {...props} />;
 }

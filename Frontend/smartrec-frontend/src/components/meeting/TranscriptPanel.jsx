@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
-import TranscriptView from './TranscriptView';
+import React from 'react';
+import TranscriptEditor from './TranscriptEditor';
 
-export default function TranscriptPanel({ onSeek, onSeekSegment
-}) {
+export default function TranscriptPanel({ onSeek, onSeekSegment, ...rest }) {
   const handleSeek = onSeekSegment || onSeek;
-  return <TranscriptView onSeekSegment={handleSeek} />;
+  return <TranscriptEditor onSeekSegment={handleSeek} {...rest} />;
 }

@@ -1,18 +1,83 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import SlideGallery from './SlideGallery';
-import TaskMatrixTable from './TaskMatrixTable';
+import TaskTableEditor from './TaskTableEditor';
 import ExecutiveSummary from './ExecutiveSummary';
 import SpeakerManagementPanel from './SpeakerManagementPanel';
 import AudioAiStatus from './AudioAiStatus';
-import TranscriptView from './TranscriptView';
 import AiUsageBadge from './AiUsageBadge';
+import mockSummaryData from '../../mocks/mock_summary.json';
+import mockOcrData from '../../mocks/mock_ocr.json';
+import { loadMeetingTasks } from '../../services/meetingReviewService';
 
-export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveSpeakers, onSeekSegment, aiStatus = 'processing', jobLoading, aiError, speakerError, speakerLoading, onRetry, onPause, onResume, onCancel, lifecycleAction, onStartProcessing, startingProcess, retrying }) {
+export default function MeetingTabs({
+  meetingId,
+  fileType = 'video',
+  speakers = [],
+  currentTime = 0,
+  onSaveSpeakers,
+  onSeekSegment,
+  aiStatus = 'processing',
+  jobLoading,
+  aiError,
+  speakerError,
+  speakerLoading,
+  onRetry,
+  onPause,
+  onResume,
+  onCancel,
+  lifecycleAction,
+  onStartProcessing,
+  startingProcess,
+  retrying,
+  selectedChunk: controlledSelectedChunk,
+  onSelectChunk,
+  speakerNameMap: controlledSpeakerNameMap,
+  baselineSpeakerNameMap,
+  onSpeakerNameMapChange,
+}) {
   const [activeTab, setActiveTab] = useState('transcript');
-  const [speakerNameMap, setSpeakerNameMap] = useState({});
-  const [selectedChunk, setSelectedChunk] = useState(null);
+  const [internalSpeakerNameMap, setInternalSpeakerNameMap] = useState({});
+  const [internalSelectedChunk, setInternalSelectedChunk] = useState(null);
+  const [taskCount, setTaskCount] = useState(
+    () => loadMeetingTasks(meetingId, mockSummaryData?.task || []).length
+  );
 
-  // Khai báo các tab theo yêu cầu 
+  useEffect(() => {
+    setTaskCount(loadMeetingTasks(meetingId, mockSummaryData?.task || []).length);
+  }, [meetingId]);
+
+  const speakerNameMap = controlledSpeakerNameMap ?? internalSpeakerNameMap;
+  const selectedChunk =
+    controlledSelectedChunk !== undefined ? controlledSelectedChunk : internalSelectedChunk;
+
+  const handleSelectChunk = useCallback(
+    (chunk) => {
+      if (typeof onSelectChunk === 'function') {
+        onSelectChunk(chunk);
+      } else {
+        setInternalSelectedChunk(chunk);
+      }
+    },
+    [onSelectChunk]
+  );
+
+  const handleSpeakerNamesChange = useCallback(
+    (nextMap) => {
+      if (typeof onSpeakerNameMapChange === 'function') {
+        onSpeakerNameMapChange(nextMap);
+      } else {
+        setInternalSpeakerNameMap(nextMap);
+      }
+    },
+    [onSpeakerNameMapChange]
+  );
+
+  const handleTasksChange = useCallback((updatedTasks) => {
+    setTaskCount(Array.isArray(updatedTasks) ? updatedTasks.length : 0);
+  }, []);
+
+  const slideCount = Array.isArray(mockOcrData) ? mockOcrData.length : 0;
+
   const tabs = [
     {
       id: 'summary',
@@ -28,7 +93,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     {
       id: 'task',
       label: 'Task',
-      count: 5,
+      count: taskCount,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4" />
@@ -47,12 +112,11 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
     },
   ];
 
-  // Logic bắt buộc của Leader: Nếu là video thì có tab Slide OCR, nếu audio thì không có
   if (fileType === 'video') {
     tabs.push({
       id: 'slide',
       label: 'Slide Keyframes & OCR',
-      count: 6,
+      count: slideCount,
       icon: (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="8" y1="6" x2="21" y2="6" />
@@ -79,7 +143,7 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
         </div>
       </div>
 
-      {/* TẦNG 2: Tab Navigation Header chuẩn Figma thông thoáng */}
+      {/* TẦNG 2: Tab Navigation Header */}
       <div className="flex items-center px-6 border-b border-[#18233c] shrink-0 bg-[#0a1122] overflow-x-auto">
         <div className="flex items-center gap-6 py-0.5">
           {tabs.map((tab) => {
@@ -117,14 +181,34 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
       {/* Tab Content Display Area */}
       <div className="flex-1 overflow-y-auto p-5 min-h-0 bg-[#090f1d]">
         {activeTab === 'summary' && <ExecutiveSummary />}
-        {activeTab === 'task' && <TaskMatrixTable onSeekSegment={onSeekSegment} />}
+        {activeTab === 'task' && (
+          <TaskTableEditor
+            meetingId={meetingId}
+            currentTime={currentTime}
+            onSeekSegment={onSeekSegment}
+            onTasksChange={handleTasksChange}
+          />
+        )}
         {activeTab === 'transcript' && (
           <div className="h-full flex flex-col gap-4">
-            {/* Audio AI Status Banner (Đáp ứng Task 2.15.1) */}
+            {/* Audio AI Status Banner */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex-1">
-                <AudioAiStatus status={aiStatus} errorMessage={aiError} retrying={retrying} onRetry={onRetry} onPause={onPause} onResume={onResume} onCancel={onCancel} lifecycleAction={lifecycleAction} onStartProcessing={onStartProcessing} startingProcess={startingProcess} />
-                {jobLoading && <p className="mt-2 text-[11px] text-slate-400">Đang tải trạng thái xử lý…</p>}
+                <AudioAiStatus
+                  status={aiStatus}
+                  errorMessage={aiError}
+                  retrying={retrying}
+                  onRetry={onRetry}
+                  onPause={onPause}
+                  onResume={onResume}
+                  onCancel={onCancel}
+                  lifecycleAction={lifecycleAction}
+                  onStartProcessing={onStartProcessing}
+                  startingProcess={startingProcess}
+                />
+                {jobLoading && (
+                  <p className="mt-2 text-[11px] text-slate-400">Đang tải trạng thái xử lý…</p>
+                )}
               </div>
             </div>
 
@@ -137,11 +221,17 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                 Hệ thống đang phân tích âm thanh và nhận diện người nói.
               </p>
             ) : aiStatus === 'failed' ? (
-              <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-5 py-8 text-center text-sm text-rose-200">
+              <p
+                role="alert"
+                className="rounded-xl border border-rose-500/30 bg-rose-950/20 px-5 py-8 text-center text-sm text-rose-200"
+              >
                 Xử lý âm thanh thất bại. Kết quả người nói không khả dụng.
               </p>
             ) : aiStatus === 'error' ? (
-              <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-5 py-8 text-center text-sm text-amber-200">
+              <p
+                role="alert"
+                className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-5 py-8 text-center text-sm text-amber-200"
+              >
                 Không thể tải trạng thái hoặc kết quả Audio AI.
               </p>
             ) : speakerLoading ? (
@@ -149,30 +239,39 @@ export default function MeetingTabs({ fileType = 'video', speakers = [], onSaveS
                 Đang tải kết quả người nói…
               </p>
             ) : speakerError ? (
-              <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-5 py-8 text-center text-sm text-amber-200">
+              <p
+                role="alert"
+                className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-5 py-8 text-center text-sm text-amber-200"
+              >
                 {speakerError}
               </p>
             ) : speakers.length === 0 ? (
               <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-5 py-8 text-center">
                 <h3 className="text-sm font-semibold text-white">Không phát hiện người nói</h3>
-                <p className="mt-2 text-sm text-slate-400">Hệ thống đã hoàn tất xử lý nhưng không tìm thấy đoạn phát ngôn phù hợp.</p>
+                <p className="mt-2 text-sm text-slate-400">
+                  Hệ thống đã hoàn tất xử lý nhưng không tìm thấy đoạn phát ngôn phù hợp.
+                </p>
               </div>
             ) : (
               <>
                 <div className="rounded-xl border border-[#1e2742] bg-[#0c101d] px-4 py-3">
                   <h2 className="text-sm font-semibold text-white">Người nói</h2>
                   <p className="mt-1 text-xs text-slate-400">
-                    {speakers.length || 6} người nói · {speakers.reduce((total, speaker) => total + (speaker.segments?.length || 0), 0) || 67} đoạn phát ngôn
+                    {speakers.length} người nói ·{' '}
+                    {speakers.reduce((total, speaker) => total + (speaker.segments?.length || 0), 0)}{' '}
+                    đoạn phát ngôn
                   </p>
                 </div>
                 <SpeakerManagementPanel
                   key={speakers.map((speaker) => speaker.id).join('|')}
                   initialSpeakers={speakers}
+                  speakerNameMap={speakerNameMap}
+                  baselineNameMap={baselineSpeakerNameMap}
                   onSave={onSaveSpeakers}
                   onSeekSegment={onSeekSegment}
                   selectedChunkKey={selectedChunk?.chunkKey}
-                  onSelectChunk={setSelectedChunk}
-                  onNamesChange={setSpeakerNameMap}
+                  onSelectChunk={handleSelectChunk}
+                  onNamesChange={handleSpeakerNamesChange}
                 />
               </>
             )}
