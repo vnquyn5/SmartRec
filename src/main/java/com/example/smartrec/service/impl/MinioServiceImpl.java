@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smartrec.exception.BusinessException;
+import com.example.smartrec.model.dto.MinioObjectSummary;
 import com.example.smartrec.service.MinioService;
 
 import io.minio.BucketExistsArgs;
@@ -21,14 +22,17 @@ import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.Result;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
+import io.minio.messages.Item;
 import jakarta.annotation.PostConstruct;
 
 @Service
@@ -381,6 +385,21 @@ public class MinioServiceImpl implements MinioService {
     }
 
     @Override
+    public String getBucketName() {
+        return bucket;
+    }
+
+    @Override
+    public boolean isBucketHealthy() {
+        try {
+            return minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
+        } catch (Exception ex) {
+            log.warn("MinIO bucket health check failed. bucket={}", bucket, ex);
+            return false;
+        }
+    }
+
+    @Override
     public boolean objectExists(String bucketName, String objectKey) {
         try {
             minioClient.statObject(// Gửi yêu cầu lấy metadata của object từ MinIO
@@ -465,5 +484,31 @@ public class MinioServiceImpl implements MinioService {
                     "MINIO_UNAVAILABLE",
                     "Không thể tạo URL truy cập ảnh slide trên MinIO");
         }
+    }
+
+    @Override
+    public List<MinioObjectSummary> listObjectsSummary(int maxObjects) throws Exception {
+        int limit = maxObjects <= 0 ? 5000 : maxObjects;
+        List<MinioObjectSummary> summaries = new ArrayList<>();
+        Iterable<Result<Item>> results = minioClient.listObjects(
+                ListObjectsArgs.builder()
+                        .bucket(bucket)
+                        .recursive(true)
+                        .build());
+        for (Result<Item> result : results) {
+            if (summaries.size() >= limit) {
+                break;
+            }
+            Item item = result.get();
+            if (item.isDir()) {
+                continue;
+            }
+            summaries.add(new MinioObjectSummary(
+                    item.objectName(),
+                    item.size(),
+                    item.lastModified() != null ? item.lastModified().toInstant() : null,
+                    item.etag()));
+        }
+        return summaries;
     }
 }

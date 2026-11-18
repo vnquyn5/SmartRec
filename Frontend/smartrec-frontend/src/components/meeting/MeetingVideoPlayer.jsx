@@ -44,6 +44,8 @@ export default function MeetingVideoPlayer({
   fileType = 'video',
   mediaRef,
   durationSeconds,
+  onTimeUpdate,
+  onEnded,
 }) {
   const isAudio = fileType === 'audio';
   const unsupportedMkv = isMkvMedia(fileName, mimeType);
@@ -85,7 +87,8 @@ export default function MeetingVideoPlayer({
   }, []);
 
   useEffect(() => {
-    stopMedia(mediaRef?.current);
+    const mediaElement = mediaRef?.current;
+    stopMedia(mediaElement);
     setPlaybackUrl('');
     setLoadError('');
     setLoading(false);
@@ -103,7 +106,7 @@ export default function MeetingVideoPlayer({
 
     return () => {
       requestControllerRef.current?.abort();
-      stopMedia(mediaRef?.current);
+      stopMedia(mediaElement);
     };
   }, [meetingId, fileType, unsupportedMkv, requestPlaybackUrl, mediaRef]);
 
@@ -220,6 +223,8 @@ export default function MeetingVideoPlayer({
                 ref={mediaRef}
                 preload="metadata"
                 src={playbackUrl || undefined}
+                onTimeUpdate={onTimeUpdate}
+                onEnded={onEnded}
                 onError={handleMediaError}
                 className="sr-only"
               >
@@ -230,6 +235,8 @@ export default function MeetingVideoPlayer({
                 ref={mediaRef}
                 preload="metadata"
                 src={playbackUrl || undefined}
+                onTimeUpdate={onTimeUpdate}
+                onEnded={onEnded}
                 onError={handleMediaError}
                 className="h-10 w-16 shrink-0 rounded-md bg-black object-cover sm:h-12 sm:w-[86px]"
                 aria-label="Video cuộc họp"

@@ -5,6 +5,8 @@ import java.util.List;
 
 import org.springframework.web.multipart.MultipartFile;
 
+import com.example.smartrec.model.dto.MinioObjectSummary;
+
 public interface MinioService {
     // Upload file lên MinIO Bucket
     void upLoadToBucket(MultipartFile file, String bucketName, String objectKey) throws Exception;
@@ -36,4 +38,10 @@ public interface MinioService {
     void composeObjects( String finalObjectKey,List<String> chunkObjectKeys) throws Exception;
 
     InputStream downloadObject(String objectKey);
+
+    String getBucketName();
+
+    boolean isBucketHealthy();
+
+    List<MinioObjectSummary> listObjectsSummary(int maxObjects) throws Exception;
 }

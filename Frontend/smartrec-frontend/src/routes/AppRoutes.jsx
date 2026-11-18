@@ -7,6 +7,10 @@ import FileManagerPage from "../pages/meeting/FileManagerPage";
 import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
 import GuestMeetingPage from "../pages/meeting/GuestMeetingPage";
 import TrashPage from "../pages/trash/TrashPage";
+import WorkspacePage from "../pages/workspace/WorkspacePage";
+import ModelGovernancePage from "../pages/governance/ModelGovernancePage";
+import StorageAdminPage from "../pages/storage/StorageAdminPage";
+import DocumentExportPage from "../pages/export/DocumentExportPage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
@@ -35,12 +39,15 @@ const AppRoutes = () => {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<Navigate to="/history" replace />} />
         <Route path="/dashboard" element={<Navigate to="/history" replace />} />
-        <Route path="/workspace" element={<Navigate to="/history" replace />} />
         <Route element={<DashboardLayout />}>
           <Route path="/meeting/:id" element={<MeetingDetailPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/upload/large" element={<Navigate to="/upload" replace />} />
           <Route path="/history" element={<FileManagerPage />} />
+          <Route path="/workspace" element={<WorkspacePage />} />
+          <Route path="/governance" element={<ModelGovernancePage />} />
+          <Route path="/admin/storage" element={<StorageAdminPage />} />
+          <Route path="/export" element={<DocumentExportPage />} />
           <Route path="/trash" element={<TrashPage />} />
         </Route>
         <Route path="/profile" element={<ProfilePage />} />

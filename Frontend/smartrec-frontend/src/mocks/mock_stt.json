@@ -1,31 +1,51 @@
 [
   {
-    "timestamp_start": "00:00:00",
-    "timestamp_end": "00:00:15",
-    "speaker_id": "spk_1",
-    "speaker_name_temp": "John Doe",
-    "text": "Hello, welcome to our service. How can I assist you today?"
+    "timestamp_start": "00:00",
+    "timestamp_end": "00:05",
+    "speaker_id": "Speaker 1",
+    "speaker_name_temp": "Văn Quyền",
+    "text": "Chào Lan và Hùng. Hôm nay, chúng ta họp để thống nhất kế hoạch Spring 4 của dự án Smart Rec."
   },
   {
-    "timestamp_start": "00:00:32",
-    "timestamp_end": "00:00:48",
-    "speaker_id": "spk_1",
-    "speaker_name_temp": "Alex Smith",
-    "text": "First, I would like to know more about your product offerings and the features they include."
+    "timestamp_start": "00:05",
+    "timestamp_end": "00:11",
+    "speaker_id": "Speaker 2",
+    "speaker_name_temp": "Bách Khoa",
+    "text": "Mình đã hoàn thành giao diện đăng nhập. Hiện tại, giao diện quản lý cuộc họp đang cần kết nối với API của Backend."
   },
   {
-    "timestamp_start": "00:01:10",
-    "timestamp_end": "00:01:25",
-    "speaker_id": "spk_2",
-    "speaker_name_temp": "Jane Doe",
-    "text": "Certainly! Our products are designed to meet a variety of needs. We offer a range of features including real-time analytics, customizable dashboards, and seamless integration with existing systems."
+    "timestamp_start": "00:11",
+    "timestamp_end": "00:18",
+    "speaker_id": "Speaker 3",
+    "speaker_name_temp": "Yến Nhi",
+    "text": "Phần upload video đã chạy được, nhưng chúng ta cần kiểm tra lại chức năng xử lý file và hiển thị kết quả AI."
   },
   {
-    "timestamp_start": "00:12:45",
-    "timestamp_end": "00:13:00",
-    "speaker_id": "spk_3",
-    "speaker_name_temp": "Michael Johnson",
-    "text": "That's great to hear. Can you provide some examples of how your clients have benefited from using your products?"
+    "timestamp_start": "00:18",
+    "timestamp_end": "00:24",
+    "speaker_id": "Speaker 1",
+    "speaker_name_temp": "Văn Quyền",
+    "text": "Vậy nhóm thống nhất tiếp tục sử dụng PostgreSQL làm cơ sở dữ liệu và React để phát triển giao diện."
+  },
+  {
+    "timestamp_start": "00:24",
+    "timestamp_end": "00:30",
+    "speaker_id": "Speaker 1",
+    "speaker_name_temp": "Văn Quyền",
+    "text": "Đây là quyết định chính thức của Spring này."
+  },
+  {
+    "timestamp_start": "00:30",
+    "timestamp_end": "00:48",
+    "speaker_id": "Speaker 2",
+    "speaker_name_temp": "Bách Khoa",
+    "text": "Tôi sẽ cập nhật các components còn lại và tiến hành kết nối websocket cho phần tiến độ xử lý."
+  },
+  {
+    "timestamp_start": "00:48",
+    "timestamp_end": "01:05",
+    "speaker_id": "Speaker 3",
+    "speaker_name_temp": "Yến Nhi",
+    "text": "Tôi sẽ chuẩn bị bộ test case cho các luồng ngoại lệ và kiểm tra tính nhất quán dữ liệu."
   }
 ]
-

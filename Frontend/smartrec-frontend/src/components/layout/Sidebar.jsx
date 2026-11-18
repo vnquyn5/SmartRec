@@ -1,11 +1,15 @@
 import React from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import BrandLink from "./BrandLink";
 
 const navItems = [
   { to: "/upload", icon: "upload", label: "Tải lên cuộc họp" },
   { to: "/history", icon: "history", label: "Danh sách cuộc họp" },
+  { to: "/workspace", icon: "workspace", label: "Không gian cuộc họp" },
+  { to: "/governance", icon: "governance", label: "Quản trị AI & Usage" },
+  { to: "/admin/storage", icon: "storage", label: "Quản trị Storage" },
+  { to: "/export", icon: "export", label: "Xuất dữ liệu" },
   { to: "/trash", icon: "trash", label: "Thùng rác" },
 ];
 
@@ -29,6 +33,64 @@ const icons = {
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  workspace: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M3 7l7-4 7 4v6l-7 4-7-4V7z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10 11V17M3 7l7 4 7-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  governance: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M3 14.5h3V9H3v5.5zm5.5 0h3V4.5h-3v10zm5.5 0h3V7h-3v7.5z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  storage: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <ellipse cx="10" cy="5" rx="6.5" ry="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M3.5 5v5c0 1.38 2.91 2.5 6.5 2.5s6.5-1.12 6.5-2.5V5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M3.5 10v5c0 1.38 2.91 2.5 6.5 2.5s6.5-1.12 6.5-2.5v-5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  ),
+  export: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M10 3v10M6 9l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 14v2a2 2 0 002 2h10a2 2 0 002-2v-2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
       />
     </svg>
   ),
@@ -80,7 +142,25 @@ const icons = {
 
 const Sidebar = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout } = useAuth();
+
+  const isMeetingRoute = location.pathname.startsWith("/meeting/");
+  const isFromWorkspace = location.state?.from === "/workspace";
+
+  const isItemActive = (to) => {
+    if (to === "/history") {
+      // Khi nhấn tại file ở danh sách, nhảy sang cuộc họp nhưng sidebar vẫn giữ "Danh sách cuộc họp" active
+      return location.pathname === "/history" || (isMeetingRoute && !isFromWorkspace);
+    }
+    if (to === "/workspace") {
+      return location.pathname === "/workspace" || (isMeetingRoute && isFromWorkspace);
+    }
+    if (to === "/") {
+      return location.pathname === "/";
+    }
+    return location.pathname.startsWith(to);
+  };
 
   const handleLogout = async () => {
     await logout(); // Xoá token, đặt status = unauthenticated

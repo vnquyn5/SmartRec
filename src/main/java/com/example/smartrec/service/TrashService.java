@@ -2,6 +2,7 @@ package com.example.smartrec.service;
 
 import java.util.UUID;
 
+import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.TrashFilterRequest;
 import com.example.smartrec.model.dto.TrashMediaFileResponse;
@@ -14,4 +15,6 @@ public interface TrashService {
     TrashMediaFileResponse restore(UUID mediaFileId);
 
     void permanentDelete(UUID mediaFileId);
+
+    void deleteMinioThenDatabase(MediaFile mediaFile);
 }

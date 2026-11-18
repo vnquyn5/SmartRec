@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { cancelJob, deleteMeeting, getAllMeetings, getJob, pauseJob, resumeJob, retryJob } from "../../services/meetingService";
 import { PauseIcon, PlayIcon, RefreshIcon } from "../../components/common/icons.jsx";
 import WorkspaceSearchBar from "../../components/workspace/WorkspaceSearchBar";
+import ExportModal from "../../components/exporter/ExportModal";
 import "./WorkspacePage.css";
 
 const POLL_INTERVAL_MS = 2500;
@@ -71,6 +72,7 @@ export default function WorkspacePage() {
   const [error, setError] = useState("");
   const [busyJobId, setBusyJobId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [exportTargetMeeting, setExportTargetMeeting] = useState(null);
   const timerRef = useRef(null);
   const requestRef = useRef(null);
   const mountedRef = useRef(false);
@@ -275,9 +277,30 @@ export default function WorkspacePage() {
                   </div>
                   <div className="meeting-card-actions">
                     <button className="btn-action btn-insights" onClick={(event) => { event.stopPropagation(); navigate(`/meeting/${meeting.id}`); }}>Xem chi tiết</button>
-                    {String(meeting.status).toUpperCase() === "COMPLETED" && <button className="btn-action btn-icon-only" title="Chia sẻ" aria-label="Chia sẻ" onClick={(event) => handleShare(meeting.id, event)}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4m0-11-6.8 4" /></svg>
-                    </button>}
+                    {String(meeting.status).toUpperCase() === "COMPLETED" && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-action btn-icon-only"
+                          title="Xuất biên bản & tài liệu"
+                          aria-label="Xuất tài liệu"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setExportTargetMeeting(meeting);
+                          }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="12" y1="18" x2="12" y2="12" />
+                            <polyline points="9 15 12 18 15 15" />
+                          </svg>
+                        </button>
+                        <button className="btn-action btn-icon-only" title="Chia sẻ" aria-label="Chia sẻ" onClick={(event) => handleShare(meeting.id, event)}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4m0-11-6.8 4" /></svg>
+                        </button>
+                      </>
+                    )}
                     {ACTIVE_STATUSES.has(String(meeting.status).toUpperCase()) && meeting.status !== "PAUSE_REQUESTED" && meeting.status !== "CANCEL_REQUESTED" && <>
                       <button type="button" className="btn-action btn-icon-only" title="Tạm dừng xử lý" aria-label="Tạm dừng xử lý" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, pauseJob, "PAUSE_REQUESTED")}><PauseIcon className="h-4 w-4" /></button>
                       <button type="button" className="btn-action btn-icon-only" title="Hủy xử lý" aria-label="Hủy xử lý" disabled={busyJobId === meeting.activeJobId} onClick={(event) => runJobAction(meeting, event, cancelJob, "CANCEL_REQUESTED")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
@@ -309,6 +332,12 @@ export default function WorkspacePage() {
           </>
         )}
       </div>
+
+      <ExportModal
+        isOpen={Boolean(exportTargetMeeting)}
+        onClose={() => setExportTargetMeeting(null)}
+        meeting={exportTargetMeeting}
+      />
     </div>
   );
 }

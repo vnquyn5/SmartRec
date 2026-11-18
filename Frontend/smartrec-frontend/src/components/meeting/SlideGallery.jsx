@@ -1,18 +1,6 @@
 import React, { useState } from 'react';
 import mockOcrData from '../../mocks/mock_ocr.json';
-
-
-function parseTimeToSeconds(timeStr) {
-  if (!timeStr) return 0;
-  const parts = timeStr.split(':').map((p) => Number(p.trim()) || 0);
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1]; 
-  }
-  if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2]; 
-  }
-  return Number(timeStr) || 0;
-}
+import { parseTimeToSeconds } from '../../utils/timeFormat';
 
 export default function SlideGallery({ onSeekSegment }) {
   
