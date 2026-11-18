@@ -23,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.context.ApplicationEventPublisher;
 
 import com.example.smartrec.entity.Job;
 import com.example.smartrec.entity.JobStage;
@@ -53,6 +54,8 @@ class JobLifecycleTest {
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
     @Mock private AIResultService aiResultService;
+    @Mock private JobProgressService jobProgressService;
+    @Mock private ApplicationEventPublisher eventPublisher;
     @InjectMocks private JobServiceImpl service;
 
     private UUID jobId;

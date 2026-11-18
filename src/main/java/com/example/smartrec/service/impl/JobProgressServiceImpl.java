@@ -54,7 +54,7 @@ public class JobProgressServiceImpl implements JobProgressService {
     @Override
     @Transactional
     public void publishProgress(UUID jobId) {
-        Job job = jobRepository.findById(jobId)
+        Job job = jobRepository.findByIdForUpdate(jobId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "JOB_NOT_FOUND", "job không tìm thấy"));
         // Lấy danh sách các stage của Job
         List<JobStage> stages = jobStageRepository.findByJobIdOrderByStageAsc(jobId);
@@ -62,27 +62,20 @@ public class JobProgressServiceImpl implements JobProgressService {
         // Tăng sequence lên 1 để đánh số cho event sắp được tạo.
         job.setEventSequence(currentSequence + 1);
         jobRepository.save(job);
-        // Khởi tạo DTO chứa thông tin sự kiện tiến độ Job.
-        JobProgressEventReponse event = new JobProgressEventReponse();
-        event.setEventType(resolveEventType(job.getStatus()));
-        // Gán phiên bản cấu trúc payload.
-        event.setVersion("1");
-        // Gán ID của Job vào payload.
-        event.setJobId(job.getId());
-        // Gán ID của Meeting liên quan đến Job.
-        event.setMeetingId(job.getMeetingId());
-        event.setEventId(UUID.randomUUID());
-        // Gán số thứ tự event vừa tăng vào payload.
-        event.setSequence(job.getEventSequence());
-        // Lấy thời gian hiện tại theo UTC để đánh dấu thời điểm tạo event.
-        event.setTimestamp(Instant.now());
-        event.setCurrentStage(
+        // Capture an immutable snapshot while the Job and its sequence are locked.
+        JobProgressEventReponse event = new JobProgressEventReponse(
+                resolveEventType(job.getStatus()),
+                "1",
+                job.getId(),
+                job.getMeetingId(),
+                UUID.randomUUID(),
+                job.getEventSequence(),
+                Instant.now(),
                 job.getCurrentStage() != null
                         ? job.getCurrentStage().name()
-                        : null);
-        event.setStatus(job.getStatus().name());
-        // Tính phần trăm tiến độ từ danh sách Stage.
-        event.setProgressPercent(calculateProgress(job, stages));
+                        : null,
+                job.getStatus().name(),
+                calculateProgress(job, stages));
         eventPublisher.publishEvent(event);
     }
 

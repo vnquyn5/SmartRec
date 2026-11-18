@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.ColumnDefault;
 
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.enums.PipelineStage;
@@ -91,6 +92,7 @@ public class Job {
     private Instant createdAt;
 
     @Builder.Default
+    @ColumnDefault("0")
     @Column(name = "event_sequence", nullable = false)
     private Long eventSequence = 0L;
 

@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/http/client';
+import { subscribeToJobProgress } from '../../services/jobProgressSocket.js';
+import { acceptJobProgressMessage } from '../../services/jobProgressState.js';
 import { formatTranscriptTime } from './transcriptData';
 
 const ACTIVE = new Set(['PENDING', 'QUEUED', 'RUNNING', 'PROCESSING', 'RETRYING', 'PAUSE_REQUESTED', 'CANCEL_REQUESTED']);
@@ -8,16 +10,16 @@ export default function SlideOcrTab({ meetingId, jobId, jobStatus, onSeek }) {
   const [slides, setSlides] = useState([]);
   const [loading, setLoading] = useState(Boolean(meetingId));
   const [error, setError] = useState('');
+  const progressSequenceRef = useRef(new Map());
   const status = String(jobStatus || '').toUpperCase();
 
   useEffect(() => {
     let cancelled = false;
-    let timer;
     setSlides([]);
     setError('');
     setLoading(Boolean(meetingId));
     if (!meetingId) { setLoading(false); return undefined; }
-    const load = async () => {
+    const loadSlides = async () => {
       try {
         // This route returns persisted MeetingSlide metadata (including OCR text) from Spring.
         const response = await api.get(`/meetings/${meetingId}/slides`);
@@ -27,17 +29,41 @@ export default function SlideOcrTab({ meetingId, jobId, jobStatus, onSeek }) {
           .sort((left, right) => Number(left.timestampMs) - Number(right.timestampMs)));
         setLoading(false);
         setError('');
-        if (ACTIVE.has(status)) timer = window.setTimeout(load, 2500);
       } catch (requestError) {
         if (cancelled) return;
         setError(requestError?.message || 'Không thể tải dữ liệu OCR.');
         setLoading(false);
-        if (ACTIVE.has(status)) timer = window.setTimeout(load, 2500);
       }
     };
-    load();
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [meetingId, jobId, status]);
+    const isTerminal = (value) => ['COMPLETED', 'SUCCESS', 'SUCCEEDED', 'FAILED', 'DLQ', 'CANCELLED']
+      .includes(String(value || '').toUpperCase());
+    const applyProgress = (message) => {
+      const progress = acceptJobProgressMessage(
+        progressSequenceRef.current, message, meetingId, jobId,
+      );
+      if (progress && isTerminal(progress.status)) void loadSlides();
+    };
+
+    void loadSlides();
+    if (!jobId) return () => { cancelled = true; };
+    const syncSnapshot = async () => {
+      try {
+        const snapshot = await api.get(`/jobs/${jobId}/snapshot`);
+        if (!cancelled) applyProgress(snapshot);
+      } catch {
+        // The initial slide snapshot remains visible; reconnect attempts a fresh Job snapshot.
+      }
+    };
+    const unsubscribe = subscribeToJobProgress(
+      jobId,
+      applyProgress,
+      (connected) => { if (connected) void syncSnapshot(); },
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [meetingId, jobId]);
 
   const failure = ['FAILED', 'DLQ'].includes(status);
   return (

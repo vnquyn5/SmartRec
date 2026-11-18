@@ -5,6 +5,8 @@ import SpeakerManagementPanel from "./SpeakerManagementPanel";
 
 function JobProcessingNotice({
   aiStatus,
+  progressPercent,
+  currentStage,
   jobLoading,
   aiError,
   onRetry,
@@ -36,7 +38,10 @@ function JobProcessingNotice({
     : messages[aiStatus];
   const hasActions =
     onStartProcessing || onPause || onResume || onCancel || onRetry;
-  if (!message && !hasActions) return null;
+  const parsedProgress = Number(progressPercent);
+  const hasProgress = progressPercent != null && Number.isFinite(parsedProgress);
+  const visibleProgress = Math.max(0, Math.min(100, parsedProgress));
+  if (!message && !hasActions && !hasProgress) return null;
 
   const isError = aiStatus === "failed" || aiStatus === "error";
   const actionClass =
@@ -64,6 +69,27 @@ function JobProcessingNotice({
         >
           {message}
         </p>
+      )}
+      {hasProgress && (
+        <div className="basis-full px-1" aria-label="Tiến độ xử lý Job">
+          <div className="mb-1 flex items-center justify-between gap-3 text-[10px] text-slate-400">
+            <span>{currentStage ? `Giai đoạn ${currentStage}` : "Tiến độ xử lý"}</span>
+            <span>{Math.round(visibleProgress)}%</span>
+          </div>
+          <div
+            className="h-1.5 overflow-hidden rounded-full bg-[#1c2941]"
+            role="progressbar"
+            aria-label="Tiến độ xử lý"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(visibleProgress)}
+          >
+            <div
+              className="h-full rounded-full bg-sky-400 transition-[width] duration-300"
+              style={{ width: `${visibleProgress}%` }}
+            />
+          </div>
+        </div>
       )}
       <div className="flex shrink-0 items-center gap-1.5">
         {onStartProcessing && (
@@ -128,6 +154,8 @@ export default function MeetingTabs({
   onSeekSegment,
   onEvidenceClick,
   aiStatus = "processing",
+  progressPercent,
+  currentStage,
   jobLoading,
   aiError,
   speakerError,
@@ -296,6 +324,8 @@ export default function MeetingTabs({
           <div className="h-full min-h-0 flex flex-col gap-4 overflow-hidden">
             <JobProcessingNotice
               aiStatus={aiStatus}
+              progressPercent={progressPercent}
+              currentStage={currentStage}
               jobLoading={jobLoading}
               aiError={aiError}
               onRetry={onRetry}

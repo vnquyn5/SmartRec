@@ -13,8 +13,9 @@ import {
 } from "../../services/meetingService";
 import { mapSpeakerManagementSegments } from "../../components/meeting/transcriptData";
 import { mapMeetingResults } from "../../components/meeting/meetingResults";
+import { subscribeToJobProgress } from "../../services/jobProgressSocket.js";
+import { acceptJobProgressMessage } from "../../services/jobProgressState.js";
 
-const POLL_INTERVAL_MS = 2500;
 const ACTIVE_STATUSES = new Set([
   "PENDING",
   "QUEUED",
@@ -64,24 +65,20 @@ export default function MeetingDetailPage() {
   const [shareMeeting, setShareMeeting] = useState(null);
   const activeMeetingIdRef = useRef(null);
   const requestedJobIdsRef = useRef(new Set());
-  const meetingSnapshotRef = useRef(null);
   const resultsSnapshotRef = useRef(null);
+  const progressSequenceRef = useRef(new Map());
 
   useEffect(() => {
     setShareMeeting(null);
   }, [id]);
 
   const refresh = useCallback(
-    async (isCancelled, { fetchMeeting = true } = {}) => {
-      const currentMeeting =
-        fetchMeeting || !meetingSnapshotRef.current
-          ? await api.get(`/meetings/${id}`)
-          : meetingSnapshotRef.current;
-      if (isCancelled()) return { shouldPoll: false };
+    async (isCancelled) => {
+      const currentMeeting = await api.get(`/meetings/${id}`);
+      if (isCancelled()) return;
       if (!currentMeeting || currentMeeting.id !== id) {
         throw new Error("API không trả về đúng thông tin cuộc họp.");
       }
-      meetingSnapshotRef.current = currentMeeting;
       setMeeting(currentMeeting);
       setMeetingId(id);
       setMeetingLoading(false);
@@ -105,7 +102,7 @@ export default function MeetingDetailPage() {
         setResultsError("");
         setLoadError("");
         setPageState("unprocessed");
-        return { shouldPoll: false };
+        return;
       }
       if (FAILURE_STATUSES.has(initialMeetingStatus)) {
         setPageState("failed");
@@ -130,7 +127,7 @@ export default function MeetingDetailPage() {
         if (isFirstJobRequest) setJobLoading(true);
         try {
           currentJob = await api.get(`/jobs/${currentMeeting.activeJobId}`);
-          if (isCancelled()) return { shouldPoll: false };
+          if (isCancelled()) return;
           requestedJobIdsRef.current.add(currentMeeting.activeJobId);
         } catch (error) {
           requestedJobIdsRef.current.add(currentMeeting.activeJobId);
@@ -172,7 +169,7 @@ export default function MeetingDetailPage() {
           const resultPayload = await api.get(
             `/meetings/${id}/jobs/${resultsJobId}/results`,
           );
-          if (isCancelled()) return { shouldPoll: false };
+          if (isCancelled()) return;
           if (
             resultPayload?.meetingId !== id ||
             resultPayload?.jobId !== resultsJobId
@@ -186,7 +183,7 @@ export default function MeetingDetailPage() {
           setResults(mappedResults);
           setResultsError("");
         } catch (error) {
-          if (isCancelled()) return { shouldPoll: false };
+          if (isCancelled()) return;
           resultsSnapshotRef.current = null;
           setResults(null);
           setResultsError(
@@ -207,7 +204,7 @@ export default function MeetingDetailPage() {
         setSpeakersMeetingId(id);
         setSpeakerError("");
         setPageState("failed");
-        return { shouldPoll: false };
+        return;
       }
 
       if (
@@ -226,7 +223,7 @@ export default function MeetingDetailPage() {
                 new Error("Không tìm thấy Processing Job của cuộc họp."),
               ),
         ]);
-        if (isCancelled()) return { shouldPoll: false };
+        if (isCancelled()) return;
         if (speakerOutcome.status === "fulfilled") {
           setSpeakers(
             groupSegments(
@@ -260,7 +257,7 @@ export default function MeetingDetailPage() {
         setPageState("completed");
         setSpeakerLoading(false);
         setResultsLoading(false);
-        return { shouldPoll: false };
+        return;
       }
 
       setResults(null);
@@ -271,7 +268,7 @@ export default function MeetingDetailPage() {
       setSpeakerError("");
       if (status === "PAUSED" || meetingStatus === "PAUSED") {
         setPageState("paused");
-        return { shouldPoll: false };
+        return;
       }
       if (ACTIVE_STATUSES.has(status) || ACTIVE_STATUSES.has(meetingStatus)) {
         const resolved = status || meetingStatus;
@@ -284,7 +281,7 @@ export default function MeetingDetailPage() {
                 ? "queued"
                 : "processing",
         );
-        return { shouldPoll: Boolean(currentMeeting.activeJobId) };
+        return;
       }
       throw new Error(
         `Trạng thái cuộc họp không được hỗ trợ: ${status || "không xác định"}`,
@@ -295,11 +292,10 @@ export default function MeetingDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
-    let timer;
     const isNewMeeting = activeMeetingIdRef.current !== id;
     activeMeetingIdRef.current = id;
     if (isNewMeeting) {
-      meetingSnapshotRef.current = null;
+      progressSequenceRef.current.clear();
       setMeeting(null);
       setMeetingId(null);
       setMeetingLoading(true);
@@ -322,13 +318,9 @@ export default function MeetingDetailPage() {
       requestedJobIdsRef.current.clear();
     }
 
-    let fetchMeeting = true;
-    const poll = async () => {
+    const load = async () => {
       try {
-        const result = await refresh(() => cancelled, { fetchMeeting });
-        fetchMeeting = false;
-        if (!cancelled && result.shouldPoll)
-          timer = window.setTimeout(poll, POLL_INTERVAL_MS);
+        await refresh(() => cancelled);
       } catch (error) {
         if (cancelled) return;
         setMeetingLoading(false);
@@ -343,12 +335,73 @@ export default function MeetingDetailPage() {
         setSpeakerLoading(false);
       }
     };
-    poll();
+    load();
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
   }, [id, refreshGeneration, refresh]);
+
+  const progressJobId = job?.id || meeting?.activeJobId;
+  useEffect(() => {
+    if (!progressJobId) return undefined;
+    let cancelled = false;
+    let refreshQueued = false;
+    const syncSnapshot = async () => {
+      try {
+        const snapshot = await api.get(`/jobs/${progressJobId}/snapshot`);
+        if (cancelled) return;
+        const progress = acceptJobProgressMessage(
+          progressSequenceRef.current, snapshot, id, progressJobId,
+        );
+        if (!progress) return;
+        setJob((current) => ({
+          ...(current?.id === progressJobId ? current : {}),
+          ...progress,
+          id: progress.jobId,
+          stage: progress.currentStage,
+        }));
+        if (COMPLETE_STATUSES.has(String(progress.status || "").toUpperCase())
+            || FAILURE_STATUSES.has(String(progress.status || "").toUpperCase())) {
+          if (!refreshQueued) {
+            refreshQueued = true;
+            setRefreshGeneration((generation) => generation + 1);
+          }
+        }
+      } catch {
+        // The existing meeting/job snapshot remains visible until the next reconnect.
+      }
+    };
+    void syncSnapshot();
+    const unsubscribe = subscribeToJobProgress(
+      progressJobId,
+      (event) => {
+        const progress = acceptJobProgressMessage(
+          progressSequenceRef.current, event, id, progressJobId,
+        );
+        if (!progress) return;
+        setJob((current) => ({
+          ...(current?.id === progressJobId ? current : {}),
+          ...progress,
+          id: progress.jobId,
+          stage: progress.currentStage,
+        }));
+        const status = String(progress.status || "").toUpperCase();
+        if (COMPLETE_STATUSES.has(status) || FAILURE_STATUSES.has(status)) {
+          if (!refreshQueued) {
+            refreshQueued = true;
+            setRefreshGeneration((generation) => generation + 1);
+          }
+        }
+      },
+      (connected) => {
+        if (connected) void syncSnapshot();
+      },
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [id, progressJobId]);
 
   const handleRetry = async () => {
     if (!job?.id || retrying) return;
@@ -622,6 +675,8 @@ export default function MeetingDetailPage() {
           mediaRef={mediaRef}
           jobId={job?.id || meeting?.activeJobId}
           jobStatus={job?.status || meeting?.status}
+          progressPercent={job?.progressPercent}
+          currentStage={job?.currentStage || job?.stage}
           speakers={currentSpeakers}
           aiStatus={aiStatus}
           jobLoading={jobLoading}

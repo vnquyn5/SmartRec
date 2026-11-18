@@ -1,6 +1,7 @@
 package com.example.smartrec.service.impl;
 
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
@@ -16,6 +17,7 @@ import com.example.smartrec.enums.PipelineStage;
 import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.CreateJobRequest;
 import com.example.smartrec.model.dto.JobResponse;
+import com.example.smartrec.model.event.JobDispatchRequestedEvent;
 import com.example.smartrec.model.dto.SpeakerSegmentResponse;
 import com.example.smartrec.model.dto.WorkerCallbackRequest;
 import com.example.smartrec.model.dto.WorkerJobControlResponse;
@@ -28,6 +30,7 @@ import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.JobStateMachine;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.AIResultService;
+import com.example.smartrec.service.JobProgressService;
 
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,6 +59,8 @@ public class JobServiceImpl implements JobService {
     private final MeetingRepository meetingRepository;
     private final MeetingService meetingService;
     private final AIResultService aiResultService;
+    private final JobProgressService jobProgressService;
+    private final ApplicationEventPublisher eventPublisher;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
     @Value("${job.heartbeat-timeout-seconds:90}")
@@ -75,7 +80,9 @@ public class JobServiceImpl implements JobService {
         var existingJob = jobRepository.findFirstByMediaFileIdOrderByCreatedAtDesc(request.getMediaFileId());
         if (existingJob.isPresent()) {
             meetingRepository.findByMediaFileId(request.getMediaFileId()).ifPresent(meeting -> {
-                syncMeetingStatus(meeting, existingJob.get());
+                if (syncMeetingStatus(meeting, existingJob.get())) {
+                    jobProgressService.publishProgress(existingJob.get().getId());
+                }
             });
             return toResponse(existingJob.get());
         }
@@ -120,6 +127,7 @@ public class JobServiceImpl implements JobService {
         stateMachine.transition(job, JobStatus.QUEUED);
         jobRepository.save(job);
         enqueueJob(job.getId());
+        jobProgressService.publishProgress(job.getId());
         return toResponse(job);
     }
 
@@ -184,7 +192,7 @@ public class JobServiceImpl implements JobService {
     @Override
     @Transactional
     public void processJob(UUID jobId) {
-        Job job = findJob(jobId);
+        Job job = jobRepository.findByIdForUpdate(jobId).orElseGet(() -> findJob(jobId));
         if (job.getStatus() == JobStatus.DLQ) { // Kiem tra job hien tai co phai la DLQ khong
             System.out.println("Job đang ở DLQ, không tự động retry: " + job.getId());
             return;
@@ -199,9 +207,11 @@ public class JobServiceImpl implements JobService {
             System.out.println("Job chưa có currentStage: " + job.getId());
             return;
         }
+        JobStatus previousStatus = job.getStatus();
         stateMachine.transition(job, JobStatus.PROCESSING);
         jobRepository.save(job);
-        markMeetingProcessing(job);
+        boolean meetingChanged = markMeetingProcessing(job);
+        if (previousStatus != job.getStatus() || meetingChanged) jobProgressService.publishProgress(jobId);
 
     }
 
@@ -269,6 +279,7 @@ public class JobServiceImpl implements JobService {
         jobRepository.save(job);
 
         enqueueJob(job.getId());
+        jobProgressService.publishProgress(job.getId());
 
         System.out.println(
                 "Manual retry Job: "
@@ -311,6 +322,7 @@ public class JobServiceImpl implements JobService {
             updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
         }
         jobRepository.save(job);
+        jobProgressService.publishProgress(jobId);
     }
 
     @Override
@@ -334,6 +346,7 @@ public class JobServiceImpl implements JobService {
             updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
         }
         jobRepository.save(job);
+        jobProgressService.publishProgress(jobId);
     }
 
     @Override
@@ -358,6 +371,7 @@ public class JobServiceImpl implements JobService {
         job.setPauseRequestedAt(null);
         job.setCancelRequestedAt(null);
         jobRepository.save(job);
+        jobProgressService.publishProgress(jobId);
         updateMeetingLifecycle(job, MeetingStatus.PENDING);
         enqueueJob(jobId);
     }
@@ -369,6 +383,7 @@ public class JobServiceImpl implements JobService {
         if (executionId == null) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "EXECUTION_ID_REQUIRED", "Worker executionId không được để trống");
         }
+        JobStatus previousStatus = job.getStatus();
         Instant now = Instant.now();
         boolean terminal = Set.of(JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.DLQ, JobStatus.CANCELLED,
                 JobStatus.PAUSED)
@@ -377,6 +392,7 @@ public class JobServiceImpl implements JobService {
 
         boolean sameExecution = executionId.equals(job.getExecutionId());
         boolean liveLease = hasLiveLease(job, now);
+        boolean meetingChanged = false;
         boolean awaitingPauseOrCancel = Set.of(JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED)
                 .contains(job.getStatus());
         // Only the current, still-leased worker may observe and acknowledge a
@@ -398,9 +414,10 @@ public class JobServiceImpl implements JobService {
         job.setLastHeartbeatAt(now);
         if (Set.of(JobStatus.QUEUED, JobStatus.PENDING, JobStatus.RETRYING).contains(job.getStatus())) {
             stateMachine.transition(job, JobStatus.PROCESSING);
-            updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
+            meetingChanged = updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
         }
         jobRepository.save(job);
+        if (previousStatus != job.getStatus() || meetingChanged) jobProgressService.publishProgress(jobId);
         return workerControl(job, true);
     }
 
@@ -484,6 +501,7 @@ public class JobServiceImpl implements JobService {
                 markMeetingFailed(job);
             }
             jobRepository.save(job);
+            jobProgressService.publishProgress(job.getId());
         }
     }
 
@@ -496,12 +514,18 @@ public class JobServiceImpl implements JobService {
         return lastSeen != null && lastSeen.isBefore(fallbackCutoff);
     }
 
-    private void updateMeetingLifecycle(Job job, MeetingStatus status) {
-        meetingRepository.findById(job.getMeetingId()).ifPresent(meeting -> {
+    private boolean updateMeetingLifecycle(Job job, MeetingStatus status) {
+        if (job.getMeetingId() == null) return false;
+        Meeting meeting = meetingRepository.findById(job.getMeetingId()).orElse(null);
+        if (meeting == null) return false;
+        boolean changed = meeting.getStatus() != status
+                || !java.util.Objects.equals(meeting.getActive_job_id(), job.getId());
+        if (changed) {
             meeting.setActive_job_id(job.getId());
             meeting.setStatus(status);
             meetingRepository.save(meeting);
-        });
+        }
+        return changed;
     }
 
     // private void processMedia(UUID jobId){
@@ -638,6 +662,10 @@ public class JobServiceImpl implements JobService {
                         "Callback thuộc về Job không còn active của Meeting");
             }
         }
+        JobStatus statusBeforeCallback = job.getStatus();
+        PipelineStage stageBeforeCallback = job.getCurrentStage();
+        JobStageStatus stageStatusBeforeCallback = jobStage.getStatus();
+        boolean meetingStateChanged = false;
         if (request.getStatus() == JobStageStatus.SUCCESS && job.getStatus() == JobStatus.CANCEL_REQUESTED) {
             Instant now = Instant.now();
             stateMachine.transition(jobStage, JobStageStatus.CANCELLED);
@@ -648,6 +676,7 @@ public class JobServiceImpl implements JobService {
             updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
             jobStageRepository.save(jobStage);
             jobRepository.save(job);
+            jobProgressService.publishProgress(jobId);
             return;
         }
 
@@ -672,9 +701,13 @@ public class JobServiceImpl implements JobService {
             if (jobStage.getStartedAt() == null) {
                 jobStage.setStartedAt(Instant.now());
             }
-            markMeetingProcessing(job);
-            if (job.getStatus() == JobStatus.PAUSE_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
-            if (job.getStatus() == JobStatus.CANCEL_REQUESTED) updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
+            meetingStateChanged |= markMeetingProcessing(job);
+            if (job.getStatus() == JobStatus.PAUSE_REQUESTED) {
+                meetingStateChanged |= updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
+            }
+            if (job.getStatus() == JobStatus.CANCEL_REQUESTED) {
+                meetingStateChanged |= updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
+            }
         } else if (request.getStatus() == JobStageStatus.SUCCESS) {
 
             if (request.getStage() == PipelineStage.OUTPUT
@@ -722,7 +755,7 @@ public class JobServiceImpl implements JobService {
             stateMachine.transition(job, JobStatus.PAUSED);
             job.setExecutionId(null);
             job.setLeaseExpiresAt(null);
-            updateMeetingLifecycle(job, MeetingStatus.PAUSED);
+            meetingStateChanged |= updateMeetingLifecycle(job, MeetingStatus.PAUSED);
         } else if (request.getStatus() == JobStageStatus.CANCELLED) {
             if (job.getStatus() != JobStatus.CANCEL_REQUESTED && job.getStatus() != JobStatus.CANCELLED) {
                 throw new BusinessException(HttpStatus.CONFLICT, "CANCEL_NOT_REQUESTED", "Job chưa có yêu cầu hủy");
@@ -732,7 +765,7 @@ public class JobServiceImpl implements JobService {
             stateMachine.transition(job, JobStatus.CANCELLED);
             job.setLeaseExpiresAt(null);
             markDownstreamStagesSkipped(job, jobStage);
-            updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
+            meetingStateChanged |= updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
         }
 
         jobStageRepository.save(jobStage);
@@ -742,17 +775,26 @@ public class JobServiceImpl implements JobService {
         }
 
         jobRepository.save(job);
+        if (statusBeforeCallback != job.getStatus()
+                || stageBeforeCallback != job.getCurrentStage()
+                || stageStatusBeforeCallback != jobStage.getStatus()
+                || meetingStateChanged) {
+            jobProgressService.publishProgress(jobId);
+        }
 
     }
 
     private void enqueueJob(UUID jobId) {
         Instant now = Instant.now();
+        UUID outboxId = UUID.randomUUID();
         outboxRepository.save(JobDispatchOutbox.builder()
+                .id(outboxId)
                 .jobId(jobId)
                 .attemptCount(0)
                 .availableAt(now)
                 .createdAt(now)
                 .build());
+        eventPublisher.publishEvent(new JobDispatchRequestedEvent(outboxId));
     }
 
     private boolean ownsExecution(Job job, UUID executionId) {
@@ -779,14 +821,8 @@ public class JobServiceImpl implements JobService {
         return errorCode != null && AI_ENRICHMENT_OUTCOMES.contains(errorCode);
     }
 
-    private void markMeetingProcessing(Job job) {
-        if (job.getMeetingId() != null) {
-            meetingRepository.findById(job.getMeetingId()).ifPresent(meeting -> {
-                meeting.setActive_job_id(job.getId());
-                meeting.setStatus(MeetingStatus.PROCESSING);
-                meetingRepository.save(meeting);
-            });
-        }
+    private boolean markMeetingProcessing(Job job) {
+        return updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
     }
 
     private void markMeetingFailed(Job job) {
@@ -799,9 +835,8 @@ public class JobServiceImpl implements JobService {
         }
     }
 
-    private void syncMeetingStatus(Meeting meeting, Job job) {
-        meeting.setActive_job_id(job.getId());
-        meeting.setStatus(switch (job.getStatus()) {
+    private boolean syncMeetingStatus(Meeting meeting, Job job) {
+        MeetingStatus status = switch (job.getStatus()) {
             case COMPLETED -> MeetingStatus.COMPLETED;
             case DLQ, FAILED -> MeetingStatus.FAILED;
             case PENDING, QUEUED -> MeetingStatus.PENDING;
@@ -810,8 +845,15 @@ public class JobServiceImpl implements JobService {
             case PAUSED -> MeetingStatus.PAUSED;
             case CANCEL_REQUESTED -> MeetingStatus.CANCEL_REQUESTED;
             case CANCELLED -> MeetingStatus.CANCELLED;
-        });
-        meetingRepository.save(meeting);
+        };
+        boolean changed = meeting.getStatus() != status
+                || !java.util.Objects.equals(meeting.getActive_job_id(), job.getId());
+        if (changed) {
+            meeting.setActive_job_id(job.getId());
+            meeting.setStatus(status);
+            meetingRepository.save(meeting);
+        }
+        return changed;
     }
 
     private void moveToNextStage(Job job, JobStage currentStage) {

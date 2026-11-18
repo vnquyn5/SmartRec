@@ -23,7 +23,6 @@ import {
   downloadMeeting,
   downloadMeetings,
   getAllMeetings,
-  getJob,
   pauseJob,
   resumeJob,
   cancelJob,
@@ -32,6 +31,9 @@ import {
   startMeetingProcessing,
 } from "../../services/meetingService.js";
 import { softDeleteMediaFile } from "../../services/trashService.js";
+import { api } from "../../lib/http/client.js";
+import { subscribeToJobProgress } from "../../services/jobProgressSocket.js";
+import { acceptJobProgressMessage, mergeWorkspaceJobProgress } from "../../services/jobProgressState.js";
 import {
   createFolder,
   getFolders,
@@ -65,8 +67,6 @@ const ACTIVE_MEETING_STATUSES = new Set([
   "CANCEL_REQUESTED",
 ]);
 const TERMINAL_JOB_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED", "FAILED", "DLQ", "CANCELLED"]);
-const JOB_POLL_INTERVAL_MS = 2500;
-const MAX_PARALLEL_JOB_POLLS = 5;
 const isMeetingActive = (meeting) =>
   ACTIVE_MEETING_STATUSES.has(String(meeting?.status || "").trim().toUpperCase());
 
@@ -119,9 +119,6 @@ const triggerBlobDownload = (blob, fileName) => {
 export default function FileManagerPage() {
   const [data, setData] = useState(EMPTY_PAGE);
   const [loading, setLoading] = useState(true);
-  const [isDocumentVisible, setIsDocumentVisible] = useState(
-    () => document.visibilityState !== "hidden",
-  );
   const [error, setError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("");
@@ -163,6 +160,7 @@ export default function FileManagerPage() {
   const inFlightRequestsRef = useRef(new Map());
   const activeQueryKeyRef = useRef("");
   const terminalJobIdsRef = useRef(new Set());
+  const progressSequenceRef = useRef(new Map());
   const navigate = useNavigate();
   const currentFolder = folders.find((folder) => folder.id === currentFolderId) || null;
   const childFolders = folders.filter((folder) => (folder.parentId || null) === currentFolderId)
@@ -287,73 +285,72 @@ export default function FileManagerPage() {
   const activeJobsKey = JSON.stringify(activeJobs);
 
   useEffect(() => {
-    const jobsToPoll = JSON.parse(activeJobsKey);
-    if (loading || !isDocumentVisible || jobsToPoll.length === 0) return undefined;
-
+    const jobsToSubscribe = JSON.parse(activeJobsKey);
+    if (loading || jobsToSubscribe.length === 0) return undefined;
     let cancelled = false;
-    let timer;
-    const poll = async () => {
-      let terminalObserved = false;
-      for (let index = 0; index < jobsToPoll.length; index += MAX_PARALLEL_JOB_POLLS) {
-        const batch = jobsToPoll.slice(index, index + MAX_PARALLEL_JOB_POLLS);
-        await Promise.all(batch.map(async ({ meetingId, jobId }) => {
-          if (cancelled || terminalJobIdsRef.current.has(jobId)) return;
-          try {
-            const job = await getJob(jobId);
-            if (cancelled) return;
-            const jobStatus = String(job?.status || "").trim().toUpperCase();
-            if (TERMINAL_JOB_STATUSES.has(jobStatus)) {
-              terminalJobIdsRef.current.add(jobId);
-              terminalObserved = true;
-              setData((currentData) => ({
-                ...currentData,
-                content: currentData.content.map((meeting) =>
-                  meeting.id === meetingId && meeting.activeJobId === jobId
-                    ? { ...meeting, status: jobStatus === "SUCCESS" || jobStatus === "SUCCEEDED" ? "COMPLETED" : jobStatus }
-                    : meeting,
-                ),
-              }));
-            } else if (ACTIVE_MEETING_STATUSES.has(jobStatus) || jobStatus === "PAUSED") {
-              terminalJobIdsRef.current.delete(jobId);
-              setData((currentData) => ({
-                ...currentData,
-                content: currentData.content.map((meeting) =>
-                  meeting.id === meetingId && meeting.activeJobId === jobId
-                    ? { ...meeting, status: jobStatus }
-                    : meeting,
-                ),
-              }));
-            }
-          } catch {
-            // Keep this job active and retry it on the next scheduled pass.
-          }
-        }));
+    const applyProgress = ({ meetingId, jobId, message }) => {
+      if (cancelled) return;
+      const progress = acceptJobProgressMessage(
+        progressSequenceRef.current, message, meetingId, jobId,
+      );
+      if (!progress) return;
+      const jobStatus = String(progress.status || "").trim().toUpperCase();
+      if (TERMINAL_JOB_STATUSES.has(jobStatus)) {
+        const wasTerminal = terminalJobIdsRef.current.has(jobId);
+        terminalJobIdsRef.current.add(jobId);
+        if (!wasTerminal) void loadMeetings({ background: true });
+      } else if (ACTIVE_MEETING_STATUSES.has(jobStatus) || jobStatus === "PAUSED") {
+        terminalJobIdsRef.current.delete(jobId);
       }
-      if (terminalObserved && !cancelled) void loadMeetings({ background: true });
-      if (!cancelled) timer = window.setTimeout(poll, JOB_POLL_INTERVAL_MS);
+      setData((currentData) => ({
+        ...currentData,
+        content: currentData.content.map((meeting) =>
+          mergeWorkspaceJobProgress(meeting, progress),
+        ),
+      }));
     };
-
-    timer = window.setTimeout(poll, JOB_POLL_INTERVAL_MS);
+    const unsubscribers = jobsToSubscribe.map(({ meetingId, jobId }) => {
+      const syncSnapshot = async () => {
+        try {
+          const snapshot = await api.get(`/jobs/${jobId}/snapshot`);
+          if (cancelled || snapshot?.jobId !== jobId || snapshot?.meetingId !== meetingId) return;
+          applyProgress({
+            meetingId,
+            jobId,
+          message: snapshot,
+          });
+        } catch {
+          // A fresh snapshot is requested after the next successful reconnect.
+        }
+      };
+      void syncSnapshot();
+      return subscribeToJobProgress(
+        jobId,
+        (event) => {
+          applyProgress({
+            meetingId,
+            jobId,
+            message: event,
+          });
+        },
+        (connected) => {
+          if (connected) void syncSnapshot();
+        },
+      );
+    });
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [activeJobsKey, isDocumentVisible, loadMeetings, loading]);
+  }, [activeJobsKey, loadMeetings, loading]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
-      const visible = document.visibilityState !== "hidden";
-      setIsDocumentVisible(visible);
+      if (document.visibilityState !== "hidden") void loadMeetings({ background: true });
     };
-    const refreshOnFocus = () => {
-      setIsDocumentVisible(true);
-    };
-
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    window.addEventListener("focus", refreshOnFocus);
+    window.addEventListener("focus", refreshWhenVisible);
     return () => {
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-      window.removeEventListener("focus", refreshOnFocus);
+      window.removeEventListener("focus", refreshWhenVisible);
     };
   }, [loadMeetings]);
 
@@ -1052,7 +1049,13 @@ export default function FileManagerPage() {
                             {formatDate(meeting.createdAt)}
                           </td>
                           <td className="px-4 py-3">
-                            <MeetingStatusBadge status={meeting.status} />
+                            <div className="flex flex-col items-start gap-1">
+                              <MeetingStatusBadge status={meeting.status} />
+                              {meeting.progressPercent != null && Number.isFinite(Number(meeting.progressPercent)) && <span className="text-[10px] text-slate-500">
+                                {meeting.currentStage ? `${meeting.currentStage} · ` : "Tiến độ · "}
+                                {Math.max(0, Math.min(100, Number(meeting.progressPercent)))}%
+                              </span>}
+                            </div>
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex justify-end gap-1">

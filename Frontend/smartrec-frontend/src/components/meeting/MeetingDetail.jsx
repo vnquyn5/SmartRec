@@ -7,6 +7,8 @@ export default function MeetingDetail({
   meeting,
   jobId,
   jobStatus,
+  progressPercent,
+  currentStage,
   mediaRef: suppliedMediaRef,
   speakers = [],
   onSaveSpeakers,
@@ -65,6 +67,8 @@ export default function MeetingDetail({
           onEvidenceClick={navigateToEvidence}
           onSaveSpeakers={onSaveSpeakers}
           aiStatus={aiStatus}
+          progressPercent={progressPercent}
+          currentStage={currentStage}
           jobLoading={jobLoading}
           speakerError={speakerError}
           speakerLoading={speakerLoading}

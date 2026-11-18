@@ -99,6 +99,10 @@ export async function getJob(id) {
   return httpClient.get(`/jobs/${id}`);
 }
 
+export async function getJobSnapshot(id) {
+  return httpClient.get(`/jobs/${id}/snapshot`);
+}
+
 export async function pauseJob(id) {
   return httpClient.post(`/jobs/${id}/pause`);
 }

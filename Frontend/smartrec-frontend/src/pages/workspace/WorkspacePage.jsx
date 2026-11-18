@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { cancelJob, deleteMeeting, getAllMeetings, getJob, pauseJob, resumeJob, retryJob } from "../../services/meetingService";
+import { cancelJob, deleteMeeting, getAllMeetings, getJobSnapshot, pauseJob, resumeJob, retryJob } from "../../services/meetingService";
 import { PauseIcon, PlayIcon, RefreshIcon } from "../../components/common/icons.jsx";
+import { subscribeToJobProgress } from "../../services/jobProgressSocket.js";
+import { acceptJobProgressMessage, mergeWorkspaceJobProgress } from "../../services/jobProgressState.js";
 import "./WorkspacePage.css";
 
-const POLL_INTERVAL_MS = 2500;
-const MAX_PARALLEL_JOB_POLLS = 5;
 const ACTIVE_STATUSES = new Set(["PENDING", "QUEUED", "PROCESSING", "RUNNING", "RETRYING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"]);
 const TERMINAL_JOB_STATUSES = new Set(["COMPLETED", "SUCCESS", "SUCCEEDED", "FAILED", "DLQ", "CANCELLED"]);
 const WORKSPACE_STATUSES = new Set([
@@ -70,11 +70,11 @@ export default function WorkspacePage() {
   const [error, setError] = useState("");
   const [busyJobId, setBusyJobId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const timerRef = useRef(null);
   const requestRef = useRef(null);
   const mountedRef = useRef(false);
   const terminalJobIdsRef = useRef(new Set());
   const jobActionInFlightRef = useRef(false);
+  const progressSequenceRef = useRef(new Map());
 
   const fetchMeetings = useCallback(async ({ initial = false } = {}) => {
     if (requestRef.current) return requestRef.current;
@@ -106,7 +106,6 @@ export default function WorkspacePage() {
     fetchMeetings({ initial: true });
     return () => {
       mountedRef.current = false;
-      window.clearTimeout(timerRef.current);
     };
   }, [fetchMeetings]);
 
@@ -117,55 +116,54 @@ export default function WorkspacePage() {
   const activeJobsKey = JSON.stringify(activeJobs);
 
   useEffect(() => {
-    window.clearTimeout(timerRef.current);
-    const jobsToPoll = JSON.parse(activeJobsKey);
-    if (jobsToPoll.length === 0) return undefined;
+    const jobsToSubscribe = JSON.parse(activeJobsKey);
+    if (jobsToSubscribe.length === 0) return undefined;
 
     let cancelled = false;
-    const schedule = () => {
-      timerRef.current = window.setTimeout(async () => {
-        if (cancelled || document.visibilityState === "hidden") {
-          if (!cancelled) schedule();
-          return;
-        }
-        let terminalObserved = false;
-        for (let index = 0; index < jobsToPoll.length; index += MAX_PARALLEL_JOB_POLLS) {
-          const batch = jobsToPoll.slice(index, index + MAX_PARALLEL_JOB_POLLS);
-          await Promise.all(batch.map(async ({ meetingId, jobId }) => {
-            if (cancelled || terminalJobIdsRef.current.has(jobId)) return;
-            try {
-              const job = await getJob(jobId);
-              if (cancelled || !mountedRef.current) return;
-              const jobStatus = String(job?.status || "").trim().toUpperCase();
-              if (TERMINAL_JOB_STATUSES.has(jobStatus)) {
-                terminalJobIdsRef.current.add(jobId);
-                terminalObserved = true;
-                setMeetings((current) => current.map((meeting) =>
-                  meeting.id === meetingId && meeting.activeJobId === jobId
-                    ? { ...meeting, status: jobStatus === "SUCCESS" || jobStatus === "SUCCEEDED" ? "COMPLETED" : jobStatus }
-                    : meeting,
-                ));
-              } else if (ACTIVE_STATUSES.has(jobStatus) || jobStatus === "PAUSED") {
-                terminalJobIdsRef.current.delete(jobId);
-                setMeetings((current) => current.map((meeting) =>
-                  meeting.id === meetingId && meeting.activeJobId === jobId
-                    ? { ...meeting, status: jobStatus }
-                    : meeting,
-                ));
-              }
-            } catch {
-              // Retry transient job status failures on the next scheduled pass.
-            }
-          }));
-        }
-        if (terminalObserved && !cancelled) await fetchMeetings();
-        if (!cancelled) schedule();
-      }, POLL_INTERVAL_MS);
+    const applyProgress = (meetingId, jobId, message) => {
+      if (cancelled || !mountedRef.current) return;
+      const progress = acceptJobProgressMessage(
+        progressSequenceRef.current, message, meetingId, jobId,
+      );
+      if (!progress) return;
+
+      const status = String(progress.status || "").trim().toUpperCase();
+      if (TERMINAL_JOB_STATUSES.has(status)) {
+        const alreadyTerminal = terminalJobIdsRef.current.has(jobId);
+        terminalJobIdsRef.current.add(jobId);
+        if (!alreadyTerminal) void fetchMeetings();
+      } else if (ACTIVE_STATUSES.has(status) || status === "PAUSED") {
+        terminalJobIdsRef.current.delete(jobId);
+      }
+      setMeetings((current) => current.map((meeting) =>
+        mergeWorkspaceJobProgress(meeting, progress),
+      ));
     };
-    schedule();
+
+    const syncSnapshot = async ({ meetingId, jobId }) => {
+      try {
+        const snapshot = await getJobSnapshot(jobId);
+        applyProgress(meetingId, jobId, snapshot);
+      } catch {
+        // The last meeting state remains visible; reconnect requests another snapshot.
+      }
+    };
+
+    // Read the persisted state once, then subscribe. Reconnect requests a fresh snapshot.
+    jobsToSubscribe.forEach((job) => void syncSnapshot(job));
+    const unsubscribe = jobsToSubscribe.map(({ meetingId, jobId }) =>
+      subscribeToJobProgress(
+        jobId,
+        (event) => applyProgress(meetingId, jobId, event),
+        (connected) => {
+          if (connected) void syncSnapshot({ meetingId, jobId });
+        },
+      ),
+    );
+
     return () => {
       cancelled = true;
-      window.clearTimeout(timerRef.current);
+      unsubscribe.forEach((remove) => remove());
     };
   }, [activeJobsKey, fetchMeetings]);
 
@@ -203,6 +201,7 @@ export default function WorkspacePage() {
     setBusyJobId(meeting.activeJobId);
     try {
       await action(meeting.activeJobId);
+      terminalJobIdsRef.current.delete(meeting.activeJobId);
       setMeetings((current) => current.map((item) => item.id === meeting.id ? { ...item, status: nextStatus } : item));
     } catch (actionError) {
       window.alert(actionError?.response?.data?.message || "Không thể cập nhật trạng thái xử lý.");
@@ -244,6 +243,9 @@ export default function WorkspacePage() {
             const status = getStatus(meeting);
             const duration = formatDuration(meeting.durationSeconds);
             const title = getMeetingTitle(meeting);
+            const parsedProgress = Number(meeting.progressPercent);
+            const hasProgress = meeting.progressPercent != null && Number.isFinite(parsedProgress);
+            const progressPercent = Math.max(0, Math.min(100, parsedProgress));
             return (
               <article key={meeting.id} className="meeting-card" onClick={() => navigate(`/meeting/${meeting.id}`)}>
                 <div className="meeting-card-thumbnail">
@@ -268,6 +270,22 @@ export default function WorkspacePage() {
                       <svg className="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
                       <span>{formatDate(meeting.createdAt)}</span>
                     </div>
+                    {hasProgress && <div className="job-progress-meta">
+                      <div className="job-progress-label">
+                        <span>{meeting.currentStage ? `Giai đoạn ${meeting.currentStage}` : "Tiến độ xử lý"}</span>
+                        <span>{Math.round(progressPercent)}%</span>
+                      </div>
+                      <div
+                        className="job-progress-track"
+                        role="progressbar"
+                        aria-label={`Tiến độ xử lý ${title}`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(progressPercent)}
+                      >
+                        <div className="job-progress-value" style={{ width: `${progressPercent}%` }} />
+                      </div>
+                    </div>}
                   </div>
                   <div className="meeting-card-actions">
                     <button className="btn-action btn-insights" onClick={(event) => { event.stopPropagation(); navigate(`/meeting/${meeting.id}`); }}>Xem chi tiết</button>

@@ -5,33 +5,33 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.Setter;
 
 @Getter
-@Setter
+@AllArgsConstructor
 public class JobProgressEventReponse {
 
-    private String eventType;
+    private final String eventType;
 
-    private String version;
+    private final String version;
 
-    private UUID jobId;
+    private final UUID jobId;
 
-    private UUID meetingId;
+    private final UUID meetingId;
 
-    private UUID eventId;
+    private final UUID eventId;
 
     // Số thứ tự event của Job
-    private Long sequence;
+    private final Long sequence;
 
-    private Instant timestamp;
+    private final Instant timestamp;
 
     @JsonProperty("current_stage")
-    private String currentStage;
+    private final String currentStage;
 
-    private String status;
+    private final String status;
 
     @JsonProperty("progress_percent")
-    private Integer progressPercent;
+    private final Integer progressPercent;
 }

@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.smartrec.model.dto.JobSnapshotDTO;
 import com.example.smartrec.service.JobProgressService;
+import com.example.smartrec.service.JobService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -18,11 +19,12 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class JobProgressController {
     private final JobProgressService jobProgressService;
+    private final JobService jobService;
 
     @GetMapping("/{jobId}/snapshot")
     public ResponseEntity<JobSnapshotDTO> getSnapshot(
             @PathVariable UUID jobId) {
-
+        jobService.getJobForCurrentUser(jobId);
         JobSnapshotDTO snapshot = jobProgressService.getSnapshot(jobId);
 
         return ResponseEntity.ok(snapshot);

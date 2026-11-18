@@ -45,8 +45,11 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
+                // WebSocket HTTP handshake is public; STOMP CONNECT and every private subscription require a User JWT.
+                .requestMatchers("/ws").permitAll()
                 // Guest bỏ qua JWT duy nhất trên share routes; các API meeting vẫn yêu cầu đăng nhập.
                 .requestMatchers("/public/share/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/jobs/*/snapshot").authenticated()
                 .requestMatchers("/jobs/*/callback").permitAll()
                 .requestMatchers(HttpMethod.POST, "/internal/jobs/*/ai-result").permitAll()
                 .requestMatchers(HttpMethod.POST, "/internal/stt/callback").permitAll()

@@ -198,6 +198,33 @@
   margin-bottom: 16px;
 }
 
+.job-progress-meta {
+  margin-top: 10px;
+}
+
+.job-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+  color: #9ca3af;
+  font-size: 0.72rem;
+}
+
+.job-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(51, 65, 85, 0.7);
+}
+
+.job-progress-value {
+  height: 100%;
+  border-radius: inherit;
+  background: #38bdf8;
+  transition: width 300ms ease;
+}
+
 .meta-item {
   display: flex;
   align-items: center;
