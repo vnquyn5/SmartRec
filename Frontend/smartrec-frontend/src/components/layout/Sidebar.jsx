@@ -9,6 +9,7 @@ const navItems = [
   { to: "/history", icon: "history", label: "Danh sách cuộc họp" },
   { to: "/workspace", icon: "workspace", label: "Không gian cuộc họp" },
   { to: "/governance", icon: "governance", label: "Quản trị AI & Usage" },
+  { to: "/admin/storage", icon: "storage", label: "Quản trị Storage" },
   { to: "/trash", icon: "trash", label: "Thùng rác" },
   { to: "/export", icon: "export", label: "Xuất dữ liệu" },
 ];
@@ -91,6 +92,21 @@ const icons = {
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  storage: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <ellipse cx="10" cy="5" rx="6.5" ry="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M3.5 5v5c0 1.38 2.91 2.5 6.5 2.5s6.5-1.12 6.5-2.5V5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M3.5 10v5c0 1.38 2.91 2.5 6.5 2.5s6.5-1.12 6.5-2.5v-5"
+        stroke="currentColor"
+        strokeWidth="1.5"
       />
     </svg>
   ),

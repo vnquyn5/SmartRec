@@ -9,6 +9,7 @@ import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
 import TrashPage from "../pages/trash/TrashPage";
 import WorkspacePage from "../pages/workspace/WorkspacePage";
 import ModelGovernancePage from "../pages/governance/ModelGovernancePage";
+import StorageAdminPage from "../pages/storage/StorageAdminPage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
@@ -35,6 +36,7 @@ const AppRoutes = () => {
           <Route path="/history" element={<FileManagerPage />} />
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/governance" element={<ModelGovernancePage />} />
+          <Route path="/admin/storage" element={<StorageAdminPage />} />
           <Route path="/trash" element={<TrashPage />} />
         </Route>
         <Route path="/profile" element={<ProfilePage />} />

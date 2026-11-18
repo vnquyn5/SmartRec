@@ -104,4 +104,19 @@ public interface MediaFileRepository extends JpaRepository <MediaFile,UUID >{
               and mf.purge_at <= :now
             """)
     List<MediaFile> findExpiredTrash(@Param("status") String status, @Param("now") Instant now);
+
+    @Query("""
+            select mf from MediaFile mf
+            where (:status is null or mf.status = :status)
+              and (
+                    :keyword is null
+                    or lower(mf.original_name) like lower(concat('%', cast(:keyword as string), '%'))
+                    or lower(mf.object_key) like lower(concat('%', cast(:keyword as string), '%'))
+                    or lower(mf.mime_type) like lower(concat('%', cast(:keyword as string), '%'))
+              )
+            """)
+    Page<MediaFile> adminSearchStorageObjects(
+            @Param("status") String status,
+            @Param("keyword") String keyword,
+            Pageable pageable);
 }

@@ -79,4 +79,7 @@ public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
     List<Meeting> findAllOwnedMeetingsByIds(
             @Param("userId") UUID userId,
             @Param("meetingIds") Collection<UUID> meetingIds);
+
+    @Query("select m.media_file_id from Meeting m where m.media_file_id in :mediaFileIds")
+    List<UUID> findLinkedMediaFileIds(@Param("mediaFileIds") Collection<UUID> mediaFileIds);
 }
