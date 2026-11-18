@@ -15,4 +15,7 @@ public interface SpeakerRepository extends JpaRepository<Speaker, UUID> {
     );
 
     List<Speaker> findByMeetingId(UUID meetingId);
+
+    /** Kiểm tra cả UUID lẫn meeting sở hữu; speaker của meeting khác không hợp lệ trong bộ lọc này. */
+    boolean existsByIdAndMeetingId(UUID id, UUID meetingId);
 }
