@@ -119,6 +119,27 @@ export default function AiUsageBadge() {
                 <span>Tổng Tokens:</span>
                 <span className="font-mono text-amber-400">{aiData.total_tokens.toLocaleString()}</span>
               </div>
+              <div className="flex justify-between text-slate-400">
+                <span>Chi phí ước tính:</span>
+                <span className="font-mono text-emerald-400">
+                  {selectedModel === 'Local Qwen' ? '$0.00 (Local)' : '~$0.0007'}
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-[#172542] flex items-center justify-between">
+              <a
+                href="/governance?tab=usage"
+                className="text-[11px] font-semibold text-[#38bdf8] hover:text-white transition"
+              >
+                Mở AI Usage Dashboard →
+              </a>
+              <a
+                href="/governance?tab=models"
+                className="text-[11px] text-slate-400 hover:text-slate-200 transition"
+              >
+                Governance
+              </a>
             </div>
           </div>
         </div>

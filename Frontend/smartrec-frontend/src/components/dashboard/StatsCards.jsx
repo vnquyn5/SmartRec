@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { getAiUsageDashboard } from "../../services/modelGovernanceService";
 
 const cards = [
   {
@@ -96,10 +97,28 @@ const StatsCards = ({
   totalMeetings = 0,
   isLoading = false,
 }) => {
+  const [aiJobCount, setAiJobCount] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    getAiUsageDashboard({ range: "30d" })
+      .then((res) => {
+        if (alive) {
+          setAiJobCount(res?.summary?.totalJobs ?? 0);
+        }
+      })
+      .catch(() => {
+        // Safe fallback
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const values = [
     isLoading ? "..." : totalMeetings.toString(),
     isLoading ? "..." : formatHours(meetings),
-    "Chưa có API",
+    aiJobCount === null ? "..." : aiJobCount.toString(),
   ];
 
   return (

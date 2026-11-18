@@ -8,6 +8,7 @@ const navItems = [
   { to: "/upload", icon: "upload", label: "Tải lên cuộc họp" },
   { to: "/history", icon: "history", label: "Danh sách cuộc họp" },
   { to: "/workspace", icon: "workspace", label: "Không gian cuộc họp" },
+  { to: "/governance", icon: "governance", label: "Quản trị AI & Usage" },
   { to: "/trash", icon: "trash", label: "Thùng rác" },
   { to: "/export", icon: "export", label: "Xuất dữ liệu" },
 ];
@@ -77,6 +78,16 @@ const icons = {
       />
       <path
         d="M10 11V17M3 7l7 4 7-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  governance: (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M3 14.5h3V9H3v5.5zm5.5 0h3V4.5h-3v10zm5.5 0h3V7h-3v7.5z"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinejoin="round"
