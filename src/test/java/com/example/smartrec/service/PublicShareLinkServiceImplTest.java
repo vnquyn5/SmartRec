@@ -39,6 +39,7 @@ import com.example.smartrec.repository.PublicShareLinkRepository;
 import com.example.smartrec.repository.ShareLinkAuditRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.impl.PublicShareLinkServiceImpl;
+import com.example.smartrec.security.JwtService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
@@ -52,6 +53,7 @@ class PublicShareLinkServiceImplTest {
     @Mock PasswordEncoder passwordEncoder;
     @Mock RedisTemplate<String, Object> redisTemplate;
     @Mock ValueOperations<String, Object> valueOperations;
+    @Mock JwtService jwtService;
     @InjectMocks PublicShareLinkServiceImpl service;
 
     private final UUID userId = UUID.randomUUID();
@@ -123,6 +125,25 @@ class PublicShareLinkServiceImplTest {
 
         assertThrows(Exception.class, () -> service.access(token, null));
         verify(meetingRepository, never()).findById(any());
+    }
+
+    @Test
+    void shareWithoutPasscodeRemainsAccessibleWithoutGuestJwt() {
+        String token = "random-share-token";
+        PublicShareLink link = new PublicShareLink();
+        link.setId(UUID.randomUUID());
+        link.setTokenHash(sha256(token));
+        link.setMeetingId(meetingId);
+        link.setStatus(ShareLinkStatus.ACTIVE);
+        when(shareLinkRepository.findByTokenHash(sha256(token))).thenReturn(Optional.of(link));
+        Meeting sharedMeeting = meeting(userId);
+        sharedMeeting.setMedia_file_id(UUID.randomUUID());
+        when(meetingRepository.findById(meetingId)).thenReturn(Optional.of(sharedMeeting));
+        when(mediaFileRepository.findById(sharedMeeting.getMedia_file_id()))
+                .thenReturn(Optional.of(new MediaFile()));
+
+        assertEquals(meetingId, service.access(token, null).meetingId());
+        verifyNoInteractions(jwtService);
     }
 
     @Test

@@ -46,7 +46,6 @@ import com.example.smartrec.repository.ShareLinkAuditRepository;
 import com.example.smartrec.repository.UserRepository;
 import com.example.smartrec.service.PublicShareLinkService;
 import com.example.smartrec.security.JwtService;
-import io.jsonwebtoken.Claims;
 
 import lombok.RequiredArgsConstructor;
 
@@ -189,11 +188,7 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
         Meeting meeting = publicMeeting(link); // Đảm bảo Meeting và media vẫn còn được phép truy cập.
         if (link.getPasscodeHash() != null) {
             try {
-                Claims claims = jwtService.parseClaims(accessToken); // Xác minh chữ ký và thời hạn JWT.
-                // So khớp loại token và cả hai định danh để chặn dùng JWT của link/meeting khác.
-                if (!"GUEST".equals(claims.get("type", String.class))
-                        || !link.getId().toString().equals(claims.get("shareLinkId", String.class))
-                        || !link.getMeetingId().toString().equals(claims.get("meetingId", String.class))) throw publicNotFound();
+                jwtService.requireGuestClaims(accessToken, link);
             } catch (RuntimeException ex) { throw publicNotFound(); } // Lỗi JWT trả cùng lỗi chung, không tiết lộ chi tiết.
         }
         // Chỉ trả các metadata public; method này không trả object key, transcript hay kết quả AI.
@@ -231,7 +226,7 @@ public class PublicShareLinkServiceImpl implements PublicShareLinkService {
         Instant expiresAt = now.plusMillis(guestExpirationMillis); // TTL ngắn cấu hình trong application.yml.
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(expiresAt)) expiresAt = link.getExpiresAt(); // Không sống lâu hơn link.
         if (!expiresAt.isAfter(now)) throw publicNotFound(); // Không phát JWT đã hết hạn hoặc sắp hết hạn.
-        String guestJwt = jwtService.generateGuestToken(link.getId(), link.getMeetingId(), Date.from(expiresAt)); // Ký JWT gắn đúng link/meeting.
+        String guestJwt = jwtService.generateGuestToken(link.getId(), link.getMeetingId(), link.getPasscodeHash(), Date.from(expiresAt));
         return new VerifySharePasscodeResponse(guestJwt, expiresAt); // Trả token và thời điểm hết hạn cho client.
     }
 

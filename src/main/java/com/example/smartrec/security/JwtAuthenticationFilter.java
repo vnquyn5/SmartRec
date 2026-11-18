@@ -6,6 +6,10 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -63,16 +67,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Claims claims = jwtService.parseClaims(token); // Chữ ký và cấu trúc JWT đã được kiểm tra.
                 if ("GUEST".equals(claims.get("type", String.class))) {
                     // Không cho Guest dùng JWT này ở API Owner hoặc API nội bộ.
-                    if (!request.getServletPath().startsWith("/public/share/")) {
+                    if (!"GET".equals(request.getMethod())
+                            || !request.getServletPath().matches("/public/share/[^/]+")) {
                         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                         return;
                     }
                     UUID shareLinkId = UUID.fromString(claims.get("shareLinkId", String.class)); // Đọc link ID đã ký trong token.
-                    UUID meetingId = UUID.fromString(claims.get("meetingId", String.class)); // Đọc meeting ID đã ký trong token.
                     var link = shareLinkRepository.findById(shareLinkId).orElseThrow(); // Tải trạng thái link hiện tại.
-                    // Link bị revoke, đổi meeting hoặc hết hạn sẽ làm JWT mất hiệu lực ngay.
+                    jwtService.requireGuestClaims(token, link);
+                    String pathToken = request.getServletPath().substring("/public/share/".length());
+                    if (!tokenHash(pathToken).equals(link.getTokenHash())) {
+                        throw new IllegalArgumentException("Guest share link mismatch");
+                    }
+                    // Link bị revoke, đổi passcode hoặc hết hạn sẽ làm JWT mất hiệu lực ngay.
                     if (link.getStatus() != ShareLinkStatus.ACTIVE
-                            || !link.getMeetingId().equals(meetingId)
                             || (link.getExpiresAt() != null && !link.getExpiresAt().isAfter(java.time.Instant.now()))) {
                         throw new IllegalArgumentException("Guest share link is unavailable");
                     }
@@ -118,5 +126,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private static String tokenHash(String token) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(token.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 unavailable", ex);
+        }
     }
 }
