@@ -341,8 +341,8 @@ export async function saveGovernancePolicy(policy) {
     policy?.geminiFallbackEnabled !== undefined
       ? Boolean(policy.geminiFallbackEnabled)
       : policy?.autoFallback !== undefined
-      ? Boolean(policy.autoFallback)
-      : current.geminiFallbackEnabled;
+        ? Boolean(policy.autoFallback)
+        : current.geminiFallbackEnabled;
 
   const sanitized = {
     routingMode: policy?.routingMode === 'cloud_first' ? 'cloud_first' : 'local_first',
@@ -383,10 +383,10 @@ export async function setActiveModel(stage, modelName, version) {
   const updatedModels =
     target.status === 'disabled'
       ? models.map((m) =>
-          m.model_name === modelName && m.version === version
-            ? { ...m, status: 'enabled' }
-            : m
-        )
+        m.model_name === modelName && m.version === version
+          ? { ...m, status: 'enabled' }
+          : m
+      )
       : models;
 
   const currentPolicy = loadLocalPolicy();
@@ -536,6 +536,11 @@ export function aggregateAiUsage(
     ? vramLogs.reduce((s, l) => s + Number(l.vramUsage), 0) / vramLogs.length
     : 0;
 
+  const localTokens = filteredLogs
+    .filter((l) => l.runtime === 'local')
+    .reduce((s, l) => s + (Number(l.totalTokens) || 0), 0);
+  const estimatedLocalSavingsUsd = (localTokens / 1000) * 0.00035;
+
   // Daily series grouped by YYYY-MM-DD
   const dailyMap = new Map();
   filteredLogs.forEach((log) => {
@@ -549,24 +554,69 @@ export function aggregateAiUsage(
         label,
         totalTokens: 0,
         estimatedCost: 0,
+        localCost: 0,
+        cloudCost: 0,
         jobCount: 0,
         fallbackCount: 0,
         localCount: 0,
         cloudCount: 0,
+        _cpuSum: 0,
+        _cpuCount: 0,
+        _ramSum: 0,
+        _ramCount: 0,
+        _vramSum: 0,
+        _vramCount: 0,
+        _latencySum: 0,
       });
     }
     const bucket = dailyMap.get(dateKey);
+    const cost = Number(log.estimatedCost) || 0;
     bucket.totalTokens += Number(log.totalTokens) || 0;
-    bucket.estimatedCost += Number(log.estimatedCost) || 0;
+    bucket.estimatedCost += cost;
     bucket.jobCount += 1;
+    bucket._latencySum += Number(log.processingTime) || 0;
     if (log.fallbackUsed) bucket.fallbackCount += 1;
-    if (log.runtime === 'local') bucket.localCount += 1;
-    else bucket.cloudCount += 1;
+    if (log.runtime === 'local') {
+      bucket.localCount += 1;
+      bucket.localCost += cost;
+    } else {
+      bucket.cloudCount += 1;
+      bucket.cloudCost += cost;
+    }
+    if (log.cpuUsage != null) {
+      bucket._cpuSum += Number(log.cpuUsage) || 0;
+      bucket._cpuCount += 1;
+    }
+    if (log.ramUsage != null) {
+      bucket._ramSum += Number(log.ramUsage) || 0;
+      bucket._ramCount += 1;
+    }
+    if (log.vramUsage != null) {
+      bucket._vramSum += Number(log.vramUsage) || 0;
+      bucket._vramCount += 1;
+    }
   });
 
-  const dailySeries = Array.from(dailyMap.values()).sort((a, b) =>
-    a.date.localeCompare(b.date)
-  );
+  const dailySeries = Array.from(dailyMap.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(
+      ({
+        _cpuSum,
+        _cpuCount,
+        _ramSum,
+        _ramCount,
+        _vramSum,
+        _vramCount,
+        _latencySum,
+        ...rest
+      }) => ({
+        ...rest,
+        avgCpuUsage: _cpuCount ? Number((_cpuSum / _cpuCount).toFixed(1)) : 0,
+        avgRamGb: _ramCount ? Number((_ramSum / _ramCount / 1024).toFixed(2)) : 0,
+        avgVramGb: _vramCount ? Number((_vramSum / _vramCount / 1024).toFixed(2)) : 0,
+        avgLatency: rest.jobCount ? Number((_latencySum / rest.jobCount).toFixed(2)) : 0,
+      })
+    );
 
   // Model breakdown
   const modelMap = new Map();
@@ -617,6 +667,7 @@ export function aggregateAiUsage(
       avgCpuUsage,
       avgRamUsage,
       avgVramUsage,
+      estimatedLocalSavingsUsd,
     },
     dailySeries,
     modelBreakdown,

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ActiveModelControlCard from '../../components/governance/ActiveModelControlCard';
 import ModelRegistryPanel from '../../components/governance/ModelRegistryPanel';
-import AiUsageDashboard from '../../components/governance/AiUsageDashboard';
+import AIUsageDashboard from '../../components/governance/AIUsageDashboard';
 import {
   deleteCustomModel,
   getAiUsageDashboard,
@@ -158,21 +158,19 @@ export default function ModelGovernancePage() {
               Quản trị Model AI &amp; Thống kê Sử dụng
             </h1>
             <span
-              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
-                dataSource === 'api'
+              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${dataSource === 'api'
                   ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/40'
                   : 'bg-sky-950/40 text-[#38bdf8] border-[#38bdf8]/30'
-              }`}
+                }`}
             >
               {dataSource === 'api' ? 'Backend API Connected' : 'Local Registry & Telemetry'}
             </span>
             {policy && (
               <span
-                className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
-                  fallbackOn
+                className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${fallbackOn
                     ? 'bg-amber-950/40 text-amber-300 border-amber-500/40'
                     : 'bg-slate-900 text-slate-400 border-slate-700'
-                }`}
+                  }`}
               >
                 Gemini Fallback: {fallbackOn ? 'ON' : 'OFF'}
               </span>
@@ -191,22 +189,20 @@ export default function ModelGovernancePage() {
           <button
             type="button"
             onClick={() => switchTab('models')}
-            className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${
-              activeTab === 'models'
+            className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${activeTab === 'models'
                 ? 'bg-[#2563eb] text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
-            }`}
+              }`}
           >
             Model Governance ({models.length})
           </button>
           <button
             type="button"
             onClick={() => switchTab('usage')}
-            className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${
-              activeTab === 'usage'
+            className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${activeTab === 'usage'
                 ? 'bg-[#2563eb] text-white shadow-md'
                 : 'text-slate-400 hover:text-white'
-            }`}
+              }`}
           >
             AI Usage Dashboard
           </button>
@@ -216,11 +212,10 @@ export default function ModelGovernancePage() {
       {pageNotice.message && (
         <div
           role={pageNotice.type === 'error' ? 'alert' : 'status'}
-          className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border text-xs ${
-            pageNotice.type === 'error'
+          className={`flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl border text-xs ${pageNotice.type === 'error'
               ? 'bg-rose-950/35 border-rose-500/40 text-rose-300'
               : 'bg-emerald-950/35 border-emerald-500/40 text-emerald-300'
-          }`}
+            }`}
         >
           <span>{pageNotice.message}</span>
           <button
@@ -258,7 +253,7 @@ export default function ModelGovernancePage() {
           />
         </div>
       ) : (
-        <AiUsageDashboard
+        <AIUsageDashboard
           usageData={usageData}
           policy={policy}
           filters={usageFilters}

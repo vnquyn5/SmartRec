@@ -136,7 +136,7 @@ function UsageLogDetailModal({ log, onClose }) {
   );
 }
 
-export default function AiUsageDashboard({
+export default function AIUsageDashboard({
   usageData,
   policy,
   filters,
@@ -266,24 +266,40 @@ export default function AiUsageDashboard({
           </div>
         </div>
 
-        {/* KPI 2: Estimated Cost */}
+        {/* KPI 2: Estimated Cost ($0 Local highlight) */}
         <div
           className={`rounded-2xl border p-4 shadow-md ${
             isNearBudget
               ? 'border-amber-500/50 bg-amber-950/15'
+              : (summary.totalCost || 0) === 0
+              ? 'border-emerald-500/40 bg-emerald-950/10'
               : 'border-[#1b2640] bg-[#0c1324]'
           }`}
         >
           <div className="text-[11px] font-medium text-slate-400">Chi phí Ước tính</div>
-          <div className="text-xl font-bold font-mono text-amber-300 mt-1.5">
-            {loading ? '...' : `$${Number(summary.totalCost || 0).toFixed(4)}`}
+          <div
+            className={`text-xl font-bold font-mono mt-1.5 ${
+              (summary.totalCost || 0) === 0 ? 'text-emerald-300' : 'text-amber-300'
+            }`}
+          >
+            {loading
+              ? '...'
+              : (summary.totalCost || 0) === 0
+              ? '$0.00 (Local)'
+              : `$${Number(summary.totalCost || 0).toFixed(4)}`}
           </div>
           <div className="text-[11px] text-slate-400 mt-1">
-            Ngân sách: ${budgetUsd}/tháng
+            Ngân sách: ${budgetUsd}/tháng · Tiết kiệm ~${Number(summary.estimatedLocalSavingsUsd || 0).toFixed(4)}
           </div>
           <div className="mt-2.5 w-full h-1.5 rounded-full bg-[#152037] overflow-hidden">
             <div
-              className={`h-full ${isNearBudget ? 'bg-rose-400' : 'bg-amber-400'}`}
+              className={`h-full ${
+                isNearBudget
+                  ? 'bg-rose-400'
+                  : (summary.totalCost || 0) === 0
+                  ? 'bg-emerald-400'
+                  : 'bg-amber-400'
+              }`}
               style={{ width: `${Math.max(2, budgetPct)}%` }}
             />
           </div>
