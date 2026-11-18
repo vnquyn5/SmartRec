@@ -1,0 +1,99 @@
+{
+    "mock_stt": [
+        {
+            "timestamp_start": "00:00:00",
+            "timestamp_end": "00:00:15",
+            "speaker_id": "spk_1",
+            "speaker_name_temp": "John Doe",
+            "text": "Hello, welcome to our service. How can I assist you today?"
+        },
+        {
+            "timestamp_start": "00:00:32",
+            "timestamp_end": "00:00:48",
+            "speaker_id": "spk_1",
+            "speaker_name_temp": "Alex Smith",
+            "text": "First, I would like to know more about your product offerings and the features they include."
+        },
+        {
+            "timestamp_start": "00:01:10",
+            "timestamp_end": "00:01:25",
+            "speaker_id": "spk_2",
+            "speaker_name_temp": "Jane Doe",
+            "text": "Certainly! Our products are designed to meet a variety of needs. We offer a range of features including real-time analytics, customizable dashboards, and seamless integration with existing systems."
+        },
+        {
+            "timestamp_start": "00:12:45",
+            "timestamp_end": "00:13:00",
+            "speaker_id": "spk_3",
+            "speaker_name_temp": "Michael Johnson",
+            "text": "That's great to hear. Can you provide some examples of how your clients have benefited from using your products?"
+        }
+    ],
+    "mock_ocr": [
+        {
+            "timestamp": "05:12",
+            "thumbnail_icon": "play",
+            "slide_title": "Q4 Product Roadmap",
+            "raw_text": "Backend Refactor: Sprint 3-4 | New API: Sprint 5 | Launch: Dec 15",
+            "tags": ["MILESTONE 3", "TARGET Dec 15"]
+        },
+        {
+            "timestamp": "08:47",
+            "thumbnail_icon": "activity",
+            "slide_title": "Q4 Revenue Breakdown",
+            "raw_text": "Total_Revenue: $2.4M | YoY Growth: +18% | Churn: 3.1%",
+            "tags": ["REVENUE $2.4M", "YOY +18%", "CHURN 3.1%"]
+        },
+        {
+            "timestamp_start": "12:30",
+            "timestamp": "12:30",
+            "thumbnail_icon": "calendar",
+            "slide_title": "Project Timeline Overview",
+            "raw_text": "Kickoff: Nov 1 | Beta: Jan 15 | GA Release: Feb 28",
+            "tags": ["DURATION 16 wks", "GA DATE Feb 28"]
+        }
+    ],
+    "mock_summary": {
+        "summary": [
+            {
+                "heading": "1. muc tieu va dinh huong quy 4",
+                "content": "Trong quy 4, muc tieu cua chung ta la tang truong doanh thu 20% so voi quy truoc, giam ty le chuyen doi khach hang moi xuong duoi 5%, va hoan thanh cac muc tieu phat trien san pham theo lich trinh."
+            },
+            {
+                "heading": "2. cac san pham va tinh nang chinh",
+                "content": "chung ta se ra mat cac tinh nang moi nhu tu dong hoa quy trinh, bao cao thoi gian thuc, va tu dong hoa bao cao. nhung tinh nang nay se giup khach hang tiet kiem thoi gian va nang cao hieu suat."
+            },
+            {
+                "heading": "3. loi ich cho khach hang",
+                "content": "dam bao rang khach hang se co trai nghiem tot hon voi san pham cua chung ta, giup ho giam thoi gian va nang cao hieu suat trong cong viec hang ngay."
+            }
+        ],
+        "task": [
+            {
+                "task_index": 1,
+                "timestamp": "13:12",
+                "content": "hoan thien dev environtement va cai dat cac cong cu can thiet cho quy trinh phat trien.",
+                "assignee": "dev_team",
+                "responsible": "dev_team_lead",
+                "deadline": "2026-05-10"
+            },
+            {
+                "task_index": 2,
+                "timestamp": "13:40",
+                "content": "dong bo du lieu tu he thong cu sang he thong moi va kiem tra tinh chinh xac cua du lieu.",
+                "assignee": "Alex Nguyen",
+                "responsible": "Sarah Lee",
+                "deadline": "2026-02-10"
+            },
+            {
+                "task_index": 3,
+                "timestamp": "14:05",
+                "content": "danh gia lai resource va dieu chinh ke hoach phat trien de dam bao tien do du an.",
+                "assignee": "",
+                "responsible": "",
+                "deadline": ""
+            }
+        ]
+    }
+}
+

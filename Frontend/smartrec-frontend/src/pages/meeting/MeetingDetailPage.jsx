@@ -403,6 +403,18 @@ export default function MeetingDetailPage() {
             <span>Chia sẻ</span>
           </button>
         </div>
+        {isCurrentMeeting && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#233357] bg-[#141d33] hover:bg-[#1a2642] text-xs font-semibold text-slate-200 transition shadow-sm"
+            >
+              <ShareIcon className="w-3.5 h-3.5" />
+              <span>Chia sẻ</span>
+            </button>
+          </div>
+        )}
       </div>
       {displayState === "loading" && <p role="status" className="text-sm text-slate-400 mb-4 shrink-0">Đang tải cuộc họp…</p>}
       {displayState === "error" && <p role="alert" className="text-sm text-red-300 mb-4 shrink-0">{meetingError || "Không thể tải thông tin cuộc họp."}</p>}
@@ -411,8 +423,10 @@ export default function MeetingDetailPage() {
         key={id}
         meeting={meeting}
         mediaRef={mediaRef}
+        job={job}
         jobId={job?.id || meeting?.activeJobId}
         jobStatus={job?.status || meeting?.status}
+        fileType={fileType}
         speakers={currentSpeakers}
         aiStatus={aiStatus}
         jobLoading={jobLoading}
@@ -432,7 +446,13 @@ export default function MeetingDetailPage() {
         retrying={retrying}
         onSaveSpeakers={displayState === "completed" && !speakerError ? handleSaveSpeakers : undefined}
       />}
-      {shareMeeting && <ShareMeetingModal meeting={shareMeeting} onClose={() => setShareMeeting(null)} />}
+      {shareMeeting && (
+        <ShareMeetingModal
+          meeting={shareMeeting}
+          isOwner={shareMeeting?.isOwner !== false}
+          onClose={() => setShareMeeting(null)}
+        />
+      )}
     </div>
   );
 }

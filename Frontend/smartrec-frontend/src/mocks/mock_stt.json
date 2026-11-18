@@ -1,0 +1,31 @@
+[
+  {
+    "timestamp_start": "00:00:00",
+    "timestamp_end": "00:00:15",
+    "speaker_id": "spk_1",
+    "speaker_name_temp": "John Doe",
+    "text": "Hello, welcome to our service. How can I assist you today?"
+  },
+  {
+    "timestamp_start": "00:00:32",
+    "timestamp_end": "00:00:48",
+    "speaker_id": "spk_1",
+    "speaker_name_temp": "Alex Smith",
+    "text": "First, I would like to know more about your product offerings and the features they include."
+  },
+  {
+    "timestamp_start": "00:01:10",
+    "timestamp_end": "00:01:25",
+    "speaker_id": "spk_2",
+    "speaker_name_temp": "Jane Doe",
+    "text": "Certainly! Our products are designed to meet a variety of needs. We offer a range of features including real-time analytics, customizable dashboards, and seamless integration with existing systems."
+  },
+  {
+    "timestamp_start": "00:12:45",
+    "timestamp_end": "00:13:00",
+    "speaker_id": "spk_3",
+    "speaker_name_temp": "Michael Johnson",
+    "text": "That's great to hear. Can you provide some examples of how your clients have benefited from using your products?"
+  }
+]
+

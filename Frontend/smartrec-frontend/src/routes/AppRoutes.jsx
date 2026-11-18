@@ -5,24 +5,33 @@ import DashboardLayout from "../components/layout/DashboardLayout";
 import UploadPage from "../pages/upload/UploadPage";
 import FileManagerPage from "../pages/meeting/FileManagerPage";
 import MeetingDetailPage from "../pages/meeting/MeetingDetailPage";
+import GuestMeetingPage from "../pages/meeting/GuestMeetingPage";
 import TrashPage from "../pages/trash/TrashPage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
 import ForgotPasswordPage from "../pages/auth/ForgotPasswordPage";
 import ProfilePage from "../pages/auth/ProfilePage";
+import RealtimeStepperInteractiveTest from "../components/meeting/RealtimeStepperInteractiveTest";
+import ExplainabilityDrawerInteractiveTest from "../components/meeting/ExplainabilityDrawerInteractiveTest";
+import ShareManagementInteractiveTest from "../components/meeting/ShareManagementInteractiveTest";
 
 import { RequireAuth } from "../features/auth/RequireAuth";
 
 const AppRoutes = () => {
   return (
     <Routes>
-      {/* Authentication */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
-      {/* Protected routes */}
+      <Route path="/shared/meeting/:id" element={<GuestMeetingPage />} />
+      <Route path="/public/meeting/:id" element={<GuestMeetingPage />} />
+      <Route path="/share/:id" element={<GuestMeetingPage />} />
+      <Route path="/test/stepper" element={<div className="min-h-screen bg-[#060b17] p-6"><RealtimeStepperInteractiveTest /></div>} />
+      <Route path="/test/explainability" element={<div className="min-h-screen bg-[#060b17] p-6"><ExplainabilityDrawerInteractiveTest /></div>} />
+      <Route path="/test/share-modal" element={<div className="min-h-screen bg-[#060b17] p-6"><ShareManagementInteractiveTest /></div>} />
+
       <Route element={<RequireAuth />}>
         <Route path="/" element={<Navigate to="/history" replace />} />
         <Route path="/dashboard" element={<Navigate to="/history" replace />} />

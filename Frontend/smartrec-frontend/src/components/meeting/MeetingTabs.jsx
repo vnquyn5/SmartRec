@@ -2,6 +2,9 @@ import React, { useState } from "react";
 import MeetingTasksTab from "./MeetingTasksTab";
 import MeetingSummaryTab from "./MeetingSummaryTab";
 import SpeakerManagementPanel from "./SpeakerManagementPanel";
+import SlideGallery from "./SlideGallery";
+import AiUsageBadge from "./AiUsageBadge";
+import ExplainabilityDrawer from "./ExplainabilityDrawer";
 
 function JobProcessingNotice({
   aiStatus,
@@ -122,6 +125,7 @@ function JobProcessingNotice({
 }
 
 export default function MeetingTabs({
+  fileType = "video",
   speakers = [],
   mediaRef,
   onSaveSpeakers,
@@ -145,6 +149,8 @@ export default function MeetingTabs({
   retrying,
 }) {
   const [activeTab, setActiveTab] = useState("speaker");
+  const [explainabilityOpen, setExplainabilityOpen] = useState(false);
+  const [selectedEvidence] = useState(null);
 
   // Khai báo các tab theo yêu cầu
   const tabs = [
@@ -201,6 +207,24 @@ export default function MeetingTabs({
         </svg>
       ),
     },
+    ...(fileType === "video"
+      ? [
+          {
+            id: "slide",
+            label: "Slide Keyframes & OCR",
+            icon: (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -214,17 +238,20 @@ export default function MeetingTabs({
             Không gian phân tích AI
           </h2>
         </div>
-        {results?.llmProvider && (
-          <span
-            className="max-w-[48%] shrink-0 truncate rounded-full border border-[#20304e] bg-[#101a2d] px-2.5 py-1 text-[10px] text-slate-300"
-            title={`AI provider: ${results.llmProvider}`}
-          >
-            <span className="text-slate-500">Provider:</span>{" "}
-            <span className="font-semibold text-sky-300">
-              {results.llmProvider}
+        <div className="flex items-center gap-2 shrink-0">
+          {results?.llmProvider && (
+            <span
+              className="max-w-[200px] shrink-0 truncate rounded-full border border-[#20304e] bg-[#101a2d] px-2.5 py-1 text-[10px] text-slate-300"
+              title={`AI provider: ${results.llmProvider}`}
+            >
+              <span className="text-slate-500">Provider:</span>{" "}
+              <span className="font-semibold text-sky-300">
+                {results.llmProvider}
+              </span>
             </span>
-          </span>
-        )}
+          )}
+          <AiUsageBadge />
+        </div>
       </div>
       {/* Tab Navigation Header chuẩn Figma */}
       <div
@@ -362,7 +389,18 @@ export default function MeetingTabs({
             )}
           </div>
         )}
+        {activeTab === "slide" && <SlideGallery onSeekSegment={onSeekSegment} />}
       </div>
+
+      {/* Slide-over Explainability Drawer */}
+      <ExplainabilityDrawer
+        isOpen={explainabilityOpen}
+        evidence={selectedEvidence}
+        fileType={fileType}
+        onClose={() => setExplainabilityOpen(false)}
+        onSeekMedia={onSeekSegment}
+        onSeekSlide={onSeekSegment}
+      />
     </div>
   );
 }

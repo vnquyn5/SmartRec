@@ -88,7 +88,7 @@ interface PersistedItem {
 
 const STORAGE_KEY = "smartrec.largeUpload.sessions.v1";
 const MAX_RETRIES = 3;
-const CONCURRENCY = 3;
+const CONCURRENCY = 4; // Tăng lên 4 luồng song song để tận dụng tối đa băng thông
 const MERGE_POLL_INTERVAL_MS = 1750;
 const MERGE_POLL_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -752,10 +752,9 @@ const mergeUpload = async (item: LargeUploadItem) => {
       latestItem.uploadSessionId,
       latestItem.fileName,
     );
-    let finalMergeResponse = mergeResponse;
+    let finalMergeResponse: any = mergeResponse;
     if (mergeResponse.status === "MERGING") {
-      finalMergeResponse =
-        (await pollMergeStatus(latestItem.id, latestItem.uploadSessionId)) ||
+      finalMergeResponse = (await pollMergeStatus(latestItem.id, latestItem.uploadSessionId)) ||
         mergeResponse;
     }
     if (finalMergeResponse.status === "COMPLETED") {
