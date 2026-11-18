@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   MODEL_STAGES,
   buildRegistryExportPayload,
+  getModelKey,
 } from '../../services/modelGovernanceService';
 import ModelFormModal from './ModelFormModal';
 
@@ -17,6 +18,7 @@ export default function ModelRegistryPanel({
   policy,
   onSaveModel,
   onToggleStatus,
+  onSelectActiveModel,
   onDeleteModel,
   onSavePolicy,
   onResetDefaults,
@@ -205,18 +207,22 @@ export default function ModelRegistryPanel({
             />
           </div>
 
-          <div className="flex flex-col justify-end">
-            <label className="flex items-center gap-2.5 h-9 px-3 rounded-lg bg-[#090f1d] border border-[#223254] cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={Boolean(policyDraft?.autoFallback)}
-                onChange={(e) =>
-                  setPolicyDraft((prev) => ({ ...prev, autoFallback: e.target.checked }))
-                }
-                className="w-4 h-4 rounded border-[#2c3c62] bg-[#0c1426] text-[#38bdf8] focus:ring-0"
-              />
-              <span className="text-slate-200 font-medium">Tự động Fallback Cloud API</span>
+          <div>
+            <label htmlFor="gov-alert-threshold" className="block text-slate-400 font-medium mb-1.5">
+              Ngưỡng cảnh báo ngân sách (%)
             </label>
+            <input
+              id="gov-alert-threshold"
+              type="number"
+              min="10"
+              max="100"
+              step="5"
+              value={policyDraft?.alertThresholdPct ?? 80}
+              onChange={(e) =>
+                setPolicyDraft((prev) => ({ ...prev, alertThresholdPct: Number(e.target.value) }))
+              }
+              className="w-full h-9 px-3 rounded-lg bg-[#090f1d] border border-[#223254] text-white focus:outline-none focus:border-[#38bdf8]"
+            />
           </div>
         </div>
       </form>
@@ -335,17 +341,27 @@ export default function ModelRegistryPanel({
               ) : (
                 filteredModels.map((model) => {
                   const isEnabled = model.status === 'enabled';
+                  const isActive =
+                    policy?.activeModels?.[model.stage] ===
+                    getModelKey(model.model_name, model.version);
                   return (
                     <tr
                       key={`${model.model_name}@${model.version}`}
                       data-testid="governance-model-row"
-                      className="hover:bg-[#101a32] transition"
+                      className={`transition ${
+                        isActive ? 'bg-[#0f1d3b]/70 hover:bg-[#13254a]' : 'hover:bg-[#101a32]'
+                      }`}
                     >
                       <td className="py-3.5 px-5">
-                        <div className="font-mono font-bold text-white flex items-center gap-2">
+                        <div className="font-mono font-bold text-white flex flex-wrap items-center gap-2">
                           <span>{model.model_name}</span>
+                          {isActive && (
+                            <span className="font-sans text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#2563eb]/30 text-[#38bdf8] border border-[#38bdf8]/50">
+                              Active
+                            </span>
+                          )}
                           {model.isCore && (
-                            <span className="font-sans text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#182746] text-[#38bdf8] border border-[#253c6b]">
+                            <span className="font-sans text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#182746] text-slate-300 border border-[#253c6b]">
                               Core
                             </span>
                           )}
@@ -417,6 +433,32 @@ export default function ModelRegistryPanel({
 
                       <td className="py-3.5 px-5 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
+                          {!isActive && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await onSelectActiveModel?.(
+                                    model.stage,
+                                    model.model_name,
+                                    model.version
+                                  );
+                                  showMessage(
+                                    'success',
+                                    `Đã đặt "${model.model_name}" làm Active Model cho ${model.stage}.`
+                                  );
+                                } catch (err) {
+                                  showMessage(
+                                    'error',
+                                    err?.message || 'Không thể đặt Active Model.'
+                                  );
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded-lg border border-[#2563eb]/50 bg-[#142347] hover:bg-[#1e3468] text-[#38bdf8] hover:text-white text-[11px] font-semibold transition"
+                            >
+                              Đặt làm Active
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setModalState({ open: true, model })}
@@ -424,7 +466,7 @@ export default function ModelRegistryPanel({
                           >
                             Cấu hình
                           </button>
-                          {!model.isCore && (
+                          {!model.isCore && !isActive && (
                             <button
                               type="button"
                               onClick={() => handleDelete(model)}

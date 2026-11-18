@@ -10,6 +10,16 @@ export const MODEL_DEVICES = ['cpu', 'cuda', 'auto'];
 export const MODEL_STATUSES = ['enabled', 'disabled'];
 export const MODEL_STAGES = ['STT', 'Diarization', 'LLM Summary', 'OCR'];
 export const CORE_REQUIRED_STAGES = new Set(['STT', 'LLM Summary']);
+export const GEMINI_FALLBACK_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-pro',
+];
+
+export function getModelKey(modelName, version) {
+  return `${modelName}@${version}`;
+}
 
 function readStorageJson(key, fallback) {
   try {
@@ -99,13 +109,46 @@ function getDefaultModels() {
 }
 
 function getDefaultPolicy() {
+  const base = mockGovernanceData?.policy || {};
   return {
     routingMode: 'local_first',
     autoFallback: true,
+    geminiFallbackEnabled: base.geminiFallbackEnabled ?? base.autoFallback ?? true,
+    geminiFallbackModel: base.geminiFallbackModel || 'gemini-2.5-flash',
+    piiRedactionEnforced: base.piiRedactionEnforced ?? true,
+    jobMaxCostUsd: Number(base.jobMaxCostUsd) || 0.5,
+    activeModels: {
+      STT: 'faster-whisper-large-v3@3.0',
+      Diarization: 'pyannote/speaker-diarization-3.1@3.1.0',
+      'LLM Summary': 'Qwen 2.5 7B-Instruct@2.5.0',
+      OCR: 'paddleocr-vl-vi@2.7.0',
+      ...(base.activeModels || {}),
+    },
     monthlyBudgetUsd: 50,
     alertThresholdPct: 80,
     monthlyTokenQuota: 2000000,
-    ...(mockGovernanceData?.policy || {}),
+    ...base,
+  };
+}
+
+function loadLocalPolicy() {
+  const defaults = getDefaultPolicy();
+  const saved = readStorageJson(POLICY_KEY, null);
+  if (!saved || typeof saved !== 'object') return defaults;
+  return {
+    ...defaults,
+    ...saved,
+    activeModels: {
+      ...defaults.activeModels,
+      ...(saved.activeModels || {}),
+    },
+  };
+}
+
+export function getGovernanceSnapshotSync() {
+  return {
+    models: loadLocalModels(),
+    policy: loadLocalPolicy(),
   };
 }
 
@@ -197,6 +240,13 @@ export async function toggleModelStatus(modelName, version) {
   }
 
   const nextStatus = target.status === 'enabled' ? 'disabled' : 'enabled';
+  const currentPolicy = loadLocalPolicy();
+  const activeKeyForStage = currentPolicy.activeModels?.[target.stage];
+  if (nextStatus === 'disabled' && activeKeyForStage === getModelKey(modelName, version)) {
+    throw new Error(
+      `Không thể tắt "${target.model_name}" vì đang được đặt làm Active Model cho stage ${target.stage}.`
+    );
+  }
   if (nextStatus === 'disabled' && CORE_REQUIRED_STAGES.has(target.stage)) {
     const hasAnotherEnabled = current.some(
       (m) =>
@@ -239,6 +289,10 @@ export async function deleteCustomModel(modelName, version) {
   if (target.isCore) {
     throw new Error('Không thể xóa model cốt lõi mặc định của hệ thống.');
   }
+  const currentPolicy = loadLocalPolicy();
+  if (currentPolicy.activeModels?.[target.stage] === getModelKey(modelName, version)) {
+    throw new Error(`Không thể xóa "${target.model_name}" khi đang là Active Model.`);
+  }
 
   try {
     await httpClient.delete('/admin/models', {
@@ -259,25 +313,51 @@ export async function getGovernancePolicy() {
   try {
     const response = await httpClient.get('/admin/models/policy');
     if (response && typeof response === 'object') {
-      return { policy: { ...getDefaultPolicy(), ...response }, source: 'api' };
+      const defaults = getDefaultPolicy();
+      return {
+        policy: {
+          ...defaults,
+          ...response,
+          activeModels: {
+            ...defaults.activeModels,
+            ...(response.activeModels || {}),
+          },
+        },
+        source: 'api',
+      };
     }
   } catch {
     // Fallback to local policy
   }
-  const saved = readStorageJson(POLICY_KEY, null);
   return {
-    policy: saved && typeof saved === 'object' ? { ...getDefaultPolicy(), ...saved } : getDefaultPolicy(),
+    policy: loadLocalPolicy(),
     source: 'local',
   };
 }
 
 export async function saveGovernancePolicy(policy) {
+  const current = loadLocalPolicy();
+  const fallbackFlag =
+    policy?.geminiFallbackEnabled !== undefined
+      ? Boolean(policy.geminiFallbackEnabled)
+      : policy?.autoFallback !== undefined
+      ? Boolean(policy.autoFallback)
+      : current.geminiFallbackEnabled;
+
   const sanitized = {
     routingMode: policy?.routingMode === 'cloud_first' ? 'cloud_first' : 'local_first',
-    autoFallback: Boolean(policy?.autoFallback),
-    monthlyBudgetUsd: Math.max(1, Number(policy?.monthlyBudgetUsd) || 50),
-    alertThresholdPct: Math.min(100, Math.max(10, Number(policy?.alertThresholdPct) || 80)),
-    monthlyTokenQuota: Math.max(10000, Number(policy?.monthlyTokenQuota) || 2000000),
+    autoFallback: fallbackFlag,
+    geminiFallbackEnabled: fallbackFlag,
+    geminiFallbackModel: String(policy?.geminiFallbackModel || current.geminiFallbackModel || 'gemini-2.5-flash').trim(),
+    piiRedactionEnforced: policy?.piiRedactionEnforced !== undefined ? Boolean(policy.piiRedactionEnforced) : true,
+    jobMaxCostUsd: Math.max(0.05, Number(policy?.jobMaxCostUsd ?? current.jobMaxCostUsd) || 0.5),
+    activeModels: {
+      ...current.activeModels,
+      ...(policy?.activeModels || {}),
+    },
+    monthlyBudgetUsd: Math.max(1, Number(policy?.monthlyBudgetUsd ?? current.monthlyBudgetUsd) || 50),
+    alertThresholdPct: Math.min(100, Math.max(10, Number(policy?.alertThresholdPct ?? current.alertThresholdPct) || 80)),
+    monthlyTokenQuota: Math.max(10000, Number(policy?.monthlyTokenQuota ?? current.monthlyTokenQuota) || 2000000),
   };
 
   try {
@@ -288,6 +368,74 @@ export async function saveGovernancePolicy(policy) {
 
   writeStorageJson(POLICY_KEY, sanitized);
   return sanitized;
+}
+
+export async function setActiveModel(stage, modelName, version) {
+  const models = loadLocalModels();
+  const target = models.find(
+    (m) => m.model_name === modelName && m.version === version && m.stage === stage
+  );
+  if (!target) {
+    throw new Error(`Không tìm thấy model "${modelName}" trong stage ${stage}.`);
+  }
+
+  // Ensure the selected active model is enabled
+  const updatedModels =
+    target.status === 'disabled'
+      ? models.map((m) =>
+          m.model_name === modelName && m.version === version
+            ? { ...m, status: 'enabled' }
+            : m
+        )
+      : models;
+
+  const currentPolicy = loadLocalPolicy();
+  const nextPolicy = {
+    ...currentPolicy,
+    activeModels: {
+      ...currentPolicy.activeModels,
+      [stage]: getModelKey(modelName, version),
+    },
+  };
+
+  try {
+    await httpClient.put('/admin/models/active', {
+      stage,
+      model_name: modelName,
+      version,
+    });
+  } catch {
+    // Fallback to local persistence
+  }
+
+  if (updatedModels !== models) {
+    writeStorageJson(MODELS_KEY, updatedModels);
+  }
+  writeStorageJson(POLICY_KEY, nextPolicy);
+  return { models: updatedModels, policy: nextPolicy };
+}
+
+export async function toggleGeminiFallback(enabled, geminiModel) {
+  const currentPolicy = loadLocalPolicy();
+  const nextModel = String(geminiModel || currentPolicy.geminiFallbackModel || 'gemini-2.5-flash').trim();
+  const nextPolicy = {
+    ...currentPolicy,
+    autoFallback: Boolean(enabled),
+    geminiFallbackEnabled: Boolean(enabled),
+    geminiFallbackModel: nextModel,
+  };
+
+  try {
+    await httpClient.put('/admin/models/fallback', {
+      fallback_enabled: nextPolicy.geminiFallbackEnabled,
+      gemini_model: nextPolicy.geminiFallbackModel,
+    });
+  } catch {
+    // Fallback to local persistence
+  }
+
+  writeStorageJson(POLICY_KEY, nextPolicy);
+  return nextPolicy;
 }
 
 export function resetGovernanceDefaults() {

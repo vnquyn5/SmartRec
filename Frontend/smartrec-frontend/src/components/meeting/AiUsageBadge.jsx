@@ -1,13 +1,34 @@
 import React, { useState, useRef, useEffect } from 'react';
 import mockSummaryData from '../../mocks/mock_summary.json';
+import { getGovernanceSnapshotSync } from '../../services/modelGovernanceService';
+
+function resolveInitialModelLabel() {
+  const snapshot = getGovernanceSnapshotSync();
+  const activeKey = snapshot?.policy?.activeModels?.['LLM Summary'] || '';
+  if (/gemini/i.test(activeKey)) return 'Gemini';
+  return 'Local Qwen';
+}
 
 export default function AiUsageBadge() {
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('Local Qwen'); // 'Local Qwen' | 'Gemini'
+  const [selectedModel, setSelectedModel] = useState(resolveInitialModelLabel);
+  const [governanceSnapshot, setGovernanceSnapshot] = useState(() =>
+    getGovernanceSnapshotSync()
+  );
   const badgeRef = useRef(null);
 
+  const activeLlmKey = governanceSnapshot?.policy?.activeModels?.['LLM Summary'] || '';
+  const activeLlmName = activeLlmKey.split('@')[0] || 'Qwen 2.5 7B-Instruct';
+  const fallbackEnabled = Boolean(
+    governanceSnapshot?.policy?.geminiFallbackEnabled ??
+      governanceSnapshot?.policy?.autoFallback ??
+      true
+  );
+  const fallbackModel =
+    governanceSnapshot?.policy?.geminiFallbackModel || 'gemini-2.5-flash';
+
   const aiData = mockSummaryData?.ai_usage || {
-    model_name: selectedModel === 'Local Qwen' ? 'Local Qwen 2.5 (7B)' : 'Gemini 1.5 Flash',
+    model_name: selectedModel === 'Local Qwen' ? activeLlmName : fallbackModel,
     total_tokens: selectedModel === 'Local Qwen' ? 1850 : 2100,
     prompt_tokens: selectedModel === 'Local Qwen' ? 1420 : 1600,
     completion_tokens: selectedModel === 'Local Qwen' ? 430 : 500,
@@ -18,7 +39,7 @@ export default function AiUsageBadge() {
     setSelectedModel((prev) => (prev === 'Local Qwen' ? 'Gemini' : 'Local Qwen'));
   };
 
-  // Tự động đóng popover khi click ra ngoài
+  // Tự động đóng popover khi click ra ngoài và đồng bộ khi mở lại
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (badgeRef.current && !badgeRef.current.contains(event.target)) {
@@ -28,6 +49,12 @@ export default function AiUsageBadge() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      setGovernanceSnapshot(getGovernanceSnapshotSync());
+    }
+  }, [isOpen]);
 
   return (
     <div ref={badgeRef} className="relative inline-block text-left select-none">
@@ -76,33 +103,39 @@ export default function AiUsageBadge() {
 
       {/* Popover Chi tiết khi đã Bấm mở */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-72 bg-[#0a1122] border border-[#1b2b4d] rounded-xl p-3.5 shadow-2xl z-50 text-xs text-slate-300 animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute right-0 top-full mt-2 w-80 bg-[#0a1122] border border-[#1b2b4d] rounded-xl p-3.5 shadow-2xl z-50 text-xs text-slate-300 animate-in fade-in zoom-in-95 duration-150">
           <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-[#172542]">
             <span className="font-bold text-white flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              AI Engine & Token Usage
+              AI Engine &amp; Token Usage
             </span>
             <button
               type="button"
               onClick={toggleModel}
               className="text-[10px] bg-[#142340] hover:bg-[#1d3563] text-[#38bdf8] px-2 py-0.5 rounded border border-[#233b6b] transition active:scale-95"
-              title="Chuyển đổi qua lại giữa Local Qwen và Gemini"
+              title="Chuyển đổi xem trước giữa Local Qwen và Gemini"
             >
               Đổi sang {selectedModel === 'Local Qwen' ? 'Gemini' : 'Local Qwen'}
             </button>
           </div>
 
           <div className="space-y-2 text-[11px]">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Model hiện tại:</span>
-              <span className="font-mono text-white font-medium">
-                {selectedModel === 'Local Qwen' ? 'Qwen 2.5 7B-Instruct' : 'Gemini 1.5 Flash'}
+            <div className="flex justify-between gap-2">
+              <span className="text-slate-400">Active LLM (Governance):</span>
+              <span className="font-mono text-white font-medium truncate">
+                {selectedModel === 'Local Qwen' ? activeLlmName : fallbackModel}
               </span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between gap-2">
               <span className="text-slate-400">Chế độ vận hành:</span>
               <span className={selectedModel === 'Local Qwen' ? 'text-emerald-400 font-medium' : 'text-sky-400 font-medium'}>
                 {selectedModel === 'Local Qwen' ? '100% Local Private' : 'Google Cloud API'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-slate-400">Gemini Fallback:</span>
+              <span className={fallbackEnabled ? 'text-amber-300 font-semibold' : 'text-slate-400'}>
+                {fallbackEnabled ? `ON (${fallbackModel})` : 'OFF'}
               </span>
             </div>
 
