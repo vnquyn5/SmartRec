@@ -111,8 +111,7 @@ class JobServiceImplSpeakerCallbackTest {
     }
 
     @Test
-    void outputWithoutAiResultCompletesCorePipelineWhenLlmIsDisabled() {
-        ReflectionTestUtils.setField(jobService, "llmEnabled", false);
+    void outputWithoutAiResultCompletesCorePipelineAndMeetingWithoutAiPersistence() {
         when(jobStageRepository.findByJobIdAndStage(jobId, PipelineStage.OUTPUT))
                 .thenReturn(Optional.of(outputStage));
 
@@ -123,8 +122,9 @@ class JobServiceImplSpeakerCallbackTest {
         assertEquals(JobStatus.COMPLETED, job.getStatus());
         assertEquals(com.example.smartrec.entity.MeetingStatus.COMPLETED, meeting.getStatus());
         assertEquals(JobStageStatus.SUCCESS, outputStage.getStatus());
-        verify(aiResultService, org.mockito.Mockito.never()).saveAIResult(any());
+        org.mockito.Mockito.verifyNoInteractions(aiResultService);
         verify(speakerSegmentRepository).deleteByMeetingId(meetingId);
+        verify(jobRepository).save(job);
     }
 
     @Test

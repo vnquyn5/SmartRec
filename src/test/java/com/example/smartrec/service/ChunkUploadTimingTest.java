@@ -98,6 +98,9 @@ class ChunkUploadTimingTest {
                 .chunkSize(5L * 1024 * 1024).receivedChunks(552).status(UploadSessionStatus.UPLOADING).build();
         when(redis.get(sessionId)).thenReturn(session);
         when(redis.uploadedChunkCount(sessionId)).thenReturn(552L, 553L);
+        if (!failure.equals("put") && !failure.equals("marker")) {
+            when(redis.missingChunkIndexes(sessionId, 553)).thenReturn(java.util.List.of());
+        }
         UploadServiceImpl service = new UploadServiceImpl(
                 null, users, sessions, null, null, redis, minio, null, background, null);
         java.util.List<Runnable> queued = new java.util.ArrayList<>();
@@ -151,7 +154,11 @@ class ChunkUploadTimingTest {
             verify(redis).markChunkUploaded(sessionId, 552);
         }
         verify(background).stageChunkGroupAsync(sessionId, 553, 552);
-        verify(background).executeAsync(any(Runnable.class));
+        if (failure.equals("idempotent")) {
+            verify(background, never()).executeAsync(any(Runnable.class));
+        } else {
+            verify(background).executeAsync(any(Runnable.class));
+        }
         if (failure.equals("merge-dispatch")) {
             queued.get(0).run();
             org.junit.jupiter.api.Assertions.assertEquals(UploadSessionStatus.MERGE_FAILED, session.getStatus());
