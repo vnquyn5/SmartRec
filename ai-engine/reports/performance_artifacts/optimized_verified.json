@@ -1,0 +1,158 @@
+{
+  "benchmark": "smartrec.explainability.scaling.v1",
+  "environment": {
+    "cpu_model": "Apple M2",
+    "logical_cpus": 8,
+    "physical_memory_bytes": "8589934592",
+    "device": "CPU",
+    "dependencies": {
+      "pydantic": "2.13.5",
+      "fastapi": "0.141.1"
+    }
+  },
+  "python": "3.11.16",
+  "platform": "macOS-26.3.1-arm64-arm-64bit",
+  "commit": "5c1d01c",
+  "source_sha256": "03b6b212a4a9d658bc5876dbc8d5464a89afb147630081b64b268c365e2f53c1",
+  "timer": "perf_counter_ns",
+  "workloads": [
+    {
+      "workload": "small",
+      "evidence_count": 1,
+      "action_item_count": 1,
+      "warmups": 5,
+      "samples_per_stage": 100,
+      "concurrency": 1,
+      "correctness": "PASS",
+      "results": {
+        "summary_validation": {
+          "samples": 100,
+          "p50_ms": 0.7826,
+          "p95_ms": 1.8328,
+          "min_ms": 0.6048,
+          "max_ms": 2.9226
+        },
+        "evidence_consistency": {
+          "samples": 100,
+          "p50_ms": 0.2529,
+          "p95_ms": 0.258,
+          "min_ms": 0.2494,
+          "max_ms": 0.2651
+        },
+        "evidence_assessment": {
+          "samples": 100,
+          "p50_ms": 0.0615,
+          "p95_ms": 0.0695,
+          "min_ms": 0.0608,
+          "max_ms": 0.0735
+        },
+        "explainability_builder": {
+          "samples": 100,
+          "p50_ms": 0.0052,
+          "p95_ms": 0.0054,
+          "min_ms": 0.005,
+          "max_ms": 0.011
+        },
+        "full_explainability_pipeline": {
+          "samples": 100,
+          "p50_ms": 0.9571,
+          "p95_ms": 1.0018,
+          "min_ms": 0.9476,
+          "max_ms": 1.3625
+        }
+      }
+    },
+    {
+      "workload": "medium",
+      "evidence_count": 100,
+      "action_item_count": 8,
+      "warmups": 5,
+      "samples_per_stage": 100,
+      "concurrency": 1,
+      "correctness": "PASS",
+      "results": {
+        "summary_validation": {
+          "samples": 100,
+          "p50_ms": 40.1742,
+          "p95_ms": 46.4829,
+          "min_ms": 39.6159,
+          "max_ms": 61.2062
+        },
+        "evidence_consistency": {
+          "samples": 100,
+          "p50_ms": 9.9309,
+          "p95_ms": 10.0359,
+          "min_ms": 9.8525,
+          "max_ms": 10.4295
+        },
+        "evidence_assessment": {
+          "samples": 100,
+          "p50_ms": 0.6384,
+          "p95_ms": 0.6488,
+          "min_ms": 0.6338,
+          "max_ms": 0.6897
+        },
+        "explainability_builder": {
+          "samples": 100,
+          "p50_ms": 0.0387,
+          "p95_ms": 0.0394,
+          "min_ms": 0.0381,
+          "max_ms": 0.044
+        },
+        "full_explainability_pipeline": {
+          "samples": 100,
+          "p50_ms": 50.5899,
+          "p95_ms": 51.2627,
+          "min_ms": 50.2273,
+          "max_ms": 115.1883
+        }
+      }
+    },
+    {
+      "workload": "large",
+      "evidence_count": 400,
+      "action_item_count": 32,
+      "warmups": 5,
+      "samples_per_stage": 30,
+      "concurrency": 1,
+      "correctness": "PASS",
+      "results": {
+        "summary_validation": {
+          "samples": 30,
+          "p50_ms": 485.3696,
+          "p95_ms": 536.3947,
+          "min_ms": 480.9451,
+          "max_ms": 542.7047
+        },
+        "evidence_consistency": {
+          "samples": 30,
+          "p50_ms": 76.0186,
+          "p95_ms": 76.4851,
+          "min_ms": 75.5283,
+          "max_ms": 77.2797
+        },
+        "evidence_assessment": {
+          "samples": 30,
+          "p50_ms": 2.5885,
+          "p95_ms": 2.6534,
+          "min_ms": 2.5654,
+          "max_ms": 2.6667
+        },
+        "explainability_builder": {
+          "samples": 30,
+          "p50_ms": 0.1589,
+          "p95_ms": 0.1622,
+          "min_ms": 0.157,
+          "max_ms": 0.1629
+        },
+        "full_explainability_pipeline": {
+          "samples": 30,
+          "p50_ms": 567.2394,
+          "p95_ms": 649.1855,
+          "min_ms": 562.1407,
+          "max_ms": 968.9285
+        }
+      }
+    }
+  ]
+}

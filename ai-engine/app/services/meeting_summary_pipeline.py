@@ -45,3 +45,42 @@ def normalize_and_validate_local_summary(
             validation_diagnostics=({"loc": [], "type": "value_error"},),
         )
     return summary
+
+
+def normalize_validate_and_assess_local_summary(
+    raw_output: str,
+    allowed_source_refs: list[str],
+    evidence: list[Any],
+) -> tuple[MeetingSummary, list[dict]]:
+    """Return the validated summary and AI-owned evidence assessment.
+
+    Keep the existing summary contract unchanged. Evidence assessment
+    is supplementary metadata, not a calibrated confidence score.
+    """
+    from app.services.confidence_scorer import (
+        assess_action_item_evidence,
+    )
+    from app.services.meeting_summary_evidence import (
+        evidence_consistency_issues,
+    )
+
+    # Preserve the existing strict validation pipeline.
+    summary = normalize_and_validate_local_summary(
+        raw_output,
+        allowed_source_refs,
+        evidence,
+    )
+
+    # Evaluate the already-validated summary against source evidence.
+    diagnostics = evidence_consistency_issues(
+        summary,
+        evidence,
+    )
+
+    assessments = assess_action_item_evidence(
+        summary,
+        evidence,
+        diagnostics,
+    )
+
+    return summary, assessments

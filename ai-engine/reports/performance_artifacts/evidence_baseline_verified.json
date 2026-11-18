@@ -1,0 +1,65 @@
+{
+  "benchmark": "smartrec.evidence.same_process.v1",
+  "baseline_commit": "5c1d01c",
+  "python": "3.11.16",
+  "platform": "macOS-26.3.1-arm64-arm-64bit",
+  "environment": {
+    "cpu_model": "Apple M2",
+    "logical_cpus": 8,
+    "physical_memory_bytes": "8589934592",
+    "device": "CPU",
+    "dependencies": {
+      "pydantic": "2.13.5",
+      "fastapi": "0.141.1"
+    }
+  },
+  "timer": "perf_counter_ns",
+  "warmups": 5,
+  "concurrency": 1,
+  "measurement_scope": "evidence_consistency_issues",
+  "model_inference_included": false,
+  "artifact_persistence_included": false,
+  "variant": "original",
+  "source_sha256": "0636fe618cfa7c8f08d0b9a780b31cc7af8dadb2b4d64ce60db1dd42d734532a",
+  "workloads": [
+    {
+      "workload": "small",
+      "evidence_count": 1,
+      "action_item_count": 1,
+      "correctness": "PASS",
+      "results": {
+        "samples": 100,
+        "p50_ms": 0.5036,
+        "p95_ms": 0.8943,
+        "min_ms": 0.2572,
+        "max_ms": 2.3939
+      }
+    },
+    {
+      "workload": "medium",
+      "evidence_count": 100,
+      "action_item_count": 8,
+      "correctness": "PASS",
+      "results": {
+        "samples": 100,
+        "p50_ms": 28.8359,
+        "p95_ms": 29.678,
+        "min_ms": 28.5106,
+        "max_ms": 33.3952
+      }
+    },
+    {
+      "workload": "large",
+      "evidence_count": 400,
+      "action_item_count": 32,
+      "correctness": "PASS",
+      "results": {
+        "samples": 30,
+        "p50_ms": 414.1928,
+        "p95_ms": 465.6778,
+        "min_ms": 411.7325,
+        "max_ms": 482.0307
+      }
+    }
+  ]
+}
