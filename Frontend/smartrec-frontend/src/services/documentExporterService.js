@@ -50,9 +50,16 @@ export const EXPORT_TEMPLATES = [
 export const EXPORT_FORMATS = [
   { id: 'docx', label: 'Word (.docx)', ext: 'docx', badge: 'OOXML Word' },
   { id: 'pdf', label: 'In / PDF (A4)', ext: 'pdf', badge: 'A4 Vector' },
+  { id: 'csv', label: 'CSV (.csv)', ext: 'csv', badge: 'Excel / Sheet' },
   { id: 'md', label: 'Markdown (.md)', ext: 'md', badge: 'Notion / Git' },
   { id: 'html', label: 'Web HTML (.html)', ext: 'html', badge: 'Standalone' },
   { id: 'json', label: 'JSON (.json)', ext: 'json', badge: 'Structured' },
+];
+
+export const CSV_SCOPES = [
+  { id: 'tasks', label: 'Bảng Action Items (Tasks)' },
+  { id: 'transcript', label: 'Transcript theo Speaker' },
+  { id: 'all', label: 'Tổng hợp đầy đủ (Summary + Tasks + OCR + Transcript)' },
 ];
 
 export const ACCENT_THEMES = [
@@ -64,6 +71,7 @@ export const ACCENT_THEMES = [
 export const DEFAULT_EXPORT_CONFIG = {
   templateId: 'executive',
   format: 'pdf',
+  csvScope: 'tasks',
   accentTheme: 'blue',
   documentTitle: '',
   documentCode: '',
@@ -527,8 +535,8 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
         </tr>
         <tr>
           <td colspan="2"><strong>Thành phần tham gia:</strong> ${escapeHtml(
-            docModel.participants.join(', ') || '—'
-          )}</td>
+      docModel.participants.join(', ') || '—'
+    )}</td>
         </tr>
       </table>`
     : '';
@@ -539,14 +547,14 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
       <section class="section">
         <h2>1. Tóm tắt điều hành (AI Summary)</h2>
         ${docModel.summary
-          .map(
-            (item) => `
+        .map(
+          (item) => `
           <div class="summary-card">
             <h3>${escapeHtml(item.heading || 'Nội dung chính')}</h3>
             <p>${escapeHtml(item.content || '')}</p>
           </div>`
-          )
-          .join('')}
+        )
+        .join('')}
       </section>`
       : '';
 
@@ -554,10 +562,9 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
     ? `
       <section class="section">
         <h2>${sections.summary ? '2. ' : ''}Bảng Action Items &amp; Phân công</h2>
-        ${
-          docModel.tasks.length === 0
-            ? '<p class="muted">Không có đầu việc nào được ghi nhận.</p>'
-            : `
+        ${docModel.tasks.length === 0
+      ? '<p class="muted">Không có đầu việc nào được ghi nhận.</p>'
+      : `
           <table class="data-table">
             <thead>
               <tr>
@@ -571,27 +578,26 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
             </thead>
             <tbody>
               ${docModel.tasks
-                .map(
-                  (task, idx) => `
+        .map(
+          (task, idx) => `
                 <tr>
                   <td style="text-align:center;">${escapeHtml(task.task_index ?? idx + 1)}</td>
                   <td>${escapeHtml(task.content || '')}</td>
                   <td>${escapeHtml(task.assignee || '—')}</td>
                   <td>${escapeHtml(task.responsible || '—')}</td>
                   <td>${escapeHtml(task.deadline || '—')}</td>
-                  ${
-                    config.includeTimestamps
-                      ? `<td style="text-align:center;font-family:monospace;">${escapeHtml(
-                          task.timestamp || '—'
-                        )}</td>`
-                      : ''
-                  }
+                  ${config.includeTimestamps
+              ? `<td style="text-align:center;font-family:monospace;">${escapeHtml(
+                task.timestamp || '—'
+              )}</td>`
+              : ''
+            }
                 </tr>`
-                )
-                .join('')}
+        )
+        .join('')}
             </tbody>
           </table>`
-        }
+    }
       </section>`
     : '';
 
@@ -601,21 +607,20 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
       <section class="section">
         <h2>Nội dung Slide &amp; OCR Keyframes</h2>
         ${docModel.ocrSlides
-          .map(
-            (slide, idx) => `
+        .map(
+          (slide, idx) => `
           <div class="ocr-card">
             <div class="ocr-head">
               <strong>${idx + 1}. ${escapeHtml(slide.slide_title || 'Slide')}</strong>
-              ${
-                config.includeTimestamps && slide.timestamp
-                  ? `<span class="badge">${escapeHtml(slide.timestamp)}</span>`
-                  : ''
-              }
+              ${config.includeTimestamps && slide.timestamp
+              ? `<span class="badge">${escapeHtml(slide.timestamp)}</span>`
+              : ''
+            }
             </div>
             <p>${escapeHtml(slide.raw_text || '')}</p>
           </div>`
-          )
-          .join('')}
+        )
+        .join('')}
       </section>`
       : '';
 
@@ -625,19 +630,18 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
       <section class="section">
         <h2>Transcript chi tiết cuộc họp</h2>
         ${docModel.transcript
-          .map(
-            (entry) => `
+        .map(
+          (entry) => `
           <div class="transcript-row">
             <span class="speaker">${escapeHtml(entry.speakerName)}</span>
-            ${
-              config.includeTimestamps
-                ? `<span class="ts">[${escapeHtml(entry.timeStart)} - ${escapeHtml(entry.timeEnd)}]</span>`
-                : ''
+            ${config.includeTimestamps
+              ? `<span class="ts">[${escapeHtml(entry.timeStart)} - ${escapeHtml(entry.timeEnd)}]</span>`
+              : ''
             }
             <p>${escapeHtml(entry.text)}</p>
           </div>`
-          )
-          .join('')}
+        )
+        .join('')}
       </section>`
       : '';
 
@@ -794,9 +798,8 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
 </head>
 <body>
   <div class="doc-container">
-    ${
-      config.includeCoverPage !== false
-        ? `<section class="cover-page">
+    ${config.includeCoverPage !== false
+      ? `<section class="cover-page">
       <div class="cover-brand-row">
         <div class="cover-brand-left">
           ${getSmartRecLogoSvg(36)}
@@ -820,14 +823,13 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
         <tr><td><strong>Ngày cuộc họp:</strong> ${escapeHtml(docModel.createdAtLabel)}</td><td><strong>Thời lượng:</strong> ${escapeHtml(docModel.durationLabel)}</td></tr>
       </table>
     </section>`
-        : `<header class="doc-header">
+      : `<header class="doc-header">
       <div class="doc-kicker">${escapeHtml(docModel.organizationName)} · ${escapeHtml(docModel.documentCode)}</div>
       <h1>${escapeHtml(docModel.title)}</h1>
     </header>`
     }
-    ${
-      config.includeToc !== false && docModel.tocItems?.length > 0
-        ? `<section class="toc-box">
+    ${config.includeToc !== false && docModel.tocItems?.length > 0
+      ? `<section class="toc-box">
       <h2 style="margin-top:0;">Mục lục nội dung</h2>
       ${docModel.tocItems
         .map(
@@ -838,7 +840,7 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
         )
         .join('')}
     </section>`
-        : ''
+      : ''
     }
     ${metadataHtml}
     ${summaryHtml}
@@ -857,12 +859,11 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
         <div style="margin-top:42px;font-weight:600;">${escapeHtml(docModel.recipientGroup)}</div>
       </div>
     </section>
-    ${
-      config.includeWatermark
-        ? `<footer class="doc-footer"><span>Generated by SmartRec AI · ${escapeHtml(
-            docModel.documentCode
-          )}</span><span>${escapeHtml(docModel.exportedAtLabel)}</span></footer>`
-        : ''
+    ${config.includeWatermark
+      ? `<footer class="doc-footer"><span>Generated by SmartRec AI · ${escapeHtml(
+        docModel.documentCode
+      )}</span><span>${escapeHtml(docModel.exportedAtLabel)}</span></footer>`
+      : ''
     }
   </div>
 </body>
@@ -873,6 +874,120 @@ export function generateWordDocHtml(docModel, config = DEFAULT_EXPORT_CONFIG) {
   return `\ufeff${generateDocumentHtml(docModel, config, { forWord: true })}`;
 }
 
+export function escapeCsvCell(value) {
+  const str = String(value ?? '');
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+export function getCsvTableData(docModel, config = DEFAULT_EXPORT_CONFIG) {
+  const scope = config?.csvScope || 'tasks';
+  const docCode = docModel?.documentCode || '';
+  const meetingTitle = docModel?.title || '';
+
+  if (scope === 'transcript') {
+    const headers = [
+      'STT',
+      'Người nói',
+      'Bắt đầu',
+      'Kết thúc',
+      'Nội dung phát biểu',
+      'Đã chỉnh sửa',
+      'Cuộc họp',
+    ];
+    const rows = (docModel?.transcript || []).map((entry, idx) => [
+      idx + 1,
+      entry.speakerName || '',
+      entry.timeStart || '',
+      entry.timeEnd || '',
+      entry.text || '',
+      entry.edited ? 'Có' : 'Không',
+      meetingTitle,
+    ]);
+    return { headers, rows };
+  }
+
+  if (scope === 'all') {
+    const headers = [
+      'Nhóm mục',
+      'STT / Mốc TG',
+      'Tiêu đề / Người phụ trách',
+      'Nội dung chi tiết',
+      'Hạn chót / Ghi chú',
+      'Số hiệu',
+    ];
+    const rows = [];
+    (docModel?.summary || []).forEach((s, idx) => {
+      rows.push(['AI Summary', idx + 1, s.heading || '', s.content || '', meetingTitle, docCode]);
+    });
+    (docModel?.tasks || []).forEach((t, idx) => {
+      rows.push([
+        'Action Item',
+        t.timestamp || t.task_index || idx + 1,
+        [t.assignee, t.responsible].filter(Boolean).join(' / ') || 'Chưa phân công',
+        t.content || '',
+        t.deadline || '',
+        docCode,
+      ]);
+    });
+    (docModel?.ocrSlides || []).forEach((o, idx) => {
+      rows.push([
+        'Slide OCR',
+        o.timestamp || idx + 1,
+        o.slide_title || '',
+        o.raw_text || '',
+        Array.isArray(o.tags) ? o.tags.join('; ') : '',
+        docCode,
+      ]);
+    });
+    (docModel?.transcript || []).forEach((tr) => {
+      rows.push([
+        'Transcript',
+        `${tr.timeStart || ''} - ${tr.timeEnd || ''}`,
+        tr.speakerName || '',
+        tr.text || '',
+        tr.edited ? 'Đã chỉnh sửa' : '',
+        docCode,
+      ]);
+    });
+    return { headers, rows };
+  }
+
+  const headers = [
+    'STT',
+    'Nội dung công việc',
+    'Người thực hiện',
+    'Người chịu trách nhiệm',
+    'Hạn chót',
+    'Mốc thời gian',
+    'Số hiệu văn bản',
+    'Cuộc họp',
+  ];
+  const rows = (docModel?.tasks || []).map((task, idx) => [
+    task.task_index ?? idx + 1,
+    task.content || '',
+    task.assignee || '',
+    task.responsible || '',
+    task.deadline || '',
+    config?.includeTimestamps === false ? '' : task.timestamp || '',
+    docCode,
+    meetingTitle,
+  ]);
+  return { headers, rows };
+}
+
+export function generateCsv(docModel, config = DEFAULT_EXPORT_CONFIG) {
+  const { headers, rows } = getCsvTableData(docModel, config);
+  const csvLines = [
+    headers.map(escapeCsvCell).join(','),
+    ...rows.map((row) => row.map(escapeCsvCell).join(',')),
+  ];
+  // UTF-8 BOM guarantees Vietnamese diacritics open cleanly in Microsoft Excel
+  return `\ufeff${csvLines.join('\r\n')}`;
+}
+
 export function generateExportJson(docModel, config = DEFAULT_EXPORT_CONFIG) {
   const sections = config.sections || DEFAULT_EXPORT_CONFIG.sections;
   const payload = {
@@ -881,15 +996,15 @@ export function generateExportJson(docModel, config = DEFAULT_EXPORT_CONFIG) {
     templateId: config.templateId,
     ...(sections.metadata
       ? {
-          metadata: {
-            organizationName: docModel.organizationName,
-            authorName: docModel.authorName,
-            createdAt: docModel.createdAtLabel,
-            duration: docModel.durationLabel,
-            status: docModel.statusLabel,
-            participants: docModel.participants,
-          },
-        }
+        metadata: {
+          organizationName: docModel.organizationName,
+          authorName: docModel.authorName,
+          createdAt: docModel.createdAtLabel,
+          duration: docModel.durationLabel,
+          status: docModel.statusLabel,
+          participants: docModel.participants,
+        },
+      }
       : {}),
     ...(sections.summary ? { summary: docModel.summary } : {}),
     ...(sections.tasks ? { tasks: docModel.tasks } : {}),
@@ -959,7 +1074,10 @@ export function downloadExportFile(docModel, config) {
   let mimeType = 'text/plain;charset=utf-8';
   let ext = format;
 
-  if (format === 'md') {
+  if (format === 'csv') {
+    content = generateCsv(docModel, config);
+    mimeType = 'text/csv;charset=utf-8';
+  } else if (format === 'md') {
     content = generateMarkdown(docModel, config);
     mimeType = 'text/markdown;charset=utf-8';
   } else if (format === 'doc') {

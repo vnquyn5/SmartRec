@@ -23,10 +23,12 @@ export default function LivePreviewExporter({
   tasks,
   ocrSlides,
   defaultAuthorName = '',
+  initialFormat,
   onExported,
 }) {
   const [config, setConfig] = useState(() => ({
     ...DEFAULT_EXPORT_CONFIG,
+    ...(initialFormat ? { format: initialFormat } : {}),
     authorName: defaultAuthorName,
   }));
   const [wordOptions, setWordOptions] = useState(DEFAULT_WORD_OPTIONS);

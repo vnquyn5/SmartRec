@@ -5,6 +5,7 @@ import {
   ACCENT_THEMES,
   generateExportJson,
   generateMarkdown,
+  getCsvTableData,
 } from '../../services/documentExporterService';
 
 export default function DocumentA4Preview({
@@ -14,11 +15,14 @@ export default function DocumentA4Preview({
   onWordOptionsChange,
   onDownloadDocx,
 }) {
-  const [viewMode, setViewMode] = useState(config?.format === 'docx' ? 'docx' : 'a4');
+  const [viewMode, setViewMode] = useState(
+    config?.format === 'docx' ? 'docx' : config?.format === 'csv' ? 'csv' : 'a4'
+  );
   const [zoom, setZoom] = useState(0.9);
 
   useEffect(() => {
     if (config?.format === 'docx') setViewMode('docx');
+    else if (config?.format === 'csv') setViewMode('csv');
     else if (config?.format === 'md') setViewMode('markdown');
     else if (config?.format === 'json') setViewMode('json');
     else if (config?.format === 'pdf' || config?.format === 'html') setViewMode('a4');
@@ -40,6 +44,11 @@ export default function DocumentA4Preview({
     return generateExportJson(docModel, config);
   }, [viewMode, docModel, config]);
 
+  const csvTable = useMemo(() => {
+    if (viewMode !== 'csv') return { headers: [], rows: [] };
+    return getCsvTableData(docModel, config);
+  }, [viewMode, docModel, config]);
+
   const noSectionsSelected = !Object.values(sections).some(Boolean);
 
   return (
@@ -50,6 +59,7 @@ export default function DocumentA4Preview({
           {[
             { id: 'docx', label: 'Word (.docx) Live' },
             { id: 'a4', label: 'Trang giấy A4' },
+            { id: 'csv', label: 'Bảng CSV' },
             { id: 'markdown', label: 'Markdown' },
             { id: 'json', label: 'JSON' },
           ].map((mode) => (
@@ -107,6 +117,45 @@ export default function DocumentA4Preview({
         {noSectionsSelected ? (
           <div className="h-full min-h-[360px] flex items-center justify-center text-xs text-slate-400 border border-dashed border-[#1e2c4d] rounded-xl p-6 text-center">
             Hãy bật ít nhất một thành phần nội dung ở cột bên trái để xem trước tài liệu.
+          </div>
+        ) : viewMode === 'csv' ? (
+          <div className="rounded-xl border border-[#1b2742] bg-[#0b1222] overflow-hidden">
+            <div className="px-4 py-2 bg-[#090f1d] border-b border-[#18233c] text-[11px] text-slate-400 flex items-center justify-between">
+              <span>Xem trước bảng CSV (UTF-8 BOM chuẩn Excel)</span>
+              <span>{csvTable.rows.length} dòng</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-[#0e172c] text-[#38bdf8] border-b border-[#1b2742]">
+                    {csvTable.headers.map((header) => (
+                      <th key={header} className="py-2 px-3 font-semibold whitespace-nowrap">
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#152039]">
+                  {csvTable.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={Math.max(1, csvTable.headers.length)} className="py-8 text-center text-slate-400">
+                        Không có dữ liệu phù hợp chế độ CSV đang chọn.
+                      </td>
+                    </tr>
+                  ) : (
+                    csvTable.rows.map((row, rowIdx) => (
+                      <tr key={rowIdx} className="hover:bg-[#101a32]/70">
+                        {row.map((cell, cellIdx) => (
+                          <td key={cellIdx} className="py-2 px-3 text-slate-200 max-w-xs truncate" title={String(cell)}>
+                            {String(cell || '—')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : viewMode === 'markdown' ? (
           <pre className="w-full rounded-xl border border-[#1b2742] bg-[#0b1222] p-4 text-xs text-slate-200 font-mono whitespace-pre-wrap leading-relaxed">

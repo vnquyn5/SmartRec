@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom";
 import { cancelJob, deleteMeeting, getAllMeetings, getJob, pauseJob, resumeJob, retryJob } from "../../services/meetingService";
 import { PauseIcon, PlayIcon, RefreshIcon } from "../../components/common/icons.jsx";
+import ExportModal from "../../components/exporter/ExportModal";
 import "./WorkspacePage.css";
 
 const POLL_INTERVAL_MS = 2500;
@@ -70,6 +71,7 @@ export default function WorkspacePage() {
   const [error, setError] = useState("");
   const [busyJobId, setBusyJobId] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [exportTargetMeeting, setExportTargetMeeting] = useState(null);
   const timerRef = useRef(null);
   const requestRef = useRef(null);
   const mountedRef = useRef(false);
@@ -279,7 +281,7 @@ export default function WorkspacePage() {
                           aria-label="Xuất tài liệu"
                           onClick={(event) => {
                             event.stopPropagation();
-                            navigate(`/export?meetingId=${meeting.id}`);
+                            setExportTargetMeeting(meeting);
                           }}
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -324,6 +326,12 @@ export default function WorkspacePage() {
           {visibleMeetings.length === 0 && <p className="workspace-no-results">{meetings.length ? "Không tìm thấy cuộc họp phù hợp." : "Chưa có cuộc họp nào."}</p>}
         </div>
       )}
+
+      <ExportModal
+        isOpen={Boolean(exportTargetMeeting)}
+        onClose={() => setExportTargetMeeting(null)}
+        meeting={exportTargetMeeting}
+      />
     </div>
   );
 }

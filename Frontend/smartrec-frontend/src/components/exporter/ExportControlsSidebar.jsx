@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ACCENT_THEMES,
+  CSV_SCOPES,
   EXPORT_FORMATS,
   EXPORT_TEMPLATES,
 } from '../../services/documentExporterService';
@@ -83,6 +84,23 @@ export default function ExportControlsSidebar({
             );
           })}
         </div>
+
+        {config.format === 'csv' && (
+          <label className="flex flex-col gap-1 text-[11px] text-slate-400 pt-1">
+            <span>Dữ liệu xuất CSV</span>
+            <select
+              value={config.csvScope || 'tasks'}
+              onChange={(e) => onUpdateConfig({ csvScope: e.target.value })}
+              className="px-2.5 py-1.5 rounded-lg bg-[#0c1324] border border-[#1b2742] text-xs text-slate-100 focus:outline-none focus:border-[#38bdf8]"
+            >
+              {CSV_SCOPES.map((sc) => (
+                <option key={sc.id} value={sc.id}>
+                  {sc.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       {/* 3. Section Toggles */}

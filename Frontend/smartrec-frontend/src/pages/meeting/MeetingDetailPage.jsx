@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 import InlineAudioPlayerBar from "../../components/meeting/InlineAudioPlayerBar";
 import ShareMeetingModal from "../../components/meeting/ShareMeetingModal";
-import DocumentExporterModal from "../../components/exporter/DocumentExporterModal";
+import ExportModal from "../../components/exporter/ExportModal";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { api } from "../../lib/http/client";
 import {
@@ -703,8 +703,8 @@ export default function MeetingDetailPage() {
         meeting={meeting || { id, title: fileName }}
       />
 
-      {/* Live Preview Document Exporter Modal */}
-      <DocumentExporterModal
+      {/* Export Format & Download Modal */}
+      <ExportModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
         meeting={meeting || { id, fileName, title: fileName }}
