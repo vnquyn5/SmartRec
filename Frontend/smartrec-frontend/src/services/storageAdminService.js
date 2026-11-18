@@ -73,10 +73,20 @@ function writeMockState(state) {
   return state;
 }
 
+function unwrapResponse(res) {
+  if (res && typeof res === 'object' && 'config' in res && 'data' in res) {
+    return res.data;
+  }
+  return res;
+}
+
 function shouldFallbackToMock(err) {
   if (!err) return false;
-  if (err.code === 'ERR_NETWORK' || !err.response) return true;
-  return err.response.status >= 500 || err.response.status === 404;
+  if (err.kind === 'network' || err.kind === 'timeout') return true;
+  if (err.code === 'ERR_NETWORK') return true;
+  const status = err.status ?? err.response?.status;
+  if (status == null) return true;
+  return status >= 500 || status === 404;
 }
 
 function categorizeMime(mimeType) {
@@ -233,7 +243,7 @@ function queryMockObjects(state, { status = 'ALL', keyword = '', sort = 'created
 export async function getStorageOverview() {
   try {
     const response = await httpClient.get('/admin/storage/overview');
-    return { data: response.data, source: 'api' };
+    return { data: unwrapResponse(response), source: 'api' };
   } catch (err) {
     if (!shouldFallbackToMock(err)) throw err;
     const state = readMockState();
@@ -251,7 +261,7 @@ export async function getStorageObjects(filters = {}) {
   };
   try {
     const response = await httpClient.get('/admin/storage/objects', { params });
-    return { data: response.data, source: 'api' };
+    return { data: unwrapResponse(response), source: 'api' };
   } catch (err) {
     if (!shouldFallbackToMock(err)) throw err;
     const state = readMockState();
@@ -262,7 +272,8 @@ export async function getStorageObjects(filters = {}) {
 export async function getOrphanObjects() {
   try {
     const response = await httpClient.get('/admin/storage/orphans');
-    return { data: Array.isArray(response.data) ? response.data : [], source: 'api' };
+    const payload = unwrapResponse(response);
+    return { data: Array.isArray(payload) ? payload : [], source: 'api' };
   } catch (err) {
     if (!shouldFallbackToMock(err)) throw err;
     const state = readMockState();
@@ -273,7 +284,7 @@ export async function getOrphanObjects() {
 export async function runStorageCleanup(taskType) {
   try {
     const response = await httpClient.post('/admin/storage/cleanup', { taskType });
-    return { data: response.data, source: 'api' };
+    return { data: unwrapResponse(response), source: 'api' };
   } catch (err) {
     if (!shouldFallbackToMock(err)) throw err;
     const state = readMockState();
@@ -400,7 +411,7 @@ export async function deleteOrphanObjects(objectKeys = []) {
     const response = await httpClient.delete('/admin/storage/orphans', {
       data: { objectKeys },
     });
-    return { data: response.data, source: 'api' };
+    return { data: unwrapResponse(response), source: 'api' };
   } catch (err) {
     if (!shouldFallbackToMock(err)) throw err;
     const state = readMockState();

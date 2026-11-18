@@ -10,6 +10,7 @@ import TrashPage from "../pages/trash/TrashPage";
 import WorkspacePage from "../pages/workspace/WorkspacePage";
 import ModelGovernancePage from "../pages/governance/ModelGovernancePage";
 import StorageAdminPage from "../pages/storage/StorageAdminPage";
+import DocumentExportPage from "../pages/export/DocumentExportPage";
 
 import LoginPage from "../pages/auth/LoginPage";
 import RegisterPage from "../pages/auth/RegisterPage";
@@ -37,6 +38,7 @@ const AppRoutes = () => {
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/governance" element={<ModelGovernancePage />} />
           <Route path="/admin/storage" element={<StorageAdminPage />} />
+          <Route path="/export" element={<DocumentExportPage />} />
           <Route path="/trash" element={<TrashPage />} />
         </Route>
         <Route path="/profile" element={<ProfilePage />} />

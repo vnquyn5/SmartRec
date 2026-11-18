@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import MeetingDetail from "../../components/meeting/MeetingDetail";
 import InlineAudioPlayerBar from "../../components/meeting/InlineAudioPlayerBar";
 import ShareMeetingModal from "../../components/meeting/ShareMeetingModal";
+import DocumentExporterModal from "../../components/exporter/DocumentExporterModal";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { api } from "../../lib/http/client";
 import {
@@ -190,6 +191,7 @@ export default function MeetingDetailPage() {
   const [isMuted, setIsMuted] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   const activeMeetingIdRef = useRef(null);
   const requestedJobIdsRef = useRef(new Set());
@@ -606,8 +608,22 @@ export default function MeetingDetailPage() {
           />
         </div>
 
-        {/* Right: Chia sẻ Button & User Avatar */}
+        {/* Right: Xuất tài liệu, Chia sẻ Button & User Avatar */}
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsExportModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#243b6b] bg-[#13203d] hover:bg-[#1a2b52] text-xs font-semibold text-[#38bdf8] hover:text-white transition shadow-sm"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="18" x2="12" y2="12" />
+              <polyline points="9 15 12 18 15 15" />
+            </svg>
+            <span>Xuất tài liệu</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
@@ -685,6 +701,15 @@ export default function MeetingDetailPage() {
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
         meeting={meeting || { id, title: fileName }}
+      />
+
+      {/* Live Preview Document Exporter Modal */}
+      <DocumentExporterModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        meeting={meeting || { id, fileName, title: fileName }}
+        speakers={currentSpeakers}
+        defaultAuthorName={displayName}
       />
     </div>
   );
