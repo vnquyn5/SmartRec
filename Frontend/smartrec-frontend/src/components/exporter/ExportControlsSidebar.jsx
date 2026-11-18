@@ -37,11 +37,10 @@ export default function ExportControlsSidebar({
                 key={tpl.id}
                 type="button"
                 onClick={() => onSelectTemplate(tpl.id)}
-                className={`text-left p-2.5 rounded-xl border transition ${
-                  active
-                    ? 'bg-[#13203d] border-[#38bdf8] text-white shadow-sm'
-                    : 'bg-[#0c1324] border-[#1b2742] text-slate-300 hover:border-slate-500'
-                }`}
+                className={`text-left p-2.5 rounded-xl border transition ${active
+                  ? 'bg-[#13203d] border-[#38bdf8] text-white shadow-sm'
+                  : 'bg-[#0c1324] border-[#1b2742] text-slate-300 hover:border-slate-500'
+                  }`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold">{tpl.label}</span>
@@ -73,11 +72,10 @@ export default function ExportControlsSidebar({
                 key={fmt.id}
                 type="button"
                 onClick={() => onUpdateConfig({ format: fmt.id })}
-                className={`px-2.5 py-2 rounded-xl border text-left transition ${
-                  active
-                    ? 'bg-[#13203d] border-[#38bdf8] text-white'
-                    : 'bg-[#0c1324] border-[#1b2742] text-slate-300 hover:border-slate-500'
-                }`}
+                className={`px-2.5 py-2 rounded-xl border text-left transition ${active
+                  ? 'bg-[#13203d] border-[#38bdf8] text-white'
+                  : 'bg-[#0c1324] border-[#1b2742] text-slate-300 hover:border-slate-500'
+                  }`}
               >
                 <div className="text-xs font-semibold truncate">{fmt.label}</div>
                 <div className="text-[10px] text-slate-400">{fmt.badge}</div>
@@ -136,6 +134,29 @@ export default function ExportControlsSidebar({
 
         <div className="grid grid-cols-2 gap-2">
           <label className="flex flex-col gap-1 text-[11px] text-slate-400">
+            <span>Số / Ký hiệu văn bản</span>
+            <input
+              type="text"
+              value={config.documentCode || ''}
+              onChange={(e) => onUpdateConfig({ documentCode: e.target.value })}
+              placeholder="Tự động (BBH-...)"
+              className="px-2.5 py-1.5 rounded-lg bg-[#0c1324] border border-[#1b2742] text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#38bdf8]"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[11px] text-slate-400">
+            <span>Kính gửi / Nơi nhận</span>
+            <input
+              type="text"
+              value={config.recipientGroup || ''}
+              onChange={(e) => onUpdateConfig({ recipientGroup: e.target.value })}
+              placeholder="Ban Giám đốc..."
+              className="px-2.5 py-1.5 rounded-lg bg-[#0c1324] border border-[#1b2742] text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#38bdf8]"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1 text-[11px] text-slate-400">
             <span>Đơn vị / Team</span>
             <input
               type="text"
@@ -145,12 +166,12 @@ export default function ExportControlsSidebar({
             />
           </label>
           <label className="flex flex-col gap-1 text-[11px] text-slate-400">
-            <span>Người lập</span>
+            <span>Người lập biên bản</span>
             <input
               type="text"
               value={config.authorName}
               onChange={(e) => onUpdateConfig({ authorName: e.target.value })}
-              placeholder="SmartRec AI"
+              placeholder="Thư ký AI · SmartRec"
               className="px-2.5 py-1.5 rounded-lg bg-[#0c1324] border border-[#1b2742] text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#38bdf8]"
             />
           </label>
@@ -166,11 +187,10 @@ export default function ExportControlsSidebar({
                 title={theme.label}
                 aria-label={theme.label}
                 onClick={() => onUpdateConfig({ accentTheme: theme.id })}
-                className={`w-5 h-5 rounded-full border-2 transition ${
-                  config.accentTheme === theme.id
-                    ? 'border-white scale-110'
-                    : 'border-transparent opacity-70 hover:opacity-100'
-                }`}
+                className={`w-5 h-5 rounded-full border-2 transition ${config.accentTheme === theme.id
+                  ? 'border-white scale-110'
+                  : 'border-transparent opacity-70 hover:opacity-100'
+                  }`}
                 style={{ backgroundColor: theme.primary }}
               />
             ))}
@@ -178,6 +198,24 @@ export default function ExportControlsSidebar({
         </div>
 
         <div className="flex flex-col gap-1.5 pt-1 text-xs text-slate-300">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.includeCoverPage !== false}
+              onChange={(e) => onUpdateConfig({ includeCoverPage: e.target.checked })}
+              className="rounded border-slate-600"
+            />
+            <span>Trang bìa chính thức (Cover + Logo)</span>
+          </label>
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.includeToc !== false}
+              onChange={(e) => onUpdateConfig({ includeToc: e.target.checked })}
+              className="rounded border-slate-600"
+            />
+            <span>Mục lục nội dung (TOC)</span>
+          </label>
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"

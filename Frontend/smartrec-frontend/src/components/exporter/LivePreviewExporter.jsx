@@ -10,6 +10,10 @@ import {
   getPresetConfig,
   printDocumentPreview,
 } from '../../services/documentExporterService';
+import {
+  DEFAULT_WORD_OPTIONS,
+  downloadDocxFile,
+} from '../../services/docxGeneratorService';
 
 export default function LivePreviewExporter({
   meeting,
@@ -25,6 +29,7 @@ export default function LivePreviewExporter({
     ...DEFAULT_EXPORT_CONFIG,
     authorName: defaultAuthorName,
   }));
+  const [wordOptions, setWordOptions] = useState(DEFAULT_WORD_OPTIONS);
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
@@ -97,8 +102,21 @@ export default function LivePreviewExporter({
     }
   };
 
+  const handleDownloadDocx = (targetModel = docModel, targetWordOptions = wordOptions) => {
+    if (!hasSelectedSections) return;
+    const result = downloadDocxFile(targetModel, targetWordOptions, config);
+    if (result.ok) {
+      showNotice(`Đã tạo và tải xuống file Word ${result.fileName}`);
+      onExported?.({ format: 'docx', fileName: result.fileName });
+    }
+  };
+
   const handleDownload = () => {
     if (!hasSelectedSections) return;
+    if (config.format === 'docx') {
+      handleDownloadDocx(docModel, wordOptions);
+      return;
+    }
     const result = downloadExportFile(docModel, config);
     if (result.ok) {
       showNotice(
@@ -177,7 +195,13 @@ export default function LivePreviewExporter({
           />
         </div>
         <div className="lg:col-span-8 min-w-0">
-          <DocumentA4Preview docModel={docModel} config={config} />
+          <DocumentA4Preview
+            docModel={docModel}
+            config={config}
+            wordOptions={wordOptions}
+            onWordOptionsChange={setWordOptions}
+            onDownloadDocx={handleDownloadDocx}
+          />
         </div>
       </div>
     </div>

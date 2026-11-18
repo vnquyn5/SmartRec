@@ -1,13 +1,28 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import DocxLivePreview from './DocxLivePreview';
+import SmartRecDocLogo from './SmartRecDocLogo';
 import {
   ACCENT_THEMES,
   generateExportJson,
   generateMarkdown,
 } from '../../services/documentExporterService';
 
-export default function DocumentA4Preview({ docModel, config }) {
-  const [viewMode, setViewMode] = useState('a4');
+export default function DocumentA4Preview({
+  docModel,
+  config,
+  wordOptions,
+  onWordOptionsChange,
+  onDownloadDocx,
+}) {
+  const [viewMode, setViewMode] = useState(config?.format === 'docx' ? 'docx' : 'a4');
   const [zoom, setZoom] = useState(0.9);
+
+  useEffect(() => {
+    if (config?.format === 'docx') setViewMode('docx');
+    else if (config?.format === 'md') setViewMode('markdown');
+    else if (config?.format === 'json') setViewMode('json');
+    else if (config?.format === 'pdf' || config?.format === 'html') setViewMode('a4');
+  }, [config?.format]);
 
   const sections = config.sections || {};
   const theme = useMemo(
@@ -33,6 +48,7 @@ export default function DocumentA4Preview({ docModel, config }) {
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-[#070c18] border-b border-[#18233c] shrink-0">
         <div className="inline-flex rounded-lg bg-[#0c1324] border border-[#1b2742] p-0.5 text-[11px]">
           {[
+            { id: 'docx', label: 'Word (.docx) Live' },
             { id: 'a4', label: 'Trang giấy A4' },
             { id: 'markdown', label: 'Markdown' },
             { id: 'json', label: 'JSON' },
@@ -76,6 +92,17 @@ export default function DocumentA4Preview({ docModel, config }) {
       </div>
 
       {/* Preview Body */}
+      {viewMode === 'docx' && !noSectionsSelected ? (
+        <div className="flex-1 min-h-0 flex flex-col">
+          <DocxLivePreview
+            docModel={docModel}
+            config={config}
+            wordOptions={wordOptions}
+            onWordOptionsChange={onWordOptionsChange}
+            onDownloadDocx={onDownloadDocx}
+          />
+        </div>
+      ) : (
       <div className="flex-1 overflow-auto p-4 sm:p-6 bg-[#060a14]">
         {noSectionsSelected ? (
           <div className="h-full min-h-[360px] flex items-center justify-center text-xs text-slate-400 border border-dashed border-[#1e2c4d] rounded-xl p-6 text-center">
@@ -99,21 +126,91 @@ export default function DocumentA4Preview({ docModel, config }) {
               }}
               className="bg-white text-slate-900 rounded-xl shadow-2xl border border-slate-200 p-6 sm:p-8 transition-all"
             >
-              {/* Header */}
-              <header
-                className="pb-3 mb-4"
-                style={{ borderBottom: `3px solid ${theme.primary}` }}
-              >
-                <div
-                  className="text-[10px] font-bold uppercase tracking-widest"
-                  style={{ color: theme.primary }}
+              {/* Cover / Header */}
+              {config.includeCoverPage !== false ? (
+                <section className="mb-6 pb-6 border-b-2 border-dashed border-slate-200">
+                  <div
+                    className="flex flex-wrap items-start justify-between gap-4 pb-3 mb-5"
+                    style={{ borderBottom: `2px solid ${theme.primary}` }}
+                  >
+                    <SmartRecDocLogo size={38} organizationName={docModel.organizationName} />
+                    <div className="text-right text-[11px] text-slate-600 leading-snug">
+                      <div>
+                        <strong>Số / Ký hiệu:</strong>{' '}
+                        <span className="font-mono text-slate-900">{docModel.documentCode}</span>
+                      </div>
+                      <div>
+                        <strong>Ngày lập:</strong> {docModel.exportedAtLabel}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    className="rounded-lg p-5 text-center mb-4"
+                    style={{
+                      backgroundColor: theme.soft,
+                      borderTop: `3px solid ${theme.primary}`,
+                      borderBottom: `3px solid ${theme.primary}`,
+                    }}
+                  >
+                    <div
+                      className="text-[10px] font-bold uppercase tracking-widest"
+                      style={{ color: theme.primary }}
+                    >
+                      {docModel.documentSubtitle}
+                    </div>
+                    <h2 className="text-xl font-extrabold text-slate-900 mt-1.5 break-words">
+                      {docModel.title}
+                    </h2>
+                    <p className="text-[11px] text-slate-600 mt-1.5">
+                      Kính gửi: <strong className="text-slate-800">{docModel.recipientGroup}</strong>
+                    </p>
+                  </div>
+                </section>
+              ) : (
+                <header
+                  className="pb-3 mb-4 flex items-center justify-between gap-3"
+                  style={{ borderBottom: `3px solid ${theme.primary}` }}
                 >
-                  {docModel.organizationName} · Meeting Minutes
-                </div>
-                <h2 className="text-xl font-bold text-slate-900 mt-1 break-words">
-                  {docModel.title}
-                </h2>
-              </header>
+                  <div>
+                    <div
+                      className="text-[10px] font-bold uppercase tracking-widest"
+                      style={{ color: theme.primary }}
+                    >
+                      {docModel.organizationName} · {docModel.documentCode}
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mt-1 break-words">
+                      {docModel.title}
+                    </h2>
+                  </div>
+                  <SmartRecDocLogo size={34} showWordmark={false} />
+                </header>
+              )}
+
+              {/* Mục lục */}
+              {config.includeToc !== false && docModel.tocItems?.length > 0 && (
+                <nav
+                  aria-label="Mục lục"
+                  className="mb-5 rounded-lg border border-slate-200 bg-slate-50/90 px-4 py-3 text-xs"
+                >
+                  <div
+                    className="font-bold uppercase tracking-wide text-[11px] pb-1.5 mb-2 border-b"
+                    style={{ color: theme.primary, borderColor: theme.border }}
+                  >
+                    Mục lục tài liệu
+                  </div>
+                  <ul className="flex flex-col gap-1">
+                    {docModel.tocItems.map((item) => (
+                      <li key={item.key} className="flex items-baseline justify-between gap-2">
+                        <span>
+                          <strong>{item.number}.</strong> {item.label}
+                        </span>
+                        <span className="flex-1 border-b border-dotted border-slate-300 mx-2" />
+                        <span className="font-mono text-[11px] text-slate-500">§{item.number}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              )}
 
               {/* Metadata Grid */}
               {sections.metadata && (
@@ -314,9 +411,24 @@ export default function DocumentA4Preview({ docModel, config }) {
                 </section>
               )}
 
+              <section className="mt-6 pt-4 border-t border-slate-200 grid grid-cols-2 gap-6 text-center text-xs">
+                <div>
+                  <div className="font-bold uppercase text-slate-800">Người lập biên bản</div>
+                  <div className="text-[11px] italic text-slate-500">(Ký và ghi rõ họ tên)</div>
+                  <div className="mt-10 font-semibold text-slate-900">{docModel.authorName}</div>
+                </div>
+                <div>
+                  <div className="font-bold uppercase text-slate-800">Đại diện phê duyệt</div>
+                  <div className="text-[11px] italic text-slate-500">(Ký và ghi rõ họ tên)</div>
+                  <div className="mt-10 font-semibold text-slate-900">{docModel.recipientGroup}</div>
+                </div>
+              </section>
+
               {config.includeWatermark && (
                 <footer className="mt-6 pt-3 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500">
-                  <span>Generated by SmartRec AI Workspace</span>
+                  <span>
+                    Generated by SmartRec AI Workspace · {docModel.documentCode}
+                  </span>
                   <span>{docModel.exportedAtLabel}</span>
                 </footer>
               )}
@@ -324,6 +436,7 @@ export default function DocumentA4Preview({ docModel, config }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

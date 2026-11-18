@@ -48,8 +48,8 @@ export const EXPORT_TEMPLATES = [
 ];
 
 export const EXPORT_FORMATS = [
+  { id: 'docx', label: 'Word (.docx)', ext: 'docx', badge: 'OOXML Word' },
   { id: 'pdf', label: 'In / PDF (A4)', ext: 'pdf', badge: 'A4 Vector' },
-  { id: 'doc', label: 'Word (.doc)', ext: 'doc', badge: 'MS Word' },
   { id: 'md', label: 'Markdown (.md)', ext: 'md', badge: 'Notion / Git' },
   { id: 'html', label: 'Web HTML (.html)', ext: 'html', badge: 'Standalone' },
   { id: 'json', label: 'JSON (.json)', ext: 'json', badge: 'Structured' },
@@ -66,8 +66,14 @@ export const DEFAULT_EXPORT_CONFIG = {
   format: 'pdf',
   accentTheme: 'blue',
   documentTitle: '',
+  documentCode: '',
+  documentSubtitle: 'Biên bản cuộc họp & Báo cáo phân tích AI',
   authorName: '',
   organizationName: 'SmartRec AI Workspace',
+  recipientGroup: 'Ban Giám đốc & Thành viên dự án',
+  meetingLocation: 'SmartRec Online Workspace',
+  includeCoverPage: true,
+  includeToc: true,
   includeTimestamps: true,
   includeWatermark: true,
   includeEmptyFields: false,
@@ -79,6 +85,19 @@ export const DEFAULT_EXPORT_CONFIG = {
     transcript: false,
   },
 };
+
+export function getSmartRecLogoSvg(size = 36) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SmartRec Logo">
+  <defs>
+    <linearGradient id="smartrecGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#00d1ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="36" height="36" rx="10" fill="url(#smartrecGrad)"/>
+  <circle cx="20" cy="20" r="7.5" fill="rgba(255,255,255,0.22)" stroke="#ffffff" stroke-width="2.5"/>
+</svg>`;
+}
 
 export function getPresetConfig(templateId, currentConfig = DEFAULT_EXPORT_CONFIG) {
   const preset = EXPORT_TEMPLATES.find((t) => t.id === templateId) || EXPORT_TEMPLATES[0];
@@ -299,11 +318,64 @@ export function buildExportDocumentModel({
     .split(/\s+/)
     .filter(Boolean).length;
 
+  const rawCode = String(config.documentCode || '').trim();
+  const dateObj = meeting?.createdAt ? new Date(meeting.createdAt) : new Date();
+  const year = Number.isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear();
+  const month = String(
+    (Number.isNaN(dateObj.getTime()) ? new Date().getMonth() : dateObj.getMonth()) + 1
+  ).padStart(2, '0');
+  const shortId = String(meetingId || 'SR').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '0001';
+  const documentCode = rawCode || `BBH-${year}/${month}-${shortId}`;
+
+  const tocItems = [];
+  if (sections.metadata) {
+    tocItems.push({ key: 'metadata', number: 'I', label: 'Thông tin chung cuộc họp' });
+  }
+  let secNum = 1;
+  if (sections.summary) {
+    tocItems.push({
+      key: 'summary',
+      number: String(secNum++),
+      label: 'Tóm tắt điều hành (AI Summary)',
+    });
+  }
+  if (sections.tasks) {
+    tocItems.push({
+      key: 'tasks',
+      number: String(secNum++),
+      label: `Bảng Action Items & Phân công (${resolvedTasks.length})`,
+    });
+  }
+  if (sections.ocr && resolvedOcr.length > 0) {
+    tocItems.push({
+      key: 'ocr',
+      number: String(secNum++),
+      label: `Nội dung Slide & OCR Keyframes (${resolvedOcr.length})`,
+    });
+  }
+  if (sections.transcript && resolvedTranscript.length > 0) {
+    tocItems.push({
+      key: 'transcript',
+      number: String(secNum++),
+      label: `Transcript chi tiết cuộc họp (${resolvedTranscript.length} đoạn)`,
+    });
+  }
+
   return {
     meetingId,
+    documentCode,
+    documentSubtitle:
+      String(config.documentSubtitle || '').trim() ||
+      'Biên bản cuộc họp & Báo cáo phân tích AI',
+    recipientGroup:
+      String(config.recipientGroup || '').trim() ||
+      'Ban Giám đốc & Thành viên dự án',
+    meetingLocation:
+      String(config.meetingLocation || '').trim() ||
+      'SmartRec Online Workspace',
     title: resolvedTitle,
     organizationName: config.organizationName || 'SmartRec AI Workspace',
-    authorName: config.authorName || 'SmartRec AI Engine',
+    authorName: config.authorName || 'Thư ký AI · SmartRec',
     createdAtLabel: formatDateDisplay(meeting?.createdAt),
     exportedAtLabel: formatDateDisplay(new Date().toISOString()),
     durationLabel: formatDurationLabel(meeting?.durationSeconds ?? 2700),
@@ -313,9 +385,10 @@ export function buildExportDocumentModel({
     tasks: resolvedTasks,
     ocrSlides: resolvedOcr,
     transcript: resolvedTranscript,
+    tocItems,
     stats: {
       wordCount,
-      estimatedPages: Math.max(1, Math.ceil(wordCount / 360)),
+      estimatedPages: Math.max(1, Math.ceil(wordCount / 360)) + (config.includeCoverPage !== false ? 1 : 0),
       summaryCount: resolvedSummary.length,
       taskCount: resolvedTasks.length,
       ocrCount: resolvedOcr.length,
@@ -329,8 +402,31 @@ export function generateMarkdown(docModel, config = DEFAULT_EXPORT_CONFIG) {
   const sections = config.sections || DEFAULT_EXPORT_CONFIG.sections;
   const lines = [];
 
-  lines.push(`# ${docModel.title}`);
-  lines.push('');
+  if (config.includeCoverPage !== false) {
+    lines.push(`> **${docModel.organizationName}** · Số/Ký hiệu: \`${docModel.documentCode}\``);
+    lines.push('');
+    lines.push(`# ${docModel.title}`);
+    lines.push(`**${docModel.documentSubtitle}**`);
+    lines.push('');
+    lines.push(`- **Kính gửi:** ${docModel.recipientGroup}`);
+    lines.push(`- **Đơn vị ban hành:** ${docModel.organizationName}`);
+    lines.push(`- **Người lập biên bản:** ${docModel.authorName}`);
+    lines.push(`- **Ngày cuộc họp:** ${docModel.createdAtLabel}`);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  } else {
+    lines.push(`# ${docModel.title}`);
+    lines.push('');
+  }
+
+  if (config.includeToc !== false && docModel.tocItems?.length > 0) {
+    lines.push('## Mục lục');
+    docModel.tocItems.forEach((item) => {
+      lines.push(`- **${item.number}.** ${item.label}`);
+    });
+    lines.push('');
+  }
 
   if (sections.metadata) {
     lines.push('## Thông tin cuộc họp');
@@ -636,6 +732,54 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
     }
     .speaker { font-weight: 700; color: ${theme.primary}; margin-right: 6px; }
     .ts { font-family: monospace; font-size: 11px; color: #64748b; }
+    .cover-page {
+      border: 1.5px solid ${theme.border};
+      padding: 32px;
+      margin-bottom: 24px;
+      background: #ffffff;
+      page-break-after: always;
+    }
+    .cover-brand-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid ${theme.primary};
+      padding-bottom: 14px;
+      margin-bottom: 36px;
+    }
+    .cover-brand-left { display: flex; align-items: center; gap: 10px; }
+    .cover-brand-name { font-size: 18px; font-weight: 800; color: #0f172a; }
+    .cover-brand-name span { color: #0284c7; }
+    .cover-hero {
+      text-align: center;
+      padding: 28px 16px;
+      background: ${theme.soft};
+      border-top: 3px solid ${theme.primary};
+      border-bottom: 3px solid ${theme.primary};
+      margin-bottom: 32px;
+    }
+    .toc-box {
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 18px;
+    }
+    .toc-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px dotted #cbd5e1;
+      font-size: 12.5px;
+    }
+    .sig-grid {
+      display: table;
+      width: 100%;
+      margin-top: 28px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 16px;
+    }
+    .sig-col { display: table-cell; width: 50%; text-align: center; vertical-align: top; }
     .doc-footer {
       margin-top: 24px;
       padding-top: 10px;
@@ -650,20 +794,74 @@ export function generateDocumentHtml(docModel, config = DEFAULT_EXPORT_CONFIG, {
 </head>
 <body>
   <div class="doc-container">
-    <header class="doc-header">
-      <div class="doc-kicker">${escapeHtml(docModel.organizationName)} · Meeting Minutes</div>
+    ${
+      config.includeCoverPage !== false
+        ? `<section class="cover-page">
+      <div class="cover-brand-row">
+        <div class="cover-brand-left">
+          ${getSmartRecLogoSvg(36)}
+          <div>
+            <div class="cover-brand-name">Smart<span>Rec</span></div>
+            <div style="font-size:11px;color:#475569;">${escapeHtml(docModel.organizationName)}</div>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:11px;color:#475569;">
+          <div><strong>Số/Ký hiệu:</strong> ${escapeHtml(docModel.documentCode)}</div>
+          <div><strong>Ngày lập:</strong> ${escapeHtml(docModel.exportedAtLabel)}</div>
+        </div>
+      </div>
+      <div class="cover-hero">
+        <div class="doc-kicker">${escapeHtml(docModel.documentSubtitle)}</div>
+        <h1 style="font-size:24px;margin-top:8px;">${escapeHtml(docModel.title)}</h1>
+      </div>
+      <table class="meta-table">
+        <tr><td><strong>Kính gửi:</strong> ${escapeHtml(docModel.recipientGroup)}</td><td><strong>Địa điểm:</strong> ${escapeHtml(docModel.meetingLocation)}</td></tr>
+        <tr><td><strong>Đơn vị chủ trì:</strong> ${escapeHtml(docModel.organizationName)}</td><td><strong>Người lập:</strong> ${escapeHtml(docModel.authorName)}</td></tr>
+        <tr><td><strong>Ngày cuộc họp:</strong> ${escapeHtml(docModel.createdAtLabel)}</td><td><strong>Thời lượng:</strong> ${escapeHtml(docModel.durationLabel)}</td></tr>
+      </table>
+    </section>`
+        : `<header class="doc-header">
+      <div class="doc-kicker">${escapeHtml(docModel.organizationName)} · ${escapeHtml(docModel.documentCode)}</div>
       <h1>${escapeHtml(docModel.title)}</h1>
-    </header>
+    </header>`
+    }
+    ${
+      config.includeToc !== false && docModel.tocItems?.length > 0
+        ? `<section class="toc-box">
+      <h2 style="margin-top:0;">Mục lục nội dung</h2>
+      ${docModel.tocItems
+        .map(
+          (item) =>
+            `<div class="toc-item"><span><strong>${escapeHtml(item.number)}.</strong> ${escapeHtml(
+              item.label
+            )}</span><span>§${escapeHtml(item.number)}</span></div>`
+        )
+        .join('')}
+    </section>`
+        : ''
+    }
     ${metadataHtml}
     ${summaryHtml}
     ${tasksHtml}
     ${ocrHtml}
     ${transcriptHtml}
+    <section class="sig-grid">
+      <div class="sig-col">
+        <div style="font-weight:700;font-size:12px;">NGƯỜI LẬP BIÊN BẢN</div>
+        <div style="font-size:11px;color:#64748b;font-style:italic;">(Ký và ghi rõ họ tên)</div>
+        <div style="margin-top:42px;font-weight:600;">${escapeHtml(docModel.authorName)}</div>
+      </div>
+      <div class="sig-col">
+        <div style="font-weight:700;font-size:12px;">ĐẠI DIỆN PHÊ DUYỆT</div>
+        <div style="font-size:11px;color:#64748b;font-style:italic;">(Ký và ghi rõ họ tên)</div>
+        <div style="margin-top:42px;font-weight:600;">${escapeHtml(docModel.recipientGroup)}</div>
+      </div>
+    </section>
     ${
       config.includeWatermark
-        ? `<footer class="doc-footer"><span>Generated by SmartRec AI</span><span>${escapeHtml(
-            docModel.exportedAtLabel
-          )}</span></footer>`
+        ? `<footer class="doc-footer"><span>Generated by SmartRec AI · ${escapeHtml(
+            docModel.documentCode
+          )}</span><span>${escapeHtml(docModel.exportedAtLabel)}</span></footer>`
         : ''
     }
   </div>
