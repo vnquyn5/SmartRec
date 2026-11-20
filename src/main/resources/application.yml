@@ -61,9 +61,13 @@ minio:
 
 # 6. WebSocket Configuration
 websocket:
+  # HTTP endpoint để client bắt đầu WebSocket handshake.
   endpoint: /ws
+  # Prefix cho STOMP SEND từ client tới các @MessageMapping backend.
   application-prefix: /app
+  # Prefix broadcast; JobProgressPublisherServiceImpl gửi vào /topic/jobs/{jobId}.
   broker-prefix: /topic
+  # Chỉ origin frontend được liệt kê mới được mở handshake từ browser.
   allowed-origins:
     - http://localhost:3000
     - http://localhost:5173

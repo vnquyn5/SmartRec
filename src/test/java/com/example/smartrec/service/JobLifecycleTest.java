@@ -53,6 +53,8 @@ class JobLifecycleTest {
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
     @Mock private AIResultService aiResultService;
+    // Mock publisher boundary so lifecycle tests can focus on state transitions.
+    @Mock private JobProgressService jobProgressService;
     @InjectMocks private JobServiceImpl service;
 
     private UUID jobId;

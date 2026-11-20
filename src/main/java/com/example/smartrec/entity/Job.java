@@ -90,6 +90,7 @@ public class Job {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    // Sequence bền vững theo Job; mỗi lần phát progress tăng một lần để snapshot/event có thể đối chiếu.
     @Builder.Default
     @Column(name = "event_sequence", nullable = false)
     private Long eventSequence = 0L;

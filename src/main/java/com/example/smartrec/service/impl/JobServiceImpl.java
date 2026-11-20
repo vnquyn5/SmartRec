@@ -28,6 +28,7 @@ import com.example.smartrec.service.JobService;
 import com.example.smartrec.service.JobStateMachine;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.AIResultService;
+import com.example.smartrec.service.JobProgressService;
 
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,6 +57,8 @@ public class JobServiceImpl implements JobService {
     private final MeetingRepository meetingRepository;
     private final MeetingService meetingService;
     private final AIResultService aiResultService;
+    /** Tạo event từ trạng thái Job đã lưu; listener gửi event ra WebSocket sau commit. */
+    private final JobProgressService jobProgressService;
     @Value("${job.max-retry:5}") // doc cau hinh trong yml
     private int maxRetry;
     @Value("${job.heartbeat-timeout-seconds:90}")
@@ -120,6 +123,8 @@ public class JobServiceImpl implements JobService {
         stateMachine.transition(job, JobStatus.QUEUED);
         jobRepository.save(job);
         enqueueJob(job.getId());
+        // Phát event khởi tạo trong cùng transaction với Job/stage/outbox; listener chỉ gửi sau khi toàn bộ commit.
+        jobProgressService.publishProgress(job.getId());
         return toResponse(job);
     }
 
@@ -199,9 +204,13 @@ public class JobServiceImpl implements JobService {
             System.out.println("Job chưa có currentStage: " + job.getId());
             return;
         }
+        // Lưu trạng thái cũ để lệnh processJob lặp lại không tạo event trùng nếu Job đã PROCESSING.
+        JobStatus previousStatus = job.getStatus();
         stateMachine.transition(job, JobStatus.PROCESSING);
         jobRepository.save(job);
         markMeetingProcessing(job);
+        // Chỉ phát khi lệnh này thực sự đổi status; heartbeat/call retry lặp không làm sequence nhảy vô ích.
+        if (previousStatus != job.getStatus()) jobProgressService.publishProgress(job.getId());
 
     }
 
@@ -236,7 +245,7 @@ public class JobServiceImpl implements JobService {
             }
         }
 
-        // Keep successful stages as checkpoints; the existing Worker control response exposes them.
+        // Giữ nguyên stage SUCCESS làm checkpoint; worker sẽ nhận danh sách checkpoint qua control response.
         stages.forEach(stage -> {
             if (stage.getStatus() != JobStageStatus.SUCCESS) {
                 stateMachine.transition(stage, JobStageStatus.PENDING);
@@ -269,6 +278,9 @@ public class JobServiceImpl implements JobService {
         jobRepository.save(job);
 
         enqueueJob(job.getId());
+        // Job đã được reset và enqueue lại; gửi event để client thấy trạng thái RETRYING cùng stage sẽ chạy lại.
+        // Event chỉ ra broker sau khi transaction lưu Job/stage/outbox commit thành công.
+        jobProgressService.publishProgress(job.getId());
 
         System.out.println(
                 "Manual retry Job: "
@@ -311,6 +323,8 @@ public class JobServiceImpl implements JobService {
             updateMeetingLifecycle(job, MeetingStatus.PAUSE_REQUESTED);
         }
         jobRepository.save(job);
+        // Báo cả hai nhánh: PAUSE_REQUESTED khi worker cần phản hồi, hoặc PAUSED tức thời khi chưa có lease sống.
+        jobProgressService.publishProgress(job.getId());
     }
 
     @Override
@@ -334,6 +348,8 @@ public class JobServiceImpl implements JobService {
             updateMeetingLifecycle(job, MeetingStatus.CANCEL_REQUESTED);
         }
         jobRepository.save(job);
+        // Báo CANCEL_REQUESTED để worker/client biết lệnh đang chờ, hoặc CANCELLED nếu có thể chốt ngay.
+        jobProgressService.publishProgress(job.getId());
     }
 
     @Override
@@ -360,6 +376,8 @@ public class JobServiceImpl implements JobService {
         jobRepository.save(job);
         updateMeetingLifecycle(job, MeetingStatus.PENDING);
         enqueueJob(jobId);
+        // Resume reset stage hiện tại và enqueue lại Job; sequence mới giúp client vượt qua snapshot PAUSED cũ.
+        jobProgressService.publishProgress(jobId);
     }
 
     @Override
@@ -379,16 +397,15 @@ public class JobServiceImpl implements JobService {
         boolean liveLease = hasLiveLease(job, now);
         boolean awaitingPauseOrCancel = Set.of(JobStatus.PAUSE_REQUESTED, JobStatus.CANCEL_REQUESTED)
                 .contains(job.getStatus());
-        // Only the current, still-leased worker may observe and acknowledge a
-        // pending stop request. An expired lease must be recovered by watchdog,
-        // never claimed by a replacement execution.
+        // Chỉ execution hiện tại với lease còn hạn mới được nhận/acknowledge yêu cầu pause hoặc cancel.
+        // Lease hết hạn phải do watchdog thu hồi; execution mới không được nhận nhầm lệnh dừng của worker cũ.
         if (awaitingPauseOrCancel && (!sameExecution || !liveLease)) {
             return workerControl(job, false);
         }
         if (sameExecution && job.getExecutionId() != null && !liveLease) {
             return workerControl(job, false);
         }
-        // A replacement execution can claim only after the old lease has expired.
+        // Execution thay thế chỉ được claim Job sau khi lease của execution trước đã hết hạn.
         boolean leaseExpired = !liveLease;
         if (!sameExecution && job.getExecutionId() != null && !leaseExpired) {
             return workerControl(job, false);
@@ -396,11 +413,14 @@ public class JobServiceImpl implements JobService {
         job.setExecutionId(executionId);
         job.setLeaseExpiresAt(now.plusSeconds(heartbeatTimeoutSeconds));
         job.setLastHeartbeatAt(now);
+        JobStatus previousStatus = job.getStatus();
         if (Set.of(JobStatus.QUEUED, JobStatus.PENDING, JobStatus.RETRYING).contains(job.getStatus())) {
             stateMachine.transition(job, JobStatus.PROCESSING);
             updateMeetingLifecycle(job, MeetingStatus.PROCESSING);
         }
         jobRepository.save(job);
+        // Heartbeat thường xuyên chỉ gia hạn lease; chỉ phát event khi nó thật sự chuyển Job sang PROCESSING.
+        if (previousStatus != job.getStatus()) jobProgressService.publishProgress(job.getId());
         return workerControl(job, true);
     }
 
@@ -484,6 +504,8 @@ public class JobServiceImpl implements JobService {
                 markMeetingFailed(job);
             }
             jobRepository.save(job);
+            // Watchdog đã chốt PAUSED/CANCELLED/FAILED sau lease timeout; client cần event dù worker không callback.
+            jobProgressService.publishProgress(job.getId());
         }
     }
 
@@ -638,6 +660,10 @@ public class JobServiceImpl implements JobService {
                         "Callback thuộc về Job không còn active của Meeting");
             }
         }
+        // Chụp ba giá trị hiển thị trước khi áp dụng callback để chỉ phát event nếu dữ liệu thực sự đổi.
+        JobStatus previousStatus = job.getStatus();
+        PipelineStage previousStage = job.getCurrentStage();
+        JobStageStatus previousStageStatus = jobStage.getStatus();
         if (request.getStatus() == JobStageStatus.SUCCESS && job.getStatus() == JobStatus.CANCEL_REQUESTED) {
             Instant now = Instant.now();
             stateMachine.transition(jobStage, JobStageStatus.CANCELLED);
@@ -648,6 +674,9 @@ public class JobServiceImpl implements JobService {
             updateMeetingLifecycle(job, MeetingStatus.CANCELLED);
             jobStageRepository.save(jobStage);
             jobRepository.save(job);
+            // Worker báo SUCCESS sau khi user đã cancel: cancellation thắng, không hồi sinh Job thành công.
+            // Lưu trạng thái cuối rồi phát một event để client hội tụ về CANCELLED.
+            jobProgressService.publishProgress(job.getId());
             return;
         }
 
@@ -742,6 +771,14 @@ public class JobServiceImpl implements JobService {
         }
 
         jobRepository.save(job);
+
+        // Callback có thể được gửi lặp: chỉ tăng sequence nếu status Job, stage hiện tại hoặc status stage đã đổi.
+        // Các lần heartbeat/callback lặp không đổi trạng thái không phát event mới để tránh tiến độ giả và spam.
+        if (previousStatus != job.getStatus()
+                || previousStage != job.getCurrentStage()
+                || previousStageStatus != jobStage.getStatus()) {
+            jobProgressService.publishProgress(job.getId());
+        }
 
     }
 

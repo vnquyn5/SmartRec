@@ -46,6 +46,8 @@ class JobServiceImplSpeakerCallbackTest {
     @Mock private MeetingRepository meetingRepository;
     @Mock private MeetingService meetingService;
     @Mock private AIResultService aiResultService;
+    // Observe only when lifecycle callbacks request a progress event; delivery is tested separately.
+    @Mock private JobProgressService jobProgressService;
     @InjectMocks private JobServiceImpl jobService;
 
     private UUID jobId;
@@ -94,6 +96,8 @@ class JobServiceImplSpeakerCallbackTest {
         verify(jobRepository).save(job);
         assertEquals(JobStatus.COMPLETED, job.getStatus());
         assertEquals(com.example.smartrec.entity.MeetingStatus.COMPLETED, meeting.getStatus());
+        // Completion is persisted before the progress publisher is asked to build the event.
+        verify(jobProgressService).publishProgress(jobId);
     }
 
     @Test
@@ -144,6 +148,10 @@ class JobServiceImplSpeakerCallbackTest {
         org.mockito.Mockito.verifyNoInteractions(speakerSegmentRepository);
         verify(aiResultService).saveAIResult(response);
         assertEquals(JobStatus.COMPLETED, job.getStatus());
+        // Enforce ordering: persist the AI result before publishing the completed state.
+        org.mockito.InOrder publishOrder = org.mockito.Mockito.inOrder(aiResultService, jobProgressService);
+        publishOrder.verify(aiResultService).saveAIResult(response);
+        publishOrder.verify(jobProgressService).publishProgress(jobId);
     }
 
     @Test
@@ -209,6 +217,8 @@ class JobServiceImplSpeakerCallbackTest {
         verify(jobRepository).save(job);
         assertEquals(jobId, meeting.getActive_job_id());
         assertEquals(com.example.smartrec.entity.MeetingStatus.PROCESSING, meeting.getStatus());
+        // A newly started stage changes visible progress, so it must trigger an update.
+        verify(jobProgressService).publishProgress(jobId);
     }
 
     @Test
@@ -231,6 +241,8 @@ class JobServiceImplSpeakerCallbackTest {
         assertEquals(firstStartedAt, ffmpegStage.getStartedAt());
         assertEquals(0, ffmpegStage.getRetryCount());
         verify(jobStageRepository, org.mockito.Mockito.times(2)).save(ffmpegStage);
+        // A duplicate callback with no state change must not emit a duplicate progress event.
+        org.mockito.Mockito.verify(jobProgressService, org.mockito.Mockito.never()).publishProgress(jobId);
     }
 
     @Test

@@ -25,6 +25,9 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    @Value("${websocket.endpoint:/ws}")
+    private String websocketEndpoint;
+
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
     }
@@ -45,6 +48,9 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/register","/api/auth/login","/api/auth/google","/api/auth/refresh-token").permitAll()
+                // Cho phép HTTP upgrade đi tới WebSocket; trình duyệt thường gửi JWT ở STOMP CONNECT thay vì handshake.
+                // Quyền ở đây chỉ áp dụng cho transport upgrade; JobProgressChannelInterceptor vẫn bắt buộc xác thực CONNECT.
+                .requestMatchers(websocketEndpoint, websocketEndpoint + "/**").permitAll()
                 // Guest bỏ qua JWT duy nhất trên share routes; các API meeting vẫn yêu cầu đăng nhập.
                 .requestMatchers("/public/share/**").permitAll()
                 .requestMatchers("/jobs/*/callback").permitAll()
