@@ -10,6 +10,7 @@ import com.example.smartrec.entity.Job;
 import com.example.smartrec.entity.JobStage;
 import com.example.smartrec.entity.JobDispatchOutbox;
 import com.example.smartrec.entity.MediaFile;
+import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.SpeakerSegment;
 import com.example.smartrec.enums.JobStageStatus;
 import com.example.smartrec.enums.JobStatus;
@@ -229,11 +230,28 @@ public class JobServiceImpl implements JobService {
                     "Chỉ Job FAILED, DLQ hoặc CANCELLED mới được retry thủ công");
         }
         List<JobStage> stages = jobStageRepository.findByJobIdOrderByStageAsc(jobId);
-        JobStage failedStage = stages.stream()
-                .filter(stage -> stage.getStatus() != JobStageStatus.SUCCESS)
-                .findFirst()
-                .orElseThrow(() -> new BusinessException(HttpStatus.CONFLICT, "NO_RETRYABLE_STAGE",
-                        "Job không còn stage nào cần xử lý lại"));
+        boolean workspaceLost = "WORKSPACE_LOST".equals(job.getErrorCode());
+        JobStage retryStage;
+        if (workspaceLost) {
+            MediaFile sourceMedia = mediaFileRepository.findById(job.getMediaFileId()).orElse(null);
+            if (sourceMedia == null || sourceMedia.getDeleted_at() != null
+                    || !MediaFileStatus.UPLOADED.equals(sourceMedia.getStatus())
+                    || sourceMedia.getObject_key() == null || sourceMedia.getObject_key().isBlank()) {
+                throw new BusinessException(HttpStatus.CONFLICT, "WORKSPACE_REPROCESS_SOURCE_UNAVAILABLE",
+                        "Không thể chạy lại từ đầu vì media gốc không còn khả dụng");
+            }
+            retryStage = stages.stream()
+                    .filter(stage -> stage.getStage() == PipelineStage.FFMPEG)
+                    .findFirst()
+                    .orElseThrow(() -> new BusinessException(HttpStatus.CONFLICT, "NO_RETRYABLE_STAGE",
+                            "Job không có stage FFMPEG để chạy lại từ đầu"));
+        } else {
+            retryStage = stages.stream()
+                    .filter(stage -> stage.getStatus() != JobStageStatus.SUCCESS)
+                    .findFirst()
+                    .orElseThrow(() -> new BusinessException(HttpStatus.CONFLICT, "NO_RETRYABLE_STAGE",
+                            "Job không còn stage nào cần xử lý lại"));
+        }
 
         Meeting meeting = meetingRepository.findById(job.getMeetingId()).orElse(null);
         if (meeting != null && meeting.getActive_job_id() != null && !jobId.equals(meeting.getActive_job_id())) {
@@ -246,10 +264,16 @@ public class JobServiceImpl implements JobService {
             }
         }
 
-        // Keep successful stages as checkpoints; the existing Worker control response exposes them.
+        // Preserve successful checkpoints for an ordinary retry. A WORKSPACE_LOST
+        // retry is an explicit owner action and must restart every stage because
+        // the Worker checkpoints are local files, not durable Backend state.
         stages.forEach(stage -> {
-            if (stage.getStatus() != JobStageStatus.SUCCESS) {
+            if (workspaceLost) {
+                stateMachine.resetStageForFullReprocess(stage);
+            } else if (stage.getStatus() != JobStageStatus.SUCCESS) {
                 stateMachine.transition(stage, JobStageStatus.PENDING);
+            }
+            if (workspaceLost || stage.getStatus() != JobStageStatus.SUCCESS) {
                 stage.setRetryCount(0);
                 stage.setStartedAt(null);
                 stage.setCompletedAt(null);
@@ -258,7 +282,7 @@ public class JobServiceImpl implements JobService {
             }
         });
         jobStageRepository.saveAll(stages);
-        job.setCurrentStage(failedStage.getStage());
+        job.setCurrentStage(retryStage.getStage());
         stateMachine.transition(job, JobStatus.RETRYING);
         job.setRetryCount(0);
         job.setLastRetryAt(Instant.now());
@@ -285,7 +309,7 @@ public class JobServiceImpl implements JobService {
                 "Manual retry Job: "
                         + job.getId()
                         + " - Stage: "
-                        + failedStage.getStage());
+                        + retryStage.getStage());
     }
 
     @Override

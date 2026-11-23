@@ -89,6 +89,18 @@ public class JobStateMachine {
                 stage.setStatus(next);
         }
 
+        /**
+         * Explicitly resets a completed checkpoint when an authorized full
+         * reprocess is required because its local workspace was lost. This is
+         * intentionally separate from the ordinary transition graph so a
+         * normal callback cannot move SUCCESS back to PENDING.
+         */
+        public void resetStageForFullReprocess(JobStage stage) {
+                if (stage == null || stage.getStage() == null || stage.getStatus() == null)
+                        throw invalid("Full reprocess requires an existing JobStage state");
+                stage.setStatus(JobStageStatus.PENDING);
+        }
+
         private static BusinessException invalid(String message) {
                 return new BusinessException(HttpStatus.CONFLICT, "INVALID_STATE_TRANSITION", message);
         }

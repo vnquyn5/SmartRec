@@ -209,6 +209,10 @@ def test_no_speech_reports_terminal_failure_without_raising_or_retrying(tmp_path
         monkeypatch,
         lambda job_id, stage, status, **kwargs: callbacks.append((stage, status, kwargs)),
     )
+    def extract(**kwargs):
+        ffmpeg_calls.append(kwargs)
+        Path(kwargs["output_path"]).write_bytes(b"normalized checkpoint")
+    monkeypatch.setattr(redis_job_worker.audio_extractor, "extract_and_normalize", extract)
 
     result = process_audio_job.run("job-no-speech")
 
@@ -220,6 +224,8 @@ def test_no_speech_reports_terminal_failure_without_raising_or_retrying(tmp_path
     assert failed_callbacks[0][0] == "PYANNOTE"
     assert failed_callbacks[0][2]["error_code"] == "NO_SPEECH_DETECTED"
     assert len(ffmpeg_calls) == 1
+    assert (tmp_path / "job-no-speech" / "01_normalized_16k.wav").is_file()
+    assert (tmp_path / "job-no-speech" / "02_cleaned.wav").is_file()
 
 
 def test_no_speech_callback_failure_does_not_retry_celery_task(tmp_path, monkeypatch):
@@ -490,7 +496,86 @@ def test_retry_preserves_completed_stage_artifact_and_resume_skips_ffmpeg(tmp_pa
     result = redis_job_worker.process_job("job-resume")
     assert result["errorCode"] == "NO_SPEECH_DETECTED"
     assert len(calls) == 1
-    assert not (tmp_path / "job-resume").exists()
+    assert (tmp_path / "job-resume" / "01_normalized_16k.wav").is_file()
+    assert (tmp_path / "job-resume" / "02_cleaned.wav").is_file()
+
+
+def test_resume_accepts_all_required_successful_stage_artifacts(tmp_path):
+    workspace = tmp_path / "resumable-job"
+    workspace.mkdir()
+    for _, filename in redis_job_worker.RESUME_ARTIFACTS:
+        (workspace / filename).write_bytes(b"valid checkpoint fixture")
+
+    assert redis_job_worker._find_missing_resume_artifact(
+        workspace, ["OUTPUT", "PYANNOTE", "WEBRTC", "FFMPEG"]
+    ) is None
+
+
+def test_resume_reports_earliest_missing_artifact_deterministically(tmp_path):
+    workspace = tmp_path / "partially-restored-job"
+    workspace.mkdir()
+    (workspace / "01_normalized_16k.wav").write_bytes(b"normalized")
+
+    assert redis_job_worker._find_missing_resume_artifact(
+        workspace, ["PYANNOTE", "WEBRTC", "FFMPEG"]
+    ) == "WEBRTC"
+
+
+def test_new_job_with_no_successful_stages_does_not_require_old_artifacts(tmp_path):
+    assert redis_job_worker._find_missing_resume_artifact(tmp_path / "new-job", []) is None
+
+
+def test_old_output_job_after_worker_restart_reports_workspace_lost(tmp_path, monkeypatch):
+    callbacks = []
+    job_id = "old-output-job"
+
+    class StorageClientStub:
+        def download_file(self, object_key, destination_path, *, allowed_root=None):
+            assert allowed_root == str(tmp_path / job_id)
+            Path(destination_path).write_bytes(b"original media recovered from MinIO")
+            return destination_path
+
+    class RestartedWorkerHeartbeat:
+        def __init__(self, received_job_id, execution_id):
+            assert received_job_id == job_id
+            self._execution_lost = threading.Event()
+
+        def start(self):
+            pass
+
+        def checkpoint(self):
+            return {
+                "status": "PROCESSING",
+                "currentStage": "OUTPUT",
+                "successfulStages": ["PYANNOTE", "WEBRTC", "FFMPEG"],
+            }
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(redis_job_worker, "get_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(redis_job_worker, "fetch_job_details", lambda _: {
+        "objectKey": "recording.m4a",
+        "meetingId": "meeting-1",
+        "status": "PROCESSING",
+        "stage": "OUTPUT",
+        "retryCount": 1,
+    })
+    monkeypatch.setattr(redis_job_worker, "WorkerHeartbeat", RestartedWorkerHeartbeat)
+    monkeypatch.setattr(redis_job_worker, "storage_client", StorageClientStub())
+    monkeypatch.setattr(redis_job_worker, "validate_safe_read_path", lambda path: path)
+    monkeypatch.setattr(redis_job_worker, "require_stage_callback",
+                        lambda *args, **kwargs: callbacks.append((args, kwargs)))
+
+    result = redis_job_worker.process_job(job_id)
+
+    assert result["status"] == "FAILED"
+    assert result["stage"] == "OUTPUT"
+    assert result["errorCode"] == "WORKSPACE_LOST"
+    assert "FFMPEG" in result["errorMessage"]
+    assert callbacks[0][0][:3] == (job_id, "OUTPUT", "FAILED")
+    assert callbacks[0][1]["error_code"] == "WORKSPACE_LOST"
+    assert not (tmp_path / job_id).exists()
 
 
 @pytest.mark.parametrize("status", ["COMPLETED", "CANCELLED", "FAILED", "DLQ", "PAUSED"])

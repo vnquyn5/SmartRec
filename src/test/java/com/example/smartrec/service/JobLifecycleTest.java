@@ -28,6 +28,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import com.example.smartrec.entity.Job;
 import com.example.smartrec.entity.JobStage;
 import com.example.smartrec.entity.JobDispatchOutbox;
+import com.example.smartrec.entity.MediaFile;
+import com.example.smartrec.entity.MediaFileStatus;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingStatus;
 import com.example.smartrec.enums.JobStageStatus;
@@ -169,6 +171,62 @@ class JobLifecycleTest {
         var control = service.workerHeartbeat(jobId, UUID.randomUUID());
         assertEquals(List.of(PipelineStage.FFMPEG), control.getSuccessfulStages());
         verify(outboxRepository).save(any(JobDispatchOutbox.class));
+    }
+
+    @Test
+    void manualRetryAfterWorkspaceLossResetsAllCheckpointsAndRestartsFromFfmpeg() {
+        job.setStatus(JobStatus.FAILED);
+        job.setErrorCode("WORKSPACE_LOST");
+        job.setErrorMessage("Intermediate workspace is missing");
+        job.setCurrentStage(PipelineStage.OUTPUT);
+        job.setRetryCount(2);
+        MediaFile source = MediaFile.builder().id(job.getMediaFileId())
+                .object_key("meetings/meeting-1/audio.m4a")
+                .status(MediaFileStatus.UPLOADED).build();
+        when(mediaFileRepository.findById(job.getMediaFileId())).thenReturn(Optional.of(source));
+
+        JobStage ffmpeg = JobStage.builder().jobId(jobId).stage(PipelineStage.FFMPEG)
+                .status(JobStageStatus.SUCCESS).retryCount(1).completedAt(Instant.now()).build();
+        JobStage webrtc = JobStage.builder().jobId(jobId).stage(PipelineStage.WEBRTC)
+                .status(JobStageStatus.SUCCESS).retryCount(1).completedAt(Instant.now()).build();
+        JobStage pyannote = JobStage.builder().jobId(jobId).stage(PipelineStage.PYANNOTE)
+                .status(JobStageStatus.SUCCESS).retryCount(1).completedAt(Instant.now()).build();
+        JobStage output = JobStage.builder().jobId(jobId).stage(PipelineStage.OUTPUT)
+                .status(JobStageStatus.FAILED).retryCount(2).errorCode("WORKSPACE_LOST").build();
+        when(jobStageRepository.findByJobIdOrderByStageAsc(jobId))
+                .thenReturn(List.of(ffmpeg, webrtc, pyannote, output));
+
+        service.manualRetry(jobId);
+
+        assertEquals(JobStatus.RETRYING, job.getStatus());
+        assertEquals(PipelineStage.FFMPEG, job.getCurrentStage());
+        assertEquals(0, job.getRetryCount());
+        assertNull(job.getErrorCode());
+        assertNull(job.getErrorMessage());
+        for (JobStage stage : List.of(ffmpeg, webrtc, pyannote, output)) {
+            assertEquals(JobStageStatus.PENDING, stage.getStatus());
+            assertEquals(0, stage.getRetryCount());
+            assertNull(stage.getCompletedAt());
+        }
+        verify(jobStageRepository).saveAll(List.of(ffmpeg, webrtc, pyannote, output));
+        verify(outboxRepository).save(any(JobDispatchOutbox.class));
+    }
+
+    @Test
+    void workspaceLossRetryIsRejectedWhenSourceMediaIsUnavailable() {
+        job.setStatus(JobStatus.FAILED);
+        job.setErrorCode("WORKSPACE_LOST");
+        JobStage ffmpeg = JobStage.builder().jobId(jobId).stage(PipelineStage.FFMPEG)
+                .status(JobStageStatus.SUCCESS).build();
+        when(mediaFileRepository.findById(job.getMediaFileId())).thenReturn(Optional.empty());
+        when(jobStageRepository.findByJobIdOrderByStageAsc(jobId)).thenReturn(List.of(ffmpeg));
+
+        BusinessException error = assertThrows(BusinessException.class, () -> service.manualRetry(jobId));
+
+        assertEquals("WORKSPACE_REPROCESS_SOURCE_UNAVAILABLE", error.getCode());
+        assertEquals(JobStatus.FAILED, job.getStatus());
+        assertEquals(JobStageStatus.SUCCESS, ffmpeg.getStatus());
+        verify(outboxRepository, never()).save(any(JobDispatchOutbox.class));
     }
 
     @Test

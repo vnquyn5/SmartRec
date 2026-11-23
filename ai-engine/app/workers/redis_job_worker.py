@@ -32,6 +32,12 @@ from app.workers.processing_errors import (
 setup_logging()
 logger = logging.getLogger("smartrec.worker")
 
+RESUME_ARTIFACTS = (
+    ("FFMPEG", "01_normalized_16k.wav"),
+    ("WEBRTC", "02_cleaned.wav"),
+    ("PYANNOTE", "03_diarization.json"),
+)
+
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://host.docker.internal:8082/api/v1").rstrip("/")
 INTERNAL_TOKEN = settings.smartrec_internal_token or ""
 # Khởi tạo các client dùng chung cho processor.
@@ -78,6 +84,18 @@ def _release_diarization_model(job_id: str) -> None:
         logger.info("[%s] Released Pyannote model/device memory", job_id)
     except Exception:
         logger.exception("[%s] Failed to release Pyannote model/device memory", job_id)
+
+
+def _find_missing_resume_artifact(workspace_dir: str | Path, successful_stages) -> str | None:
+    """Return the earliest successful stage whose local checkpoint is missing.
+
+    Stage order is intentional: successful_stages comes from the Backend as a
+    set-like list and must not make WORKSPACE_LOST diagnostics nondeterministic.
+    """
+    successful = {str(stage).upper() for stage in (successful_stages or [])}
+    workspace = Path(workspace_dir)
+    return next((stage for stage, filename in RESUME_ARTIFACTS
+                 if stage in successful and not (workspace / filename).is_file()), None)
 
 
 class _PauseAtBoundary(Exception):
@@ -757,14 +775,7 @@ def process_job(job_id: str):
         )
         # [GUARD 1]: Kiểm định an toàn đường dẫn file đầu vào
         validate_safe_read_path(raw_input_path)
-        required_resume_artifacts = {
-            "FFMPEG": os.path.join(workspace_dir, "01_normalized_16k.wav"),
-            "WEBRTC": os.path.join(workspace_dir, "02_cleaned.wav"),
-            "PYANNOTE": os.path.join(workspace_dir, "03_diarization.json"),
-        }
-        missing_artifact = next((stage for stage in successful_stages
-                                if stage in required_resume_artifacts
-                                and not os.path.isfile(required_resume_artifacts[stage])), None)
+        missing_artifact = _find_missing_resume_artifact(workspace_dir, successful_stages)
         if missing_artifact:
             raise NonRetryableProcessingError(
                 "WORKSPACE_LOST",
@@ -796,6 +807,7 @@ def process_job(job_id: str):
                     raise NonRetryableProcessingError(e.error_code, str(e)) from e
                 heartbeat.checkpoint()
                 require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
+                successful_stages.add(current_stage)
             # -------------------------------------------------------------
             # STAGE 2: WEBRTC (Khử ồn ANS + Lọc vang AEC + Quality Gate)
             # -------------------------------------------------------------
@@ -819,6 +831,7 @@ def process_job(job_id: str):
                     shutil.copy2(clean_wav, stable_clean_wav)
                 heartbeat.checkpoint()
                 require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
+                successful_stages.add(current_stage)
             clean_wav = stable_clean_wav
             # -------------------------------------------------------------
             # STAGE 3: PYANNOTE (Speaker Diarization & VAD - Đơn đoạn hoặc Đa đoạn)
@@ -882,6 +895,7 @@ def process_job(job_id: str):
                     raise RetryableProcessingError(error_message)
                 heartbeat.checkpoint()
                 require_stage_callback(job_id, current_stage, "SUCCESS", execution_id=execution_id)
+                successful_stages.add(current_stage)
             # Do not keep the shared diarization model resident while loading
             # Large-v3-Turbo STT or PaddleOCR for the same job.
             _release_diarization_model(job_id)
@@ -1031,6 +1045,10 @@ def process_job(job_id: str):
             preserve_workspace = True
             logger.info("[%s] Không báo lỗi stage vì execution lease đã mất", job_id)
             return {"status": "SKIPPED", "reason": "EXECUTION_LEASE_LOST"}
+        if successful_stages and e.error_code != "WORKSPACE_LOST":
+            # Manual retry preserves successful Backend checkpoints. Retain
+            # their matching local artifacts so that retry can safely resume.
+            preserve_workspace = True
         logger.error(f"[{job_id}] Lỗi xử lý Job tại stage {current_stage}: {e}", exc_info=True)
         try:
             require_stage_callback(job_id, current_stage, "FAILED", error_msg=str(e), error_code=e.error_code,
