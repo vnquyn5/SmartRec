@@ -1,0 +1,217 @@
+﻿Schema,Table Name,Table Description,Column Name,Data Type,Length/Precision,Nullable,Default Value,Primary Key,Foreign Key,Referenced Table,Referenced Column,Unique,Index,Description
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",id,uuid,,No,,Yes,No,,,Yes,action_items_pkey,Định danh bản ghi.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",assignee_name,character varying(255),255,Yes,,No,No,,,No,,Tên người được giao việc.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",assignee_user_id,uuid,,Yes,,No,No,,,No,,Định danh người dùng được giao việc; DB không có FK.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",due_date,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Hạn hoàn thành công việc chuẩn hóa.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",processing_job_id,uuid,,No,,No,No,,,No,,Định danh job xử lý liên quan; DB không có FK.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",source_transcript_id,uuid,,Yes,,No,No,,,No,,Định danh transcript nguồn; DB không có FK.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",status,character varying(255),255,No,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",task_name,text,,No,,No,No,,,No,,Nội dung công việc.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",is_verified,boolean,,No,,No,No,,,No,,Cờ công việc đã được xác minh.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",assignee_speaker_id,uuid,,Yes,,No,No,,,No,,Định danh người nói được giao việc; DB không có FK.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",assignment_provenance,character varying(32),32,Yes,,No,No,,,No,,Nguồn suy ra việc gán người phụ trách.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",deadline_raw,text,,Yes,,No,No,,,No,,Cách diễn đạt hạn chót gốc từ nội dung cuộc họp.
+public,action_items,"Công việc được rút ra từ cuộc họp, gồm người phụ trách và nguồn dẫn.",source_refs,jsonb,,Yes,,No,No,,,No,,Danh sách tham chiếu nguồn dạng JSONB.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",id,uuid,,No,,Yes,No,,,Yes,ai_usage_pkey,Định danh bản ghi.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",estimated_cost,double precision,,Yes,,No,No,,,No,,Chi phí AI ước tính.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",fallback_used,boolean,,No,,No,No,,,No,,Cờ đã dùng fallback AI.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",input_tokens,bigint,,Yes,,No,No,,,No,,Số token đầu vào.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",job_id,uuid,,No,,No,No,,,No,,Định danh job xử lý liên quan; DB không có FK.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",model_name,character varying(255),255,No,,No,No,,,No,,Tên mô hình AI.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",model_version,character varying(255),255,Yes,,No,No,,,No,,Phiên bản mô hình AI.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",output_tokens,bigint,,Yes,,No,No,,,No,,Số token đầu ra.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",processing_time,bigint,,Yes,,No,No,,,No,,"Cột thời gian xử lý còn trong DB, không được Entity AiUsage mapping."
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",total_tokens,bigint,,Yes,,No,No,,,No,,Tổng số token.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",cpu_usage,bigint,,Yes,,No,No,,,No,,Số liệu sử dụng CPU do ứng dụng ghi.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",ram_usage,bigint,,Yes,,No,No,,,No,,Số liệu sử dụng RAM do ứng dụng ghi.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",vram_usage,bigint,,Yes,,No,No,,,No,,Số liệu sử dụng VRAM do ứng dụng ghi.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",processing_time_ms,bigint,,Yes,,No,No,,,No,,"Thời gian xử lý AI, đơn vị mili giây."
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",error_code,character varying(100),100,Yes,,No,No,,,No,,Mã lỗi xử lý.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",meeting_id,uuid,,Yes,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",provider,character varying(32),32,Yes,,No,No,,,No,,Nhà cung cấp mô hình AI.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",request_id,uuid,,Yes,,No,No,,,No,,Định danh yêu cầu AI; chưa có unique index trong DB.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",status,character varying(20),20,No,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",task_type,character varying(100),100,Yes,,No,No,,,No,,Loại tác vụ AI.
+public,ai_usage,"Ghi nhận lượt sử dụng mô hình AI, token, chi phí ước tính và trạng thái.",token_source,character varying(64),64,Yes,,No,No,,,No,,Nguồn cung cấp token AI.
+public,context_payloads,Payload ngữ cảnh JSON gắn với cuộc họp.,id,uuid,,No,,Yes,No,,,Yes,context_payloads_pkey,Định danh bản ghi.
+public,context_payloads,Payload ngữ cảnh JSON gắn với cuộc họp.,meeting_id,uuid,,Yes,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,context_payloads,Payload ngữ cảnh JSON gắn với cuộc họp.,payload,jsonb,,No,,No,No,,,No,,Payload ngữ cảnh dạng JSONB.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,id,uuid,,No,,Yes,No,,,Yes,folders_pkey,Định danh bản ghi.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,name,character varying(100),100,No,,No,No,,,No,,Tên thư mục.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,name_key,character varying(100),100,No,,No,No,,,No,,Khóa tên chuẩn hóa dùng trong xử lý thư mục.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,parent_id,uuid,,Yes,,No,No,,,No,,Định danh thư mục cha; DB không có FK.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,updated_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,folders,Cây thư mục cá nhân để tổ chức cuộc họp.,user_id,uuid,,No,,No,No,,,No,,Định danh người dùng liên quan; DB không có FK.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,id,uuid,,No,,Yes,No,,,Yes,job_dispatch_outbox_pkey,Định danh bản ghi.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,attempt_count,integer,,No,,No,No,,,No,,Số lần thử phân phối outbox.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,available_at,timestamp(6) with time zone,6,No,,No,No,,,No,idx_job_dispatch_outbox_pending,Thời điểm outbox sẵn sàng phân phối.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,created_at,timestamp(6) with time zone,6,No,,No,No,,,No,idx_job_dispatch_outbox_pending,Thời điểm tạo bản ghi.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,dispatched_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,idx_job_dispatch_outbox_pending,Thời điểm outbox đã phân phối.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,job_id,uuid,,No,,No,No,,,No,,Định danh job xử lý liên quan; DB không có FK.
+public,job_dispatch_outbox,Bản ghi outbox phục vụ phân phối job xử lý bất đồng bộ.,last_error,character varying(1000),1000,Yes,,No,No,,,No,,Lỗi phân phối outbox gần nhất.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,id,uuid,,No,,Yes,No,,,Yes,job_stages_pkey,Định danh bản ghi.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,completed_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm hoàn tất stage.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,error_code,character varying(255),255,Yes,,No,No,,,No,,Mã lỗi xử lý.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,error_message,character varying(255),255,Yes,,No,No,,,No,,Thông điệp lỗi xử lý.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,job_id,uuid,,No,,No,No,,,No,uq_job_stages_job_id_stage,Định danh job xử lý liên quan; DB không có FK.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,retry_count,integer,,No,,No,No,,,No,,Số lần thử lại xử lý.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,stage,character varying(255),255,No,,No,No,,,No,uq_job_stages_job_id_stage,Stage của pipeline xử lý.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,started_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm bắt đầu stage.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,status,character varying(255),255,No,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,job_stages,Trạng thái và thời điểm thực thi từng stage của job.,updated_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",id,uuid,,No,,Yes,No,,,Yes,media_file_pkey,Định danh bản ghi.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",created_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",duration_seconds,integer,,Yes,,No,No,,,No,,"Thời lượng media, đơn vị giây."
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",file_size_bytes,bigint,,No,,No,No,,,No,,"Kích thước tệp, đơn vị byte."
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",mime_type,character varying(100),100,No,,No,No,,,No,,MIME type của tệp.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",multipart_upload_id,character varying(255),255,Yes,,No,No,,,No,,Định danh phiên multipart upload tại object storage.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",object_key,character varying(1000),1000,No,,No,No,,,No,,Khóa đối tượng trong object storage.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",original_name,character varying(500),500,No,,No,No,,,No,,Tên tệp media ban đầu.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",status,character varying(255),255,Yes,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",uploaded_by,uuid,,No,,No,No,,,No,,Định danh người dùng upload tệp; DB không có FK.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",workspace_id,uuid,,No,,No,No,,,No,,Định danh workspace; không có bảng workspaces trong DB này.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",checksum_sha256,character varying(64),64,Yes,,No,No,,,No,,Checksum SHA-256.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",deleted_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm xóa mềm.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",deleted_by,uuid,,Yes,,No,No,,,No,,Định danh người xóa tệp; DB không có FK.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",fingerprint_version,integer,,Yes,,No,No,,,No,,Phiên bản thuật toán fingerprint.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",previous_status,character varying(50),50,Yes,,No,No,,,No,,Trạng thái tệp trước khi thay đổi vòng đời.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",purge_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm dự kiến xóa hẳn tệp.
+public,media_file,"Metadata tệp media, object storage và trạng thái vòng đời tệp.",quick_fingerprint,character varying(64),64,Yes,,No,No,,,No,,Fingerprint nhanh để nhận diện tệp.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",slide_id,uuid,,No,,Yes,No,,,Yes,meeting_slides_pkey,Định danh slide.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",job_id,uuid,,No,,No,No,,,No,,Định danh job xử lý liên quan; DB không có FK.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",keywords,jsonb,,Yes,,No,No,,,No,,Danh sách từ khóa dạng JSONB.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",object_key,character varying(1024),1024,No,,No,No,,,No,,Khóa đối tượng trong object storage.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",ocr_text,text,,Yes,,No,No,,,No,,Văn bản OCR gắn trực tiếp với slide.
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",timestamp_ms,bigint,,No,,No,No,,,No,,"Vị trí thời gian trong media, đơn vị mili giây."
+public,meeting_slides,"Slide được tạo trong quá trình xử lý cuộc họp, kèm OCR/topic/keyword.",topic,character varying(500),500,Yes,,No,No,,,No,,Chủ đề slide.
+public,meeting_summaries,Bản tóm tắt cuộc họp do job xử lý tạo ra.,id,uuid,,No,,Yes,No,,,Yes,meeting_summaries_pkey,Định danh bản ghi.
+public,meeting_summaries,Bản tóm tắt cuộc họp do job xử lý tạo ra.,created_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,meeting_summaries,Bản tóm tắt cuộc họp do job xử lý tạo ra.,executive_summary,text,,Yes,,No,No,,,No,,Nội dung tóm tắt điều hành.
+public,meeting_summaries,Bản tóm tắt cuộc họp do job xử lý tạo ra.,meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,meeting_summaries,Bản tóm tắt cuộc họp do job xử lý tạo ra.,processing_job_id,uuid,,No,,No,No,,,No,,Định danh job xử lý liên quan; DB không có FK.
+public,meeting_summaries,Bản tóm tắt cuộc họp do job xử lý tạo ra.,raw_llm_response,jsonb,,Yes,,No,No,,,No,,Phản hồi LLM gốc dạng JSONB.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",id,uuid,,No,,Yes,No,,,Yes,meetings_pkey,Định danh bản ghi.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",active_job_id,uuid,,Yes,,No,No,,,No,,Định danh job hiện hoạt của cuộc họp; DB không có FK.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",created_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",delete_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm xóa mềm theo tên cột hiện có.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",media_file_id,uuid,,No,,No,No,,,Yes,uk_fkvvtmlemdvu4nxv4imcw9slw,Định danh tệp media liên quan; DB không có FK.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",processing_mode,character varying(50),50,Yes,,No,No,,,No,,Chế độ xử lý cuộc họp.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",status,character varying(255),255,Yes,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",title,character varying(500),500,No,,No,No,,,No,,Tiêu đề hiển thị.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",updated_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",workspace_id,uuid,,No,,No,No,,,No,,Định danh workspace; không có bảng workspaces trong DB này.
+public,meetings,"Cuộc họp, tệp media nguồn và trạng thái xử lý hiện tại.",folder_id,uuid,,Yes,,No,No,,,No,,Định danh thư mục chứa cuộc họp; DB không có FK.
+public,ocr_results,Văn bản OCR theo keyframe; được OCRResultRepository sử dụng.,keyframe_id,uuid,,No,,Yes,No,,,No,ocr_results_pkey,Định danh slide keyframe liên quan; DB không có FK.
+public,ocr_results,Văn bản OCR theo keyframe; được OCRResultRepository sử dụng.,id,uuid,,No,,Yes,No,,,No,ocr_results_pkey,Định danh bản ghi.
+public,ocr_results,Văn bản OCR theo keyframe; được OCRResultRepository sử dụng.,extracted_text,text,,Yes,,No,No,,,No,,Văn bản OCR trích xuất.
+public,ocrresult,Bảng có cấu trúc OCR nhưng không có Entity/Repository tương ứng; mục đích chưa xác minh.,keyframe_id,uuid,,No,,Yes,No,,,No,ocrresult_pkey,Định danh slide keyframe liên quan; DB không có FK.
+public,ocrresult,Bảng có cấu trúc OCR nhưng không có Entity/Repository tương ứng; mục đích chưa xác minh.,id,uuid,,No,,Yes,No,,,No,ocrresult_pkey,Định danh bản ghi.
+public,ocrresult,Bảng có cấu trúc OCR nhưng không có Entity/Repository tương ứng; mục đích chưa xác minh.,extracted_text,text,,Yes,,No,No,,,No,,Văn bản OCR trích xuất.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",id,uuid,,No,,Yes,No,,,Yes,pending_media_uploads_pkey,Định danh bản ghi.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",expires_at,timestamp(6) with time zone,6,No,,No,No,,,No,idx_pending_media_expiry,Thời điểm hết hiệu lực.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",file_name,character varying(500),500,No,,No,No,,,No,,Tên tệp upload.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",file_size_bytes,bigint,,No,,No,No,,,No,,"Kích thước tệp, đơn vị byte."
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",mime_type,character varying(255),255,No,,No,No,,,No,,MIME type của tệp.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",object_key,character varying(1000),1000,No,,No,No,,,Yes,uk_65o8ppo85e9h96y57gyseylis,Khóa đối tượng trong object storage.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",status,character varying(20),20,No,,No,No,,,No,idx_pending_media_expiry; idx_pending_media_user_status,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",title,character varying(500),500,Yes,,No,No,,,No,,Tiêu đề hiển thị.
+public,pending_media_uploads,"Tệp upload đơn đang chờ hoàn tất, gồm thời hạn và trạng thái.",user_id,uuid,,No,,No,No,,,No,idx_pending_media_user_status,Định danh người dùng liên quan; DB không có FK.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",id,uuid,,No,,Yes,No,,,Yes,processing_jobs_pkey,Định danh bản ghi.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",error_code,character varying(255),255,Yes,,No,No,,,No,,Mã lỗi xử lý.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",error_message,character varying(255),255,Yes,,No,No,,,No,,Thông điệp lỗi xử lý.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",failed_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm job thất bại.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",last_retry_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm thử lại gần nhất.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",media_file_id,uuid,,No,,No,No,,,No,,Định danh tệp media liên quan; DB không có FK.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",retry_count,integer,,No,,No,No,,,No,,Số lần thử lại xử lý.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",status,character varying(255),255,No,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",updated_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",current_stage,character varying(255),255,Yes,,No,No,,,No,,Stage hiện tại của job.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",cancel_requested_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm yêu cầu hủy.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",execution_id,uuid,,Yes,,No,No,,,No,,Định danh lượt thực thi job.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",last_heartbeat_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm heartbeat gần nhất.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",lease_expires_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm lease thực thi hết hạn.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",pause_requested_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm yêu cầu tạm dừng.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",meeting_id,uuid,,Yes,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,processing_jobs,"Job xử lý media/cuộc họp, trạng thái, lease, retry và tiến độ.",event_sequence,bigint,,No,,No,No,,,No,,Số thứ tự sự kiện tiến độ job.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",id,uuid,,No,,Yes,No,,,Yes,public_share_links_pkey,Định danh bản ghi.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",created_by,uuid,,No,,No,No,,,No,,Định danh người tạo bản ghi; DB không có FK.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",expires_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm hết hiệu lực.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",passcode_hash,character varying(100),100,Yes,,No,No,,,No,,Hash passcode của liên kết chia sẻ.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",revoked_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm thu hồi liên kết.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",status,character varying(20),20,No,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",token_hash,character varying(64),64,No,,No,No,,,Yes,uk_3t03fmudrlhe6n4syvmogcwbl,Hash của token chia sẻ.
+public,public_share_links,"Liên kết chia sẻ công khai cho cuộc họp, lưu hash token/passcode.",updated_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,refresh_tokens,Refresh token của tài khoản và trạng thái thu hồi.,id,uuid,,No,,Yes,No,,,Yes,refresh_tokens_pkey,Định danh bản ghi.
+public,refresh_tokens,Refresh token của tài khoản và trạng thái thu hồi.,created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,refresh_tokens,Refresh token của tài khoản và trạng thái thu hồi.,expiry_date,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm hết hạn token.
+public,refresh_tokens,Refresh token của tài khoản và trạng thái thu hồi.,revoked,boolean,,No,,No,No,,,No,,Cờ refresh token đã bị thu hồi.
+public,refresh_tokens,Refresh token của tài khoản và trạng thái thu hồi.,token,character varying(500),500,No,,No,No,,,Yes,uk_ghpmfn23vmxfu3spu3lfg4r2d,"Giá trị refresh token; chỉ export cấu trúc, không export dữ liệu."
+public,refresh_tokens,Refresh token của tài khoản và trạng thái thu hồi.,user_id,uuid,,No,,No,No,,,No,,Định danh người dùng liên quan; DB không có FK.
+public,share_link_audits,Sự kiện audit cho thao tác với liên kết chia sẻ.,id,uuid,,No,,Yes,No,,,Yes,share_link_audits_pkey,Định danh bản ghi.
+public,share_link_audits,Sự kiện audit cho thao tác với liên kết chia sẻ.,action,character varying(30),30,No,,No,No,,,No,,Loại hành động audit.
+public,share_link_audits,Sự kiện audit cho thao tác với liên kết chia sẻ.,actor_id,uuid,,No,,No,No,,,No,,Định danh người thực hiện hành động audit; DB không có FK.
+public,share_link_audits,Sự kiện audit cho thao tác với liên kết chia sẻ.,created_at,timestamp(6) with time zone,6,No,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,share_link_audits,Sự kiện audit cho thao tác với liên kết chia sẻ.,metadata,character varying(500),500,Yes,,No,No,,,No,,Metadata mô tả sự kiện audit.
+public,share_link_audits,Sự kiện audit cho thao tác với liên kết chia sẻ.,share_link_id,uuid,,No,,No,No,,,No,,Định danh liên kết chia sẻ được audit; DB không có FK.
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,id,uuid,,No,,Yes,No,,,Yes,slide_keyframes_pkey,Định danh bản ghi.
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,checksum_sha256,character varying(64),64,Yes,,No,No,,,No,,Checksum SHA-256.
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,content_type,character varying(255),255,Yes,,No,No,,,No,,MIME/content type của ảnh.
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,image_object_key,character varying(1000),1000,No,,No,No,,,No,,Khóa ảnh keyframe trong object storage.
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,size_bytes,bigint,,Yes,,No,No,,,No,,"Kích thước ảnh, đơn vị byte."
+public,slide_keyframes,Ảnh keyframe được trích từ cuộc họp và lưu trong object storage.,timestamp_ms,bigint,,No,,No,No,,,No,,"Vị trí thời gian trong media, đơn vị mili giây."
+public,speaker_segments,Khoảng thời gian của nhãn người nói trong cuộc họp.,id,uuid,,No,,Yes,No,,,Yes,speaker_segments_pkey,Định danh bản ghi.
+public,speaker_segments,Khoảng thời gian của nhãn người nói trong cuộc họp.,end_time,double precision,,No,,No,No,,,No,,Thời điểm kết thúc đoạn người nói theo giá trị lưu trong DB.
+public,speaker_segments,Khoảng thời gian của nhãn người nói trong cuộc họp.,meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,speaker_segments,Khoảng thời gian của nhãn người nói trong cuộc họp.,speaker_label,character varying(100),100,No,,No,No,,,No,,Nhãn người nói trong đoạn thời gian.
+public,speaker_segments,Khoảng thời gian của nhãn người nói trong cuộc họp.,start_time,double precision,,No,,No,No,,,No,,Thời điểm bắt đầu đoạn người nói theo giá trị lưu trong DB.
+public,speakers,Danh tính/nhãn người nói gắn với cuộc họp.,id,uuid,,No,,Yes,No,,,Yes,speakers_pkey,Định danh bản ghi.
+public,speakers,Danh tính/nhãn người nói gắn với cuộc họp.,ai_label,character varying(100),100,No,,No,No,,,No,,Nhãn người nói do AI tạo.
+public,speakers,Danh tính/nhãn người nói gắn với cuộc họp.,meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,speakers,Danh tính/nhãn người nói gắn với cuộc họp.,real_name,character varying(255),255,Yes,,No,No,,,No,,Tên thực của người nói.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",id,uuid,,No,,Yes,No,,,Yes,transcripts_pkey,Định danh bản ghi.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",confidence_score,"numeric(4,3)","4,3",Yes,,No,No,,,No,,Độ tin cậy của transcript.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",end_time_ms,bigint,,No,,No,No,,,No,,"Thời điểm kết thúc transcript, đơn vị mili giây."
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",meeting_id,uuid,,No,,No,No,,,No,,Định danh cuộc họp liên quan; DB không có FK.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",processing_job_id,uuid,,No,,No,No,,,No,,Định danh job xử lý liên quan; DB không có FK.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",speaker_id,uuid,,Yes,,No,No,,,No,,Định danh người nói liên quan; DB không có FK.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",start_time_ms,bigint,,No,,No,No,,,No,,"Thời điểm bắt đầu transcript, đơn vị mili giây."
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",text_content,text,,No,,No,No,,,No,idx_transcripts_fts,Nội dung transcript.
+public,transcripts,"Đoạn transcript có thời điểm, người nói và độ tin cậy.",attribution_status,character varying(40),40,No,,No,No,,,No,,Trạng thái gán người nói cho transcript.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,id,uuid,,No,,Yes,No,,,Yes,upload_sessions_pkey,Định danh bản ghi.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,created_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,received_chunks,integer,,No,,No,No,,,No,,Số chunk đã nhận.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,status,character varying(50),50,No,,No,No,,,No,,Trạng thái bản ghi; xem CHECK constraint nếu có.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,total_chunks,integer,,No,,No,No,,,No,,Tổng số chunk cần upload.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,updated_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,upload_sessions,Phiên upload theo chunk và tiến độ ghép tệp.,user_id,uuid,,No,,No,No,,,No,,Định danh người dùng liên quan; DB không có FK.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",id,uuid,,No,,Yes,No,,,Yes,users_pkey,Định danh bản ghi.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",created_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm tạo bản ghi.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",delete_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm xóa mềm theo tên cột hiện có.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",email,character varying(255),255,Yes,,No,No,,,Yes,uk_6dotkott2kjsp8vw4d0m25fb7,Địa chỉ email người dùng.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",full_name,character varying(255),255,No,,No,No,,,No,,Họ tên người dùng.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",is_active,boolean,,Yes,,No,No,,,No,,Cờ tài khoản đang hoạt động.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",password_hash,character varying(255),255,Yes,,No,No,,,No,,Hash mật khẩu người dùng.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",updated_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm cập nhật bản ghi.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",phone,character varying(255),255,Yes,,No,No,,,Yes,uk_du5v5sr43g5bfnji4vb8hg5s3,Số điện thoại người dùng.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",token_version,bigint,,No,0,No,No,,,No,,Phiên bản token để vô hiệu hóa phiên cũ.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",department,character varying(255),255,Yes,,No,No,,,No,,Đơn vị/phòng ban.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",position,character varying(255),255,Yes,,No,No,,,No,,Chức danh.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",user_code,character varying(30),30,Yes,,No,No,,,No,,Mã người dùng.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",auth_provider,character varying(20),20,No,'LOCAL'::character varying,No,No,,,No,idx_users_provider,Nhà cung cấp đăng nhập.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",provider_id,character varying(100),100,Yes,,No,No,,,No,idx_users_provider,Định danh người dùng tại nhà cung cấp đăng nhập.
+public,users,"Tài khoản người dùng, thông tin hồ sơ và đăng nhập.",avatar_url,text,,Yes,,No,No,,,No,,Địa chỉ ảnh đại diện.
+public,workspace_members,Thành viên và vai trò trong workspace; không có bảng workspaces trong DB này.,id,uuid,,No,,Yes,No,,,Yes,workspace_members_pkey,Định danh bản ghi.
+public,workspace_members,Thành viên và vai trò trong workspace; không có bảng workspaces trong DB này.,joined_at,timestamp(6) with time zone,6,Yes,,No,No,,,No,,Thời điểm tham gia workspace.
+public,workspace_members,Thành viên và vai trò trong workspace; không có bảng workspaces trong DB này.,role,character varying(50),50,Yes,,No,No,,,No,,Vai trò thành viên workspace.
+public,workspace_members,Thành viên và vai trò trong workspace; không có bảng workspaces trong DB này.,user_id,uuid,,No,,No,No,,,No,,Định danh người dùng liên quan; DB không có FK.
+public,workspace_members,Thành viên và vai trò trong workspace; không có bảng workspaces trong DB này.,workspace_id,uuid,,No,,No,No,,,No,,Định danh workspace; không có bảng workspaces trong DB này.
