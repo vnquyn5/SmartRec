@@ -23,12 +23,14 @@ import org.springframework.web.bind.annotation.RestController;
 import com.example.smartrec.model.dto.MeetingFilterRequest;
 import com.example.smartrec.model.dto.MeetingResponseDTO;
 import com.example.smartrec.model.dto.MeetingPlaybackResponse;
+import com.example.smartrec.model.dto.MeetingReviewSaveRequest;
 import com.example.smartrec.model.dto.JobResponse;
 import com.example.smartrec.model.dto.PageResponse;
 import com.example.smartrec.model.dto.RenameFileRequest;
 import com.example.smartrec.model.dto.RenameSpeakerRequest;
 import com.example.smartrec.model.dto.SpeakerSegmentResponse;
 import com.example.smartrec.service.MeetingProcessingService;
+import com.example.smartrec.service.MeetingReviewService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MeetingSpeakerService;
@@ -53,6 +55,7 @@ public class MeetingController {
     private final MeetingService meetingService;
     private final MeetingSpeakerService meetingSpeakerService;
     private final MeetingProcessingService meetingProcessingService;
+    private final MeetingReviewService meetingReviewService;
 
     @GetMapping
     @Operation(summary = "List meeting files", description = "Returns the authenticated user's meeting files with pagination, status filtering and keyword search.")
@@ -87,6 +90,16 @@ public class MeetingController {
     @PostMapping("/{id}/process")
     public ResponseEntity<JobResponse> processMeeting(@PathVariable UUID id) {
         return ResponseEntity.ok(meetingProcessingService.processMeeting(id));
+    }
+
+    /** Trả 204 sau khi service lưu dữ liệu và Audit Log trong transaction thành công. */
+    @PostMapping(value = "/{id}/review-save", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Save reviewed summary and action items for the active meeting job")
+    @ApiResponse(responseCode = "204", description = "Review processed successfully")
+    public ResponseEntity<Void> saveReview(
+            @PathVariable UUID id, @Valid @RequestBody MeetingReviewSaveRequest request) {
+        meetingReviewService.saveReview(id, request);
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{id}")

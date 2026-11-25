@@ -9,6 +9,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,11 +42,16 @@ import com.example.smartrec.entity.Summary;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.enums.JobStatus;
 import com.example.smartrec.exception.BusinessException;
+import com.example.smartrec.model.dto.MeetingReviewSaveRequest;
 import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.service.impl.MeetingAuditLogServiceImpl;
+import com.example.smartrec.service.impl.MeetingReviewServiceImpl;
 import com.example.smartrec.service.impl.MeetingServiceImpl;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import jakarta.persistence.EntityManager;
 
@@ -56,14 +64,17 @@ import jakarta.persistence.EntityManager;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfSystemProperty(named = "smartrec.integration", matches = "true")
-@Import({MeetingAuditLogServiceImpl.class, MeetingServiceImpl.class})
+@Import({MeetingAuditLogServiceImpl.class, MeetingServiceImpl.class, MeetingReviewServiceImpl.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MeetingAuditLogServiceIntegrationTest {
     private static final Instant AI_DUE_DATE = Instant.parse("2026-11-27T10:00:00Z");
     private static final String AI_SUMMARY = "AI summary";
     private static final String REVIEWED_SUMMARY = "Reviewed summary";
+    private static final String REVIEWED_TITLE = "Reviewed title";
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     @Autowired MeetingAuditLogService service;
+    @Autowired MeetingReviewService review;
     @Autowired SummaryRepository summaries;
     @Autowired ActionItemRepository actionItems;
     @Autowired EntityManager entities;
@@ -124,6 +135,192 @@ class MeetingAuditLogServiceIntegrationTest {
         assertThat(summary().getExecutiveSummary()).isEqualTo(REVIEWED_SUMMARY);
         assertThat(summary().getRawLlmResponse().path("executiveSummary").asText()).isEqualTo(AI_SUMMARY);
         assertThat(actionItem().getAssigneeName()).isEqualTo("Reviewer assigned");
+    }
+
+    @Test
+    void reviewCommitsChangesOnceAndDistinguishesOmittedValuesFromNull() throws Exception {
+        ObjectNode draft = reviewDraft();
+        task(draft).put("assigneeName", "Reviewer assigned").putNull("deadlineRaw");
+        saveReview(draft);
+        saveReview(draft);
+
+        assertThat(summary().getExecutiveSummary()).isEqualTo(REVIEWED_SUMMARY);
+        assertThat(summary().getRawLlmResponse().path("executiveSummary").asText()).isEqualTo(AI_SUMMARY);
+        assertThat(actionItem()).satisfies(item -> {
+            assertThat(item.getTaskName()).isEqualTo(REVIEWED_TITLE);
+            assertThat(item.getAssigneeName()).isEqualTo("Reviewer assigned");
+            assertThat(item.getDueDate()).isEqualTo(AI_DUE_DATE);
+            assertThat(item.getDeadlineRaw()).isNull();
+            assertThat(item.getStatus()).isEqualTo("OPEN");
+            assertThat(item.isVerified()).isFalse();
+        });
+        assertThat(actionItems.findByProcessingJobId(owner.jobId())).hasSize(1);
+        assertThat(audits()).extracting(MeetingAuditLog::getFieldName, MeetingAuditLog::getOldValue,
+                MeetingAuditLog::getNewValue).containsExactlyInAnyOrder(
+                        tuple("executiveSummary", AI_SUMMARY, REVIEWED_SUMMARY),
+                        tuple("title", "AI title", REVIEWED_TITLE),
+                        tuple("assigneeName", null, "Reviewer assigned"),
+                        tuple("deadlineRaw", "Friday", null));
+        assertThat(audits()).allSatisfy(row -> {
+            assertThat(row.getActorId()).isEqualTo(owner.actorId());
+            assertThat(row.getMeetingId()).isEqualTo(owner.meetingId());
+            assertThat(row.getEventType()).isEqualTo("HUMAN_REVIEW_SAVE");
+        });
+
+        task(draft).remove("deadlineRaw");
+        task(draft).put("dueDate", "2026-11-29T17:00:00+07:00");
+        saveReview(draft);
+        assertThat(actionItem().getDueDate()).isEqualTo(Instant.parse("2026-11-29T10:00:00Z"));
+
+        task(draft).putNull("dueDate");
+        saveReview(draft);
+        assertThat(actionItem().getDueDate()).isNull();
+        assertThat(audits()).hasSize(6);
+    }
+
+    @Test
+    void reviewReplayAfterANewerEditAppliesAgainstTheCurrentValues() throws Exception {
+        ObjectNode first = reviewDraft();
+        ObjectNode second = first.deepCopy();
+        task(second).put("title", "Second edit");
+        saveReview(first);
+        saveReview(second);
+        saveReview(first);
+
+        assertThat(actionItem().getTaskName()).isEqualTo(REVIEWED_TITLE);
+        assertThat(audits()).extracting(MeetingAuditLog::getOldValue, MeetingAuditLog::getNewValue)
+                .contains(tuple("Second edit", REVIEWED_TITLE));
+    }
+
+    @Test
+    void concurrentIdenticalReviewsWriteOneAuditPerChangedField() throws Exception {
+        var request = reviewRequest(reviewDraft());
+        var start = new CountDownLatch(2);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var attempts = workers.invokeAll(List.of(
+                    () -> reviewConcurrently(request, start),
+                    () -> reviewConcurrently(request, start)), 10, TimeUnit.SECONDS);
+            for (var attempt : attempts) {
+                attempt.get();
+            }
+        } finally {
+            workers.shutdownNow();
+        }
+        assertThat(audits()).extracting(MeetingAuditLog::getFieldName)
+                .containsExactlyInAnyOrder("executiveSummary", "title");
+    }
+
+    private Void reviewConcurrently(MeetingReviewSaveRequest request, CountDownLatch start) throws InterruptedException {
+        authenticate(owner.email(), List.of());
+        try {
+            start.countDown();
+            start.await();
+            review.saveReview(owner.meetingId(), request);
+            return null;
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    void reviewRejectsForeignWorkspaceAndRecordsAndDuplicateTasks() {
+        outsider = tx.execute(status -> createScope());
+        ObjectNode draft = reviewDraft();
+
+        assertThatThrownBy(() -> review.saveReview(UUID.randomUUID(), reviewRequest(draft)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("MEETING_NOT_FOUND"));
+        authenticate(outsider.email(), List.of());
+        rejectReview("MEETING_ACCESS_DENIED", draft);
+        authenticate(owner.email(), List.of());
+        draft.put("jobId", outsider.jobId().toString());
+        rejectReview("MEETING_JOB_NOT_FOUND", draft);
+        draft.put("jobId", owner.jobId().toString());
+        task(draft).put("id", outsider.itemId().toString());
+        rejectReview("MEETING_RESULT_SCOPE_MISMATCH", draft);
+        task(draft).put("id", UUID.randomUUID().toString());
+        rejectReview("MEETING_RESULT_SCOPE_MISMATCH", draft);
+        task(draft).put("id", owner.itemId().toString());
+        draft.withArray("actionItems").add(task(draft).deepCopy());
+        rejectReview("VALIDATION_ERROR", draft);
+
+        assertThat(summary().getExecutiveSummary()).isEqualTo(AI_SUMMARY);
+        assertThat(audits()).isEmpty();
+    }
+
+    @Test
+    void reviewRequiresAnActiveCompletedJobAndExistingSummary() {
+        ObjectNode draft = reviewDraft();
+        tx.executeWithoutResult(status -> entities.find(Meeting.class, owner.meetingId()).setActive_job_id(null));
+        rejectReview("MEETING_REVIEW_JOB_NOT_READY", draft);
+        tx.executeWithoutResult(status -> {
+            entities.find(Meeting.class, owner.meetingId()).setActive_job_id(owner.jobId());
+            entities.find(Job.class, owner.jobId()).setStatus(JobStatus.PROCESSING);
+        });
+        rejectReview("MEETING_REVIEW_JOB_NOT_READY", draft);
+        tx.executeWithoutResult(status -> entities.find(Job.class, owner.jobId()).setStatus(JobStatus.COMPLETED));
+        summaries.deleteById(owner.summaryId());
+        rejectReview("MEETING_SUMMARY_NOT_FOUND", draft);
+        assertThat(audits()).isEmpty();
+    }
+
+    @Test
+    void reviewRejectsRenamingAnAssigneeLinkedToAUser() {
+        tx.executeWithoutResult(status -> actionItem().setAssigneeUserId(owner.actorId()));
+        ObjectNode draft = reviewDraft();
+        task(draft).put("assigneeName", "Different name");
+        rejectReview("MEETING_REVIEW_ASSIGNEE_LINKED", draft);
+        assertThat(actionItem().getTaskName()).isEqualTo("AI title");
+        assertThat(summary().getExecutiveSummary()).isEqualTo(AI_SUMMARY);
+        assertThat(audits()).isEmpty();
+    }
+
+    @Test
+    void reviewRollsBackWhenPersistenceOrAuditFails() throws Exception {
+        var request = reviewRequest(reviewDraft());
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            jdbc.execute("alter table action_items add check (id is distinct from '" + owner.itemId()
+                    + "'::uuid or task_name = 'AI title') not valid");
+            review.saveReview(owner.meetingId(), request);
+        })).isInstanceOf(DataIntegrityViolationException.class).hasStackTraceContaining("violates check constraint");
+        assertThat(summary().getExecutiveSummary()).isEqualTo(AI_SUMMARY);
+        assertThat(actionItem().getTaskName()).isEqualTo("AI title");
+        assertThat(audits()).isEmpty();
+
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            jdbc.execute("alter table meeting_audit_logs add check (actor_id is distinct from '"
+                    + owner.actorId() + "'::uuid) not valid");
+            review.saveReview(owner.meetingId(), request);
+        })).isInstanceOf(DataIntegrityViolationException.class).hasStackTraceContaining("violates check constraint");
+        assertThat(summary().getExecutiveSummary()).isEqualTo(AI_SUMMARY);
+        assertThat(actionItem().getTaskName()).isEqualTo("AI title");
+        assertThat(audits()).isEmpty();
+    }
+
+    private ObjectNode reviewDraft() {
+        ObjectNode draft = JSON.createObjectNode();
+        draft.put("jobId", owner.jobId().toString());
+        draft.putObject("summary").put("executiveSummary", REVIEWED_SUMMARY);
+        draft.putArray("actionItems").addObject().put("id", owner.itemId().toString()).put("title", REVIEWED_TITLE);
+        return draft;
+    }
+
+    private static ObjectNode task(ObjectNode draft) {
+        return (ObjectNode) draft.at("/actionItems/0");
+    }
+
+    private static MeetingReviewSaveRequest reviewRequest(ObjectNode draft) throws JsonProcessingException {
+        return JSON.treeToValue(draft, MeetingReviewSaveRequest.class);
+    }
+
+    private void saveReview(ObjectNode draft) throws JsonProcessingException {
+        review.saveReview(owner.meetingId(), reviewRequest(draft));
+    }
+
+    private void rejectReview(String code, ObjectNode draft) {
+        assertThatThrownBy(() -> saveReview(draft)).isInstanceOfSatisfying(BusinessException.class,
+                error -> assertThat(error.getCode()).isEqualTo(code));
     }
 
     @Test
@@ -268,6 +465,7 @@ class MeetingAuditLogServiceIntegrationTest {
         Job job = Job.builder().mediaFileId(media.getId()).meetingId(meeting.getId())
                 .status(JobStatus.COMPLETED).build();
         entities.persist(job);
+        meeting.setActive_job_id(job.getId());
 
         Summary summary = new Summary();
         summary.setMeetingId(meeting.getId());
