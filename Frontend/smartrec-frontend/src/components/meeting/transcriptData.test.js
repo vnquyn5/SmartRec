@@ -21,10 +21,12 @@ import {
 } from './transcriptData.js';
 
 function transcriptSegments() {
-  return mapTranscriptResults({ transcripts: [
-    { id: 'seg-15', startTimeMs: 15000, endTimeMs: 21000, textContent: 'First sentence.', speakerId: 'speaker-1', speakerLabel: 'An' },
-    { id: 'seg-21', startTimeMs: 21000, endTimeMs: 28000, textContent: 'Second sentence.', speakerId: 'speaker-2', speakerLabel: 'Mai' },
-  ] });
+  return mapTranscriptResults({
+    transcripts: [
+      { id: 'seg-15', startTimeMs: 15000, endTimeMs: 21000, textContent: 'First sentence.', speakerId: 'speaker-1', speakerLabel: 'An' },
+      { id: 'seg-21', startTimeMs: 21000, endTimeMs: 28000, textContent: 'Second sentence.', speakerId: 'speaker-2', speakerLabel: 'Mai' },
+    ]
+  });
 }
 
 class FakeMedia extends EventTarget {
@@ -48,10 +50,12 @@ class FakeMedia extends EventTarget {
 }
 
 test('maps persisted Results API records, stable ids and real millisecond timestamps', () => {
-  const result = mapTranscriptResults({ transcripts: [
-    { id: 'later', startTimeMs: 2500, endTimeMs: 4000, textContent: 'Sau', speakerId: 'speaker-2', speakerLabel: 'Mai' },
-    { id: 'first', startTimeMs: 500, endTimeMs: 1200, textContent: 'Trước', speakerId: 'speaker-1', speakerLabel: 'An' },
-  ] });
+  const result = mapTranscriptResults({
+    transcripts: [
+      { id: 'later', startTimeMs: 2500, endTimeMs: 4000, textContent: 'Sau', speakerId: 'speaker-2', speakerLabel: 'Mai' },
+      { id: 'first', startTimeMs: 500, endTimeMs: 1200, textContent: 'Trước', speakerId: 'speaker-1', speakerLabel: 'An' },
+    ]
+  });
   assert.deepEqual(result.map((segment) => segment.id), ['first', 'later']);
   assert.equal(result[0].speaker, 'An');
   assert.equal(result[0].speakerFilterKey, 'speaker-1');
@@ -80,20 +84,28 @@ test('speaker management groups by immutable speaker ids rather than mutable nam
 });
 
 test('transcript labels follow the updated canonical display name without changing attribution', () => {
-  const [segment] = mapTranscriptResults({ transcripts: [
-    { id: 't1', speakerId: 'speaker-id-1', speakerLabel: 'Minh', attributionStatus: 'ATTRIBUTED',
-      startTimeMs: 0, endTimeMs: 1000, textContent: 'Mình sẽ hoàn thành.' },
-  ] });
+  const [segment] = mapTranscriptResults({
+    transcripts: [
+      {
+        id: 't1', speakerId: 'speaker-id-1', speakerLabel: 'Minh', attributionStatus: 'ATTRIBUTED',
+        startTimeMs: 0, endTimeMs: 1000, textContent: 'Mình sẽ hoàn thành.'
+      },
+    ]
+  });
   assert.equal(segment.speakerId, 'speaker-id-1');
   assert.equal(segment.speaker, 'Minh');
   assert.equal(segment.attributionStatus, 'ATTRIBUTED');
 });
 
 test('boundary-crossing transcripts map to an explicit ambiguous attribution label', () => {
-  const [segment] = mapTranscriptResults({ transcripts: [
-    { id: 'cross', startTimeMs: 17500, endTimeMs: 19000, textContent: 'Crossing',
-      attributionStatus: 'CROSS_SPEAKER_BOUNDARY', speakerId: null, speakerLabel: null },
-  ] });
+  const [segment] = mapTranscriptResults({
+    transcripts: [
+      {
+        id: 'cross', startTimeMs: 17500, endTimeMs: 19000, textContent: 'Crossing',
+        attributionStatus: 'CROSS_SPEAKER_BOUNDARY', speakerId: null, speakerLabel: null
+      },
+    ]
+  });
   assert.equal(segment.speaker, 'Multiple speakers');
   assert.equal(segment.attributionStatus, 'CROSS_SPEAKER_BOUNDARY');
 });
@@ -114,10 +126,14 @@ test('Transcript and Speaker Timeline share floor-to-second display at exact tur
 });
 
 test('transcript highlighting changes at exact millisecond speaker boundaries', () => {
-  const transcript = mapTranscriptResults({ transcripts: [
-    { id: 'at-boundary', startTimeMs: 18037, endTimeMs: 22002, textContent: 'Turn',
-      attributionStatus: 'ATTRIBUTED', speakerId: 'speaker-b', speakerLabel: 'Speaker B' },
-  ] });
+  const transcript = mapTranscriptResults({
+    transcripts: [
+      {
+        id: 'at-boundary', startTimeMs: 18037, endTimeMs: 22002, textContent: 'Turn',
+        attributionStatus: 'ATTRIBUTED', speakerId: 'speaker-b', speakerLabel: 'Speaker B'
+      },
+    ]
+  });
   assert.equal(findActiveTranscriptSegment(transcript, 18.036999), null);
   assert.equal(findActiveTranscriptSegment(transcript, 18.037), 'at-boundary');
   assert.equal(findActiveTranscriptSegment(transcript, 22.001999), 'at-boundary');
@@ -143,22 +159,30 @@ test('Speaker Timeline follows the same media clock through playback and backwar
 });
 
 test('does not expose speaker ids when an attributed result lacks a display label', () => {
-  const [segment] = mapTranscriptResults({ transcripts: [
-    { id: 'id', startTimeMs: 3661000, endTimeMs: 3662000, textContent: 'Hello', speakerId: '12345678-abcd' },
-  ] });
+  const [segment] = mapTranscriptResults({
+    transcripts: [
+      { id: 'id', startTimeMs: 3661000, endTimeMs: 3662000, textContent: 'Hello', speakerId: '12345678-abcd' },
+    ]
+  });
   assert.equal(segment.speaker, 'Speaker chưa xác định');
   assert.equal(segment.speakerId, '12345678-abcd');
   assert.equal(formatTranscriptTime(segment.startTimeMs), '01:01:01');
 });
 
 test('technical speaker tags use the same friendly label in transcript and speaker data', () => {
-  const [segment] = mapTranscriptResults({ transcripts: [
-    { id: 'id', startTimeMs: 1000, endTimeMs: 2000, textContent: 'Hello',
-      speakerId: 'speaker-id', speakerLabel: 'SPEAKER_01' },
-  ] });
+  const [segment] = mapTranscriptResults({
+    transcripts: [
+      {
+        id: 'id', startTimeMs: 1000, endTimeMs: 2000, textContent: 'Hello',
+        speakerId: 'speaker-id', speakerLabel: 'SPEAKER_01'
+      },
+    ]
+  });
   const [speaker] = mapSpeakerManagementSegments([
-    { speakerId: 'speaker-id', speakerLabel: 'SPEAKER_01', speakerIndex: 2,
-      displayName: 'Speaker 2', startTime: 1, endTime: 2 },
+    {
+      speakerId: 'speaker-id', speakerLabel: 'SPEAKER_01', speakerIndex: 2,
+      displayName: 'Speaker 2', startTime: 1, endTime: 2
+    },
   ]);
 
   assert.equal(segment.speaker, 'Speaker 2');
@@ -273,10 +297,12 @@ test('search and speaker filters still narrow real transcript segments', () => {
 });
 
 test('speaker filtering uses stable speaker ids when display names collide', () => {
-  const segments = mapTranscriptResults({ transcripts: [
-    { id: 'one', startTimeMs: 0, endTimeMs: 1000, textContent: 'First', speakerId: 'id-1', speakerLabel: 'Same name' },
-    { id: 'two', startTimeMs: 1000, endTimeMs: 2000, textContent: 'Second', speakerId: 'id-2', speakerLabel: 'Same name' },
-  ] });
+  const segments = mapTranscriptResults({
+    transcripts: [
+      { id: 'one', startTimeMs: 0, endTimeMs: 1000, textContent: 'First', speakerId: 'id-1', speakerLabel: 'Same name' },
+      { id: 'two', startTimeMs: 1000, endTimeMs: 2000, textContent: 'Second', speakerId: 'id-2', speakerLabel: 'Same name' },
+    ]
+  });
   assert.deepEqual(filterTranscriptSegments(segments, '', 'id-1').map((segment) => segment.id), ['one']);
   assert.deepEqual(filterTranscriptSegments(segments, '', 'id-2').map((segment) => segment.id), ['two']);
 });

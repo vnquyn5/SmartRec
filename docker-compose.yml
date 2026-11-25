@@ -91,6 +91,7 @@ services:
       CHROMA_PORT: 8000
       LOCAL_LLM_ENDPOINT: ${LOCAL_LLM_ENDPOINT:-http://host.docker.internal:11434/api/generate}
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:3b-instruct-q4_K_M}
+      LOCAL_LLM_TIMEOUT_SECONDS: ${LOCAL_LLM_TIMEOUT_SECONDS:-600}
       SMARTREC_LLM_ENABLED: ${SMARTREC_LLM_ENABLED:-true}
       SMARTREC_ENVIRONMENT: ${SMARTREC_ENVIRONMENT:-production}
       SMARTREC_LLM_DEBUG_CAPTURE_ENABLED: ${SMARTREC_LLM_DEBUG_CAPTURE_ENABLED:-false}
@@ -119,7 +120,7 @@ services:
       - chromadb
     volumes:
       - ${SMARTREC_MODELS_DIR:?Set SMARTREC_MODELS_DIR to an absolute host path}:/models:ro
-      - ${SMARTREC_HF_CACHE_DIR:?Set SMARTREC_HF_CACHE_DIR to an absolute path}:/root/.cache/huggingface:ro
+      - ${SMARTREC_HF_CACHE_DIR:?Set SMARTREC_HF_CACHE_DIR to an absolute path}:/root/.cache/huggingface
       - smartrec_llm_debug:/var/lib/smartrec/llm-debug
     restart: unless-stopped
     networks:
@@ -178,7 +179,7 @@ services:
       - minio
     volumes:
       - ${SMARTREC_MODELS_DIR:?Set SMARTREC_MODELS_DIR to an absolute host path}:/models:ro
-      - ${SMARTREC_HF_CACHE_DIR:?Set SMARTREC_HF_CACHE_DIR to an absolute path}:/root/.cache/huggingface:ro
+      - ${SMARTREC_HF_CACHE_DIR:?Set SMARTREC_HF_CACHE_DIR to an absolute path}:/root/.cache/huggingface
     restart: unless-stopped
     networks:
       - smartrec-net
