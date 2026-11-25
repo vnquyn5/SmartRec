@@ -39,7 +39,7 @@ const STATUS_META = {
     badgeClass: 'bg-sky-950/50 text-[#38bdf8] border-[#38bdf8]/40',
     bannerClass: 'bg-sky-950/30 border-[#38bdf8]/35 text-sky-200',
     summary:
-      'Đề xuất PoC đã được phê duyệt trong phạm vi POC_ONLY. Bàn giao Khoa (AI) chạy thử nghiệm cô lập; không kích hoạt production.',
+      'Đề xuất PoC đã được phê duyệt trong phạm vi POC_ONLY để chạy thử nghiệm cô lập; không kích hoạt production.',
   },
 };
 
@@ -134,7 +134,6 @@ export default function LoRaPocGatePanel({
   const metrics = evaluation?.metrics || {};
   const gap = evaluation?.gapSummary || {};
   const checks = evaluation?.checks || [];
-  const blockers = evaluation?.blockers || [];
 
   const handleProposalSubmit = async (event) => {
     event.preventDefault();
@@ -238,8 +237,8 @@ export default function LoRaPocGatePanel({
         </div>
       </div>
 
-      {/* Checklist & Blockers */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+      {/* Checklist & Proposal Form */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
         <div className="xl:col-span-7 rounded-2xl border border-[#1b2640] bg-[#0c1324] p-5 shadow-lg flex flex-col gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-2 pb-2 border-b border-[#18233c]">
             <span className="w-1.5 h-4 bg-[#38bdf8] rounded-full inline-block" />
@@ -252,43 +251,12 @@ export default function LoRaPocGatePanel({
           </div>
         </div>
 
-        <div className="xl:col-span-5 flex flex-col gap-5">
-          {/* Blockers */}
-          <div className="rounded-2xl border border-[#1b2640] bg-[#0c1324] p-5 shadow-lg flex flex-col gap-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 pb-2 border-b border-[#18233c]">
-              <span className="w-2 h-2 rounded-full bg-rose-400 inline-block" />
-              Blockers &amp; Phụ thuộc liên nhóm ({blockers.length})
-            </h3>
-            {blockers.length === 0 ? (
-              <p className="text-xs text-emerald-300">
-                Không còn blocker điều kiện đầu vào cho đánh giá cổng LoRA/PEFT.
-              </p>
-            ) : (
-              <ul className="space-y-2 text-xs text-slate-300 list-disc pl-4">
-                {blockers.map((blocker, idx) => (
-                  <li key={idx} className="leading-relaxed">
-                    {blocker}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-1 rounded-xl border border-[#1a2642] bg-[#090f1d] p-3 text-[11px] text-slate-400 space-y-1">
-              <div>
-                <strong className="text-slate-200">Nam (BE):</strong> Cung cấp endpoint{' '}
-                <code className="text-[#38bdf8]">GET /admin/models/lora-poc-gate</code>, kiểm soát quyền{' '}
-                <code className="text-[#38bdf8]">ADMIN</code> và audit log đề xuất.
-              </div>
-              <div>
-                <strong className="text-slate-200">Khoa (AI):</strong> Xác minh labeled ground truth dataset và đẩy kết quả đo Task Precision/Recall sau tối ưu context/prompt.
-              </div>
-            </div>
-          </div>
-
-          {/* Conditional Proposal Form */}
-          <form
-            onSubmit={handleProposalSubmit}
-            className="rounded-2xl border border-[#1b2640] bg-[#0c1324] p-5 shadow-lg flex flex-col gap-3.5"
-          >
+        {/* Conditional Proposal Form */}
+        <form
+          onSubmit={handleProposalSubmit}
+          className="xl:col-span-5 rounded-2xl border border-[#1b2640] bg-[#0c1324] p-5 shadow-lg flex flex-col justify-between gap-4"
+        >
+          <div className="flex flex-col gap-3.5">
             <div className="flex items-center justify-between gap-2 pb-2 border-b border-[#18233c]">
               <h3 className="text-sm font-bold text-white">Đề xuất PoC có điều kiện</h3>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-950/40 text-amber-300">
@@ -333,7 +301,7 @@ export default function LoRaPocGatePanel({
                 Lý do &amp; Căn cứ từ kết quả Task Precision/Recall
               </span>
               <textarea
-                rows={3}
+                rows={4}
                 value={rationale}
                 disabled={!canSubmit}
                 onChange={(e) => setRationale(e.target.value)}
@@ -341,20 +309,20 @@ export default function LoRaPocGatePanel({
                 className="p-3 rounded-lg bg-[#080e1c] border border-[#24365c] text-xs text-slate-100 placeholder-slate-500 disabled:opacity-50 focus:outline-none focus:border-[#38bdf8]"
               />
             </label>
+          </div>
 
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="px-4 py-2 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] disabled:bg-[#141d33] disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-semibold transition"
-            >
-              {submitting
-                ? 'Đang gửi đề xuất...'
-                : canSubmit
-                  ? 'Gửi đề xuất LoRA/PEFT PoC (Chờ duyệt)'
-                  : 'Đề xuất PoC đang bị khóa (chưa đủ điều kiện)'}
-            </button>
-          </form>
-        </div>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="w-full px-4 py-2.5 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] disabled:bg-[#141d33] disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-semibold transition"
+          >
+            {submitting
+              ? 'Đang gửi đề xuất...'
+              : canSubmit
+                ? 'Gửi đề xuất LoRA/PEFT PoC (Chờ duyệt)'
+                : 'Đề xuất PoC đang bị khóa (chưa đủ điều kiện)'}
+          </button>
+        </form>
       </div>
     </div>
   );
