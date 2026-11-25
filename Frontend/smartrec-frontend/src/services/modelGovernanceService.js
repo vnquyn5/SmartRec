@@ -1,5 +1,6 @@
 import { api as httpClient } from '../lib/http/client.js';
 import mockGovernanceData from '../mocks/mock_governance_usage.json';
+import { assertModelAllowedForActiveStage } from './loraPocGateEvaluator.js';
 
 const STORAGE_PREFIX = 'smartrec.governance.v1';
 const MODELS_KEY = `${STORAGE_PREFIX}.models`;
@@ -76,6 +77,8 @@ export function normalizeModelEntry(raw) {
     costPer1kTokens: Number.isFinite(cost) && cost >= 0 ? cost : 0,
     maxConcurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : 2,
     isCore: Boolean(raw?.isCore),
+    isPocOnly: Boolean(raw?.isPocOnly),
+    adapterType: raw?.adapterType ? String(raw.adapterType).trim() : null,
     description: String(raw?.description || '').trim(),
   };
 }
@@ -378,6 +381,7 @@ export async function setActiveModel(stage, modelName, version) {
   if (!target) {
     throw new Error(`Không tìm thấy model "${modelName}" trong stage ${stage}.`);
   }
+  assertModelAllowedForActiveStage(target, stage);
 
   // Ensure the selected active model is enabled
   const updatedModels =

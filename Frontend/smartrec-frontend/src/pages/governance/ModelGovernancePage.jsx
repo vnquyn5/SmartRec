@@ -3,6 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import ActiveModelControlCard from '../../components/governance/ActiveModelControlCard';
 import ModelRegistryPanel from '../../components/governance/ModelRegistryPanel';
 import AIUsageDashboard from '../../components/governance/AIUsageDashboard';
+import LoRaPocGatePanel from '../../components/governance/LoRaPocGatePanel';
+import { useAuth } from '../../features/auth/AuthProvider';
+import {
+  evaluateLoRaPocGate,
+  getLoRaPocGateStatus,
+  submitLoRaPocProposal,
+} from '../../services/loraPocGateService';
 import {
   deleteCustomModel,
   getAiUsageDashboard,
@@ -25,10 +32,16 @@ const DEFAULT_USAGE_FILTERS = {
   search: '',
 };
 
+const VALID_GOVERNANCE_TABS = new Set(['models', 'usage', 'lora-poc']);
+
+function resolveGovernanceTab(param) {
+  return VALID_GOVERNANCE_TABS.has(param) ? param : 'models';
+}
+
 export default function ModelGovernancePage() {
+  const { user } = useAuth() || {};
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'usage' ? 'usage' : 'models';
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState(() => resolveGovernanceTab(searchParams.get('tab')));
 
   const [models, setModels] = useState(() => getGovernanceSnapshotSync().models);
   const [policy, setPolicy] = useState(() => getGovernanceSnapshotSync().policy);
@@ -40,9 +53,16 @@ export default function ModelGovernancePage() {
   const [usageData, setUsageData] = useState(null);
   const [loadingUsage, setLoadingUsage] = useState(true);
 
+  const [loraGateState, setLoraGateState] = useState(() => ({
+    source: 'unverified',
+    evaluation: evaluateLoRaPocGate(null),
+    error: null,
+  }));
+  const [loadingLoraGate, setLoadingLoraGate] = useState(false);
+
   useEffect(() => {
     const paramTab = searchParams.get('tab');
-    if (paramTab === 'usage' || paramTab === 'models') {
+    if (VALID_GOVERNANCE_TABS.has(paramTab)) {
       setActiveTab(paramTab);
     }
   }, [searchParams]);
@@ -96,6 +116,37 @@ export default function ModelGovernancePage() {
     };
   }, [usageFilters]);
 
+  const refreshLoraGate = useCallback(async () => {
+    setLoadingLoraGate(true);
+    const result = await getLoRaPocGateStatus();
+    setLoraGateState(result);
+    setLoadingLoraGate(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingLoraGate(true);
+      const result = await getLoRaPocGateStatus();
+      if (cancelled) return;
+      setLoraGateState(result);
+      setLoadingLoraGate(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSubmitLoraProposal = useCallback(
+    async (proposalArgs) => {
+      const response = await submitLoRaPocProposal(proposalArgs);
+      notify('success', 'Đã gửi đề xuất LoRA/PEFT PoC (POC_ONLY) chờ phê duyệt.');
+      await refreshLoraGate();
+      return response;
+    },
+    [notify, refreshLoraGate]
+  );
+
   const handleSaveModel = useCallback(async (draft, prevIdentity) => {
     const updated = await saveModelEntry(draft, prevIdentity);
     setModels(updated);
@@ -118,10 +169,14 @@ export default function ModelGovernancePage() {
 
   const handleSelectActiveModel = useCallback(
     async (stage, modelName, version) => {
-      const result = await setActiveModel(stage, modelName, version);
-      setModels(result.models);
-      setPolicy(result.policy);
-      notify('success', `Đã kích hoạt "${modelName}" làm Active Model cho stage ${stage}.`);
+      try {
+        const result = await setActiveModel(stage, modelName, version);
+        setModels(result.models);
+        setPolicy(result.policy);
+        notify('success', `Đã kích hoạt "${modelName}" làm Active Model cho stage ${stage}.`);
+      } catch (err) {
+        notify('error', err?.message || `Không thể kích hoạt "${modelName}" cho stage ${stage}.`);
+      }
     },
     [notify]
   );
@@ -206,6 +261,16 @@ export default function ModelGovernancePage() {
           >
             AI Usage Dashboard
           </button>
+          <button
+            type="button"
+            onClick={() => switchTab('lora-poc')}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${activeTab === 'lora-poc'
+                ? 'bg-[#2563eb] text-white shadow-md'
+                : 'text-slate-400 hover:text-white'
+              }`}
+          >
+            LoRA/PEFT Gate (PoC)
+          </button>
         </div>
       </div>
 
@@ -252,13 +317,23 @@ export default function ModelGovernancePage() {
             onResetDefaults={handleResetDefaults}
           />
         </div>
-      ) : (
+      ) : activeTab === 'usage' ? (
         <AIUsageDashboard
           usageData={usageData}
           policy={policy}
           filters={usageFilters}
           loading={loadingUsage}
           onFiltersChange={setUsageFilters}
+        />
+      ) : (
+        <LoRaPocGatePanel
+          evaluation={loraGateState.evaluation}
+          source={loraGateState.source}
+          loading={loadingLoraGate}
+          error={loraGateState.error}
+          user={user}
+          onRefresh={refreshLoraGate}
+          onSubmitProposal={handleSubmitLoraProposal}
         />
       )}
     </div>
