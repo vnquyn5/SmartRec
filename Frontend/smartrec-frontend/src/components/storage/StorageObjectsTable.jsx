@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatDateTime,
 } from '../../services/storageAdminService';
+import ArtifactVersionPanel from './ArtifactVersionPanel';
 
 const STATUS_BADGES = {
   UPLOADED: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35',
@@ -16,6 +17,9 @@ const STATUS_BADGES = {
 export default function StorageObjectsTable({
   objectsPage,
   orphans,
+  artifactState,
+  loadingArtifacts,
+  onRefreshArtifacts,
   filters,
   loadingObjects,
   loadingOrphans,
@@ -87,35 +91,63 @@ export default function StorageObjectsTable({
   };
 
   return (
-    <div className="rounded-2xl border border-[#1b2640] bg-[#0c1324] p-5 flex flex-col gap-4">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="inline-flex rounded-xl bg-[#090f1d] border border-[#1b2742] p-1 self-start">
-          <button
-            type="button"
-            onClick={() => setSubTab('media')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-              subTab === 'media'
-                ? 'bg-[#2563eb] text-white'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Media Files ({totalElements})
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubTab('orphans')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-              subTab === 'orphans'
-                ? 'bg-[#2563eb] text-white'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            MinIO Orphan Objects ({orphanList.length})
-          </button>
+    <div className="w-full min-w-0 rounded-2xl border border-[#1b2640] bg-[#0c1324] px-3 py-4 sm:px-4 sm:py-5 flex flex-col gap-4">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="inline-flex flex-wrap sm:flex-nowrap items-center gap-1 rounded-xl bg-[#090f1d] border border-[#1b2742] p-1">
+            <button
+              type="button"
+              onClick={() => setSubTab('media')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition ${
+                subTab === 'media'
+                  ? 'bg-[#2563eb] text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Media Files ({totalElements})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTab('orphans')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition ${
+                subTab === 'orphans'
+                  ? 'bg-[#2563eb] text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              MinIO Orphan Objects ({orphanList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTab('artifacts')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition ${
+                subTab === 'artifacts'
+                  ? 'bg-[#2563eb] text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Dataset &amp; Artifacts ({artifactState?.snapshot?.counts?.total ?? 0})
+            </button>
+          </div>
         </div>
 
-        {subTab === 'media' ? (
-          <div className="flex flex-wrap items-center gap-2.5">
+        {subTab === 'orphans' && (
+          <div className="flex items-center justify-end shrink-0">
+            <button
+              type="button"
+              disabled={selectedOrphanKeys.length === 0 || deletingOrphans}
+              onClick={handleBulkDeleteOrphans}
+              className="px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition"
+            >
+              {deletingOrphans
+                ? 'Đang xóa...'
+                : `Xóa đã chọn (${selectedOrphanKeys.length})`}
+            </button>
+          </div>
+        )}
+
+        {subTab === 'media' && (
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full xl:w-auto xl:flex-1 xl:justify-end">
             <input
               type="text"
               value={filters.keyword}
@@ -123,7 +155,7 @@ export default function StorageObjectsTable({
                 onFiltersChange((prev) => ({ ...prev, keyword: e.target.value, page: 0 }))
               }
               placeholder="Tìm tên file hoặc object_key..."
-              className="w-56 sm:w-64 px-3 py-1.5 rounded-xl bg-[#090f1d] border border-[#1b2742] text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#38bdf8]"
+              className="flex-1 min-w-[200px] xl:max-w-xs px-3.5 py-2 rounded-xl bg-[#090f1d] border border-[#1b2742] text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#38bdf8]"
             />
 
             <select
@@ -132,7 +164,7 @@ export default function StorageObjectsTable({
                 onFiltersChange((prev) => ({ ...prev, status: e.target.value, page: 0 }))
               }
               aria-label="Lọc trạng thái file"
-              className="px-3 py-1.5 rounded-xl bg-[#090f1d] border border-[#1b2742] text-xs text-slate-200 focus:outline-none focus:border-[#38bdf8]"
+              className="px-3 py-2 rounded-xl bg-[#090f1d] border border-[#1b2742] text-xs text-slate-200 whitespace-nowrap shrink-0 focus:outline-none focus:border-[#38bdf8]"
             >
               {STORAGE_STATUSES.map((st) => (
                 <option key={st} value={st}>
@@ -147,26 +179,13 @@ export default function StorageObjectsTable({
                 onFiltersChange((prev) => ({ ...prev, sort: e.target.value, page: 0 }))
               }
               aria-label="Sắp xếp file"
-              className="px-3 py-1.5 rounded-xl bg-[#090f1d] border border-[#1b2742] text-xs text-slate-200 focus:outline-none focus:border-[#38bdf8]"
+              className="px-3 py-2 rounded-xl bg-[#090f1d] border border-[#1b2742] text-xs text-slate-200 whitespace-nowrap shrink-0 focus:outline-none focus:border-[#38bdf8]"
             >
               <option value="created_at,desc">Mới nhất</option>
               <option value="file_size_bytes,desc">Dung lượng giảm dần</option>
               <option value="file_size_bytes,asc">Dung lượng tăng dần</option>
               <option value="original_name,asc">Tên A → Z</option>
             </select>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={selectedOrphanKeys.length === 0 || deletingOrphans}
-              onClick={handleBulkDeleteOrphans}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition"
-            >
-              {deletingOrphans
-                ? 'Đang xóa...'
-                : `Xóa đã chọn (${selectedOrphanKeys.length})`}
-            </button>
           </div>
         )}
       </div>
@@ -215,17 +234,17 @@ export default function StorageObjectsTable({
 
       {subTab === 'media' ? (
         <>
-          <div className="overflow-x-auto rounded-xl border border-[#162038]">
-            <table className="w-full text-left border-collapse text-xs">
+          <div className="w-full overflow-x-auto rounded-xl border border-[#162038]">
+            <table className="w-full min-w-[880px] text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-[#090f1d] text-slate-400 border-b border-[#162038]">
-                  <th className="py-2.5 px-3 font-semibold">File & Object Key</th>
-                  <th className="py-2.5 px-3 font-semibold">Uploader</th>
-                  <th className="py-2.5 px-3 font-semibold">MIME</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Dung lượng</th>
-                  <th className="py-2.5 px-3 font-semibold">Trạng thái</th>
-                  <th className="py-2.5 px-3 font-semibold">Ngày tạo / Purge</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Thao tác</th>
+                <tr className="bg-[#090f1d] text-slate-400 border-b border-[#162038] whitespace-nowrap">
+                  <th className="py-3 px-4 font-semibold">File &amp; Object Key</th>
+                  <th className="py-3 px-4 font-semibold">Uploader</th>
+                  <th className="py-3 px-4 font-semibold">MIME</th>
+                  <th className="py-3 px-4 font-semibold text-right">Dung lượng</th>
+                  <th className="py-3 px-4 font-semibold">Trạng thái</th>
+                  <th className="py-3 px-4 font-semibold">Ngày tạo / Purge</th>
+                  <th className="py-3 px-4 font-semibold text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141d33]">
@@ -244,7 +263,7 @@ export default function StorageObjectsTable({
                 ) : (
                   rows.map((item) => (
                     <tr key={item.id} className="hover:bg-[#10192e]/70 transition">
-                      <td className="py-2.5 px-3 max-w-xs">
+                      <td className="py-3 px-4 min-w-[240px] max-w-[380px] xl:max-w-[500px]">
                         <div className="font-medium text-slate-100 truncate" title={item.originalName}>
                           {item.originalName}
                         </div>
@@ -255,42 +274,44 @@ export default function StorageObjectsTable({
                           {item.objectKey}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         <div className="text-slate-200">{item.uploaderName || '—'}</div>
                         <div className="text-[11px] text-slate-500">{item.uploaderEmail || item.uploadedBy}</div>
                       </td>
-                      <td className="py-2.5 px-3 text-slate-300 font-mono text-[11px]">
+                      <td className="py-3 px-4 text-slate-300 font-mono text-[11px] whitespace-nowrap">
                         {item.mimeType}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-slate-100 whitespace-nowrap">
+                      <td className="py-3 px-4 text-right font-semibold text-slate-100 whitespace-nowrap">
                         {formatBytes(item.fileSizeBytes)}
                       </td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex flex-col items-start gap-1">
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border whitespace-nowrap ${
                               STATUS_BADGES[item.status] || STATUS_BADGES.PURGED
                             }`}
                           >
                             {item.status}
                           </span>
                           {item.hasLinkedMeeting && (
-                            <span className="text-[10px] text-[#38bdf8]">Linked Meeting</span>
+                            <span className="text-[10px] text-[#38bdf8] whitespace-nowrap">
+                              Linked Meeting
+                            </span>
                           )}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 text-[11px] text-slate-400 whitespace-nowrap">
+                      <td className="py-3 px-4 text-[11px] text-slate-400 whitespace-nowrap">
                         <div>{formatDateTime(item.createdAt)}</div>
                         {item.purgeAt && (
                           <div className="text-amber-300">Purge: {formatDateTime(item.purgeAt)}</div>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-right">
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
                         <button
                           type="button"
                           disabled={deletingId === item.id}
                           onClick={() => openDeletePrompt(item)}
-                          className="px-2.5 py-1 rounded-lg border border-rose-500/35 text-rose-300 hover:bg-rose-500/15 disabled:opacity-45 text-[11px] font-medium transition"
+                          className="px-3 py-1.5 rounded-lg border border-rose-500/35 text-rose-300 hover:bg-rose-500/15 disabled:opacity-45 text-[11px] font-medium whitespace-nowrap transition"
                         >
                           {deletingId === item.id ? 'Đang xóa...' : 'Xóa'}
                         </button>
@@ -302,18 +323,18 @@ export default function StorageObjectsTable({
             </table>
           </div>
 
-          <div className="flex items-center justify-between text-xs text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs text-slate-400">
             <span>
               Trang {currentPage + 1} / {totalPages} · Tổng {totalElements} files
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 disabled={currentPage <= 0}
                 onClick={() =>
                   onFiltersChange((prev) => ({ ...prev, page: Math.max(0, prev.page - 1) }))
                 }
-                className="px-3 py-1 rounded-lg border border-[#1b2742] bg-[#090f1d] text-slate-200 disabled:opacity-40"
+                className="px-3.5 py-1.5 rounded-lg border border-[#1b2742] bg-[#090f1d] text-slate-200 whitespace-nowrap disabled:opacity-40"
               >
                 Trước
               </button>
@@ -321,19 +342,27 @@ export default function StorageObjectsTable({
                 type="button"
                 disabled={currentPage + 1 >= totalPages}
                 onClick={() => onFiltersChange((prev) => ({ ...prev, page: prev.page + 1 }))}
-                className="px-3 py-1 rounded-lg border border-[#1b2742] bg-[#090f1d] text-slate-200 disabled:opacity-40"
+                className="px-3.5 py-1.5 rounded-lg border border-[#1b2742] bg-[#090f1d] text-slate-200 whitespace-nowrap disabled:opacity-40"
               >
                 Sau
               </button>
             </div>
           </div>
         </>
+      ) : subTab === 'artifacts' ? (
+        <ArtifactVersionPanel
+          snapshot={artifactState?.snapshot}
+          source={artifactState?.source}
+          loading={loadingArtifacts}
+          error={artifactState?.error}
+          onRefresh={onRefreshArtifacts}
+        />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-[#162038]">
-          <table className="w-full text-left border-collapse text-xs">
+        <div className="w-full overflow-x-auto rounded-xl border border-[#162038]">
+          <table className="w-full min-w-[840px] text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-[#090f1d] text-slate-400 border-b border-[#162038]">
-                <th className="py-2.5 px-3 w-10">
+              <tr className="bg-[#090f1d] text-slate-400 border-b border-[#162038] whitespace-nowrap">
+                <th className="py-3 px-4 w-10">
                   <input
                     type="checkbox"
                     checked={allOrphansSelected}
@@ -341,11 +370,11 @@ export default function StorageObjectsTable({
                     aria-label="Chọn tất cả orphan object"
                   />
                 </th>
-                <th className="py-2.5 px-3 font-semibold">MinIO Object Key</th>
-                <th className="py-2.5 px-3 font-semibold">ETag</th>
-                <th className="py-2.5 px-3 font-semibold text-right">Dung lượng</th>
-                <th className="py-2.5 px-3 font-semibold">Cập nhật cuối</th>
-                <th className="py-2.5 px-3 font-semibold text-right">Thao tác</th>
+                <th className="py-3 px-4 font-semibold">MinIO Object Key</th>
+                <th className="py-3 px-4 font-semibold">ETag</th>
+                <th className="py-3 px-4 font-semibold text-right">Dung lượng</th>
+                <th className="py-3 px-4 font-semibold">Cập nhật cuối</th>
+                <th className="py-3 px-4 font-semibold text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141d33]">
@@ -364,7 +393,7 @@ export default function StorageObjectsTable({
               ) : (
                 orphanList.map((orphan) => (
                   <tr key={orphan.objectKey} className="hover:bg-[#10192e]/70 transition">
-                    <td className="py-2.5 px-3">
+                    <td className="py-3 px-4">
                       <input
                         type="checkbox"
                         checked={selectedOrphanKeys.includes(orphan.objectKey)}
@@ -372,22 +401,27 @@ export default function StorageObjectsTable({
                         aria-label={`Chọn ${orphan.objectKey}`}
                       />
                     </td>
-                    <td className="py-2.5 px-3 font-mono text-slate-200">{orphan.objectKey}</td>
-                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400">
+                    <td
+                      className="py-3 px-4 font-mono text-slate-200 max-w-[420px] xl:max-w-[580px] truncate"
+                      title={orphan.objectKey}
+                    >
+                      {orphan.objectKey}
+                    </td>
+                    <td className="py-3 px-4 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                       {orphan.etag || '—'}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-semibold text-rose-300">
+                    <td className="py-3 px-4 text-right font-semibold text-rose-300 whitespace-nowrap">
                       {formatBytes(orphan.sizeBytes)}
                     </td>
-                    <td className="py-2.5 px-3 text-slate-400">
+                    <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
                       {formatDateTime(orphan.lastModified)}
                     </td>
-                    <td className="py-2.5 px-3 text-right">
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
                       <button
                         type="button"
                         disabled={deletingOrphans}
                         onClick={() => onDeleteOrphans([orphan.objectKey])}
-                        className="px-2.5 py-1 rounded-lg border border-rose-500/35 text-rose-300 hover:bg-rose-500/15 disabled:opacity-45 text-[11px]"
+                        className="px-3 py-1.5 rounded-lg border border-rose-500/35 text-rose-300 hover:bg-rose-500/15 disabled:opacity-45 text-[11px] whitespace-nowrap transition"
                       >
                         Xóa
                       </button>
