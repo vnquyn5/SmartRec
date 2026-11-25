@@ -30,10 +30,18 @@ export const RETENTION_PURGE_DECISION = Object.freeze({
   BLOCKED: 'BLOCKED',
 });
 
+export const ARTIFACT_VERSION_ENDPOINTS = Object.freeze({
+  list: '/admin/storage/artifacts/versions',
+  purge: (artifactId) => `/admin/storage/artifacts/versions/${encodeURIComponent(artifactId)}`,
+});
+
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
 const VALID_ARTIFACT_TYPE_SET = new Set(ARTIFACT_TYPES.filter((type) => type !== 'ALL'));
 const VALID_LIFECYCLE_SET = new Set(Object.values(ARTIFACT_LIFECYCLE));
+const SENSITIVE_QUERY_PARAM_PATTERN =
+  /([?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Security-Token|token|access_token|api_key|secret|password|sig)=)[^&\s]+/gi;
+const BEARER_TOKEN_PATTERN = /\b(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi;
 
 function normalizeVersionToken(rawVersion) {
   const cleaned = String(rawVersion || '').trim();
@@ -50,6 +58,15 @@ function parseTimestampMs(isoValue) {
   if (!isoValue) return null;
   const parsed = Date.parse(isoValue);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function redactSensitiveObjectRef(rawValue) {
+  if (rawValue === null || rawValue === undefined) return null;
+  const text = String(rawValue).trim();
+  if (!text) return null;
+  return text
+    .replace(SENSITIVE_QUERY_PARAM_PATTERN, '$1[REDACTED]')
+    .replace(BEARER_TOKEN_PATTERN, '$1[REDACTED]');
 }
 
 export function isValidSemVer(version) {
@@ -77,28 +94,84 @@ export function normalizeArtifactRecord(raw) {
 
   return {
     id: String(raw.id || '').trim() || null,
-    name: String(raw.name || '').trim() || 'Không tên',
+    name: redactSensitiveObjectRef(raw.name) || 'Không tên',
     artifactType,
     version: normalizeVersionToken(raw.version),
     expectedVersion: normalizeVersionToken(raw.expectedVersion),
     parentVersion: normalizeVersionToken(raw.parentVersion),
-    objectKey: raw.objectKey ? String(raw.objectKey).trim() : null,
+    baselineVersion: normalizeVersionToken(raw.baselineVersion),
+    objectKey: redactSensitiveObjectRef(raw.objectKey),
     objectExists: raw.objectExists !== false,
     checksumSha256: normalizeHashToken(raw.checksumSha256),
     expectedChecksumSha256: normalizeHashToken(raw.expectedChecksumSha256),
+    baselineChecksumSha256: normalizeHashToken(raw.baselineChecksumSha256),
     sizeBytes: Number.isFinite(sizeValue) && sizeValue >= 0 ? sizeValue : 0,
     lifecycleStatus,
     legalHold: Boolean(raw.legalHold),
     retainUntil: raw.retainUntil || null,
     purgeAt: raw.purgeAt || null,
-    linkedJobId: raw.linkedJobId ? String(raw.linkedJobId).trim() : null,
-    linkedMeetingId: raw.linkedMeetingId ? String(raw.linkedMeetingId).trim() : null,
-    sourceRef: raw.sourceRef ? String(raw.sourceRef).trim() : null,
-    createdBy: raw.createdBy ? String(raw.createdBy).trim() : null,
+    linkedJobId: redactSensitiveObjectRef(raw.linkedJobId),
+    linkedMeetingId: redactSensitiveObjectRef(raw.linkedMeetingId),
+    sourceRef: redactSensitiveObjectRef(raw.sourceRef),
+    createdBy: redactSensitiveObjectRef(raw.createdBy),
     createdAt: raw.createdAt || null,
   };
 }
 
+export function compareArtifactWithBaseline(rawArtifact, rawBaseline = null) {
+  const artifact = normalizeArtifactRecord(rawArtifact);
+  if (!artifact) {
+    return {
+      comparable: false,
+      matchesBaseline: false,
+      versionChanged: false,
+      checksumChanged: false,
+      summary: 'Chưa có artifact hợp lệ để đối chiếu baseline.',
+    };
+  }
+
+  const baselineVersion =
+    normalizeVersionToken(rawBaseline?.version) ||
+    artifact.baselineVersion ||
+    artifact.expectedVersion ||
+    null;
+  const baselineChecksum =
+    normalizeHashToken(rawBaseline?.checksumSha256) ||
+    artifact.baselineChecksumSha256 ||
+    artifact.expectedChecksumSha256 ||
+    null;
+
+  if (!baselineVersion && !baselineChecksum) {
+    return {
+      comparable: false,
+      matchesBaseline: false,
+      versionChanged: false,
+      checksumChanged: false,
+      summary: 'Chưa có thông tin baseline đã xác nhận để đối chiếu.',
+    };
+  }
+
+  const versionChanged = Boolean(
+    baselineVersion && (!artifact.version || artifact.version !== baselineVersion)
+  );
+  const checksumChanged = Boolean(
+    baselineChecksum &&
+      (!artifact.checksumSha256 || artifact.checksumSha256 !== baselineChecksum)
+  );
+  const matchesBaseline = !versionChanged && !checksumChanged;
+
+  return {
+    comparable: true,
+    matchesBaseline,
+    baselineVersion,
+    baselineChecksumSha256: baselineChecksum,
+    versionChanged,
+    checksumChanged,
+    summary: matchesBaseline
+      ? `Khớp với baseline v${baselineVersion || artifact.version || '—'}.`
+      : 'Phát hiện khác biệt giữa artifact hiện tại và baseline tham chiếu.',
+  };
+}
 
 export function evaluateArtifactIntegrity(rawArtifact) {
   const artifact = normalizeArtifactRecord(rawArtifact);
@@ -130,6 +203,20 @@ export function evaluateArtifactIntegrity(rawArtifact) {
   if (artifact.version && !isValidSemVer(artifact.version)) {
     mismatchReasons.push(`Version "${artifact.version}" không đúng chuẩn SemVer (MAJOR.MINOR.PATCH).`);
   }
+  if (artifact.parentVersion && !isValidSemVer(artifact.parentVersion)) {
+    mismatchReasons.push(
+      `Parent version "${artifact.parentVersion}" không đúng chuẩn SemVer (MAJOR.MINOR.PATCH).`
+    );
+  }
+  if (
+    artifact.version &&
+    artifact.parentVersion &&
+    artifact.version === artifact.parentVersion
+  ) {
+    mismatchReasons.push(
+      `Vi phạm quy tắc bất biến SemVer (BR01): version v${artifact.version} trùng với parentVersion.`
+    );
+  }
   if (
     artifact.expectedVersion &&
     artifact.version &&
@@ -157,10 +244,17 @@ export function evaluateArtifactIntegrity(rawArtifact) {
     };
   }
 
-  if (!artifact.version || !artifact.checksumSha256) {
+  const hasProvenance = Boolean(
+    artifact.sourceRef || artifact.linkedJobId || artifact.linkedMeetingId
+  );
+
+  if (!artifact.version || !artifact.checksumSha256 || !hasProvenance) {
     const missingMeta = [];
     if (!artifact.version) missingMeta.push('Thiếu thông tin version.');
     if (!artifact.checksumSha256) missingMeta.push('Thiếu checksum SHA-256 để xác minh toàn vẹn.');
+    if (!hasProvenance) {
+      missingMeta.push('Thiếu thông tin truy vết nguồn gốc (sourceRef / linkedJobId / linkedMeetingId).');
+    }
     return {
       status: ARTIFACT_INTEGRITY_STATUS.UNVERIFIED,
       reasons: missingMeta,
@@ -278,6 +372,7 @@ export function evaluateArtifactRegistrySnapshot(
     .filter(Boolean)
     .map((artifact) => {
       const integrity = evaluateArtifactIntegrity(artifact);
+      const baselineComparison = compareArtifactWithBaseline(artifact);
       const purgeGuard = evaluateRetentionPurgeGuard({
         artifact,
         policyApproved,
@@ -301,6 +396,7 @@ export function evaluateArtifactRegistrySnapshot(
       return {
         ...artifact,
         integrity,
+        baselineComparison,
         purgeGuard,
       };
     });
@@ -321,6 +417,136 @@ export function evaluateArtifactRegistrySnapshot(
     defaultRetentionDays,
     items,
     counts,
+  };
+}
+
+function isNonRetryableStatus(statusCode) {
+  return (
+    statusCode === 400 ||
+    statusCode === 401 ||
+    statusCode === 403 ||
+    statusCode === 404 ||
+    statusCode === 501
+  );
+}
+
+export function extractArtifactApiError(error) {
+  const statusCode = error?.response?.status ?? error?.status;
+  const serverMessage = error?.response?.data?.message;
+
+  if (statusCode === 401 || statusCode === 403) {
+    return 'Không đủ quyền truy cập danh mục phiên bản dataset/artifacts (403 Forbidden).';
+  }
+  if (statusCode === 404 || statusCode === 501) {
+    return 'Endpoint quản lý phiên bản dataset & retention chưa sẵn sàng trên Backend — giữ trạng thái Chưa xác minh (BR03).';
+  }
+  if (typeof serverMessage === 'string' && serverMessage.trim()) {
+    return redactSensitiveObjectRef(serverMessage.trim());
+  }
+  return 'Không thể tải dữ liệu phiên bản dataset/artifacts từ Backend — giữ trạng thái Chưa xác minh.';
+}
+
+export async function fetchArtifactVersionsWithClient(
+  { user = null, type = 'ALL', integrity = 'ALL', keyword = '', maxRetries = 1 } = {},
+  client
+) {
+  const params = {
+    type: type && type !== 'ALL' ? type : undefined,
+    integrity: integrity && integrity !== 'ALL' ? integrity : undefined,
+    keyword: keyword?.trim() || undefined,
+  };
+
+  const totalAttempts = Math.max(1, Number(maxRetries || 0) + 1);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    try {
+      const response = await client.get(ARTIFACT_VERSION_ENDPOINTS.list, { params });
+      const payload =
+        response &&
+        typeof response === 'object' &&
+        'data' in response &&
+        !Array.isArray(response.items)
+          ? response.data
+          : response;
+      const snapshot = evaluateArtifactRegistrySnapshot(payload, { user });
+
+      if (snapshot.status === ARTIFACT_INTEGRITY_STATUS.UNVERIFIED && snapshot.items.length === 0) {
+        return {
+          source: 'unverified',
+          attempts: attempt,
+          snapshot,
+          error:
+            'Backend chưa trả về danh mục phiên bản dataset/artifacts hoặc retention policy hợp lệ.',
+        };
+      }
+
+      return {
+        source: 'api',
+        attempts: attempt,
+        snapshot,
+        error: null,
+      };
+    } catch (error) {
+      lastError = error;
+      const statusCode = error?.response?.status ?? error?.status;
+      if (isNonRetryableStatus(statusCode) || attempt >= totalAttempts) {
+        break;
+      }
+    }
+  }
+
+  return {
+    source: 'unverified',
+    attempts: totalAttempts,
+    snapshot: evaluateArtifactRegistrySnapshot(null, { user }),
+    error: extractArtifactApiError(lastError),
+  };
+}
+
+export async function executeGuardedArtifactPurge(
+  { artifact, policyApproved = false, user = null, reason = '', nowMs = Date.now() } = {},
+  client
+) {
+  const guard = evaluateRetentionPurgeGuard({
+    artifact,
+    policyApproved,
+    user,
+    nowMs,
+  });
+
+  if (!guard.allowed) {
+    const blockedError = new Error(
+      guard.reasons[0] || 'Thao tác xóa vĩnh viễn artifact bị chặn bởi Retention Policy.'
+    );
+    blockedError.code = 'ARTIFACT_PURGE_BLOCKED';
+    blockedError.guard = guard;
+    throw blockedError;
+  }
+
+  const artifactId = String(artifact?.id || '').trim();
+  if (!artifactId) {
+    const idError = new Error('Thiếu định danh artifact hợp lệ để thực hiện purge.');
+    idError.code = 'ARTIFACT_ID_REQUIRED';
+    throw idError;
+  }
+
+  const auditPayload = {
+    artifactId,
+    objectKey: redactSensitiveObjectRef(artifact.objectKey),
+    version: artifact.version,
+    checksumSha256: artifact.checksumSha256,
+    reason: redactSensitiveObjectRef(reason) || 'Retention period expired',
+  };
+
+  const response = await client.delete(ARTIFACT_VERSION_ENDPOINTS.purge(artifactId), {
+    data: auditPayload,
+  });
+  return {
+    purged: true,
+    audit: auditPayload,
+    data:
+      response && typeof response === 'object' && 'data' in response ? response.data : response,
   };
 }
 

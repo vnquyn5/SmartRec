@@ -4,11 +4,15 @@ import {
   ARTIFACT_INTEGRITY_STATUS,
   ARTIFACT_LIFECYCLE,
   RETENTION_PURGE_DECISION,
+  compareArtifactWithBaseline,
   evaluateArtifactIntegrity,
   evaluateArtifactRegistrySnapshot,
   evaluateRetentionPurgeGuard,
+  executeGuardedArtifactPurge,
+  fetchArtifactVersionsWithClient,
   isValidSemVer,
   isValidSha256,
+  redactSensitiveObjectRef,
 } from './artifactRetentionValidator.js';
 
 const VALID_SHA = 'a'.repeat(64);
@@ -45,7 +49,7 @@ test('TC01: Missing or invalid snapshot returns UNVERIFIED with zero fabricated 
   assert.equal(result.counts.total, 0);
 });
 
-test('TC02: Valid SemVer, SHA-256, and existing objectKey evaluate as VERIFIED (BR01)', () => {
+test('TC02: Valid SemVer, SHA-256, provenance, and existing objectKey evaluate as VERIFIED (BR01)', () => {
   assert.equal(isValidSemVer('v1.2.0'), true);
   assert.equal(isValidSemVer('1.2'), false);
   assert.equal(isValidSha256(VALID_SHA), true);
@@ -56,12 +60,18 @@ test('TC02: Valid SemVer, SHA-256, and existing objectKey evaluate as VERIFIED (
   assert.equal(result.reasons.length, 0);
 });
 
-test('TC03: Version mismatch or invalid SemVer evaluates as VERSION_MISMATCH', () => {
+test('TC03: Version mismatch, in-place overwrite (version === parentVersion), or invalid SemVer evaluates as VERSION_MISMATCH', () => {
   const mismatch = evaluateArtifactIntegrity(
     createArtifact({ version: '1.2.0', expectedVersion: '1.3.0' })
   );
   assert.equal(mismatch.status, ARTIFACT_INTEGRITY_STATUS.VERSION_MISMATCH);
   assert.ok(mismatch.reasons.some((r) => r.includes('Sai lệch phiên bản')));
+
+  const inPlaceOverwrite = evaluateArtifactIntegrity(
+    createArtifact({ version: '1.2.0', parentVersion: '1.2.0' })
+  );
+  assert.equal(inPlaceOverwrite.status, ARTIFACT_INTEGRITY_STATUS.VERSION_MISMATCH);
+  assert.ok(inPlaceOverwrite.reasons.some((r) => r.includes('BR01')));
 
   const badSemver = evaluateArtifactIntegrity(
     createArtifact({ version: 'draft-final', expectedVersion: null })
@@ -69,15 +79,30 @@ test('TC03: Version mismatch or invalid SemVer evaluates as VERSION_MISMATCH', (
   assert.equal(badSemver.status, ARTIFACT_INTEGRITY_STATUS.VERSION_MISMATCH);
 });
 
-test('TC04: Checksum mismatch evaluates as VERSION_MISMATCH', () => {
+test('TC04: Checksum mismatch evaluates as VERSION_MISMATCH and baseline comparison detects drift (Mục 4.1)', () => {
   const result = evaluateArtifactIntegrity(
     createArtifact({ checksumSha256: VALID_SHA, expectedChecksumSha256: OTHER_SHA })
   );
   assert.equal(result.status, ARTIFACT_INTEGRITY_STATUS.VERSION_MISMATCH);
   assert.ok(result.reasons.some((r) => r.includes('SHA-256')));
+
+  const diffBaseline = compareArtifactWithBaseline(createArtifact(), {
+    version: '1.1.0',
+    checksumSha256: OTHER_SHA,
+  });
+  assert.equal(diffBaseline.comparable, true);
+  assert.equal(diffBaseline.matchesBaseline, false);
+  assert.equal(diffBaseline.versionChanged, true);
+  assert.equal(diffBaseline.checksumChanged, true);
+
+  const sameBaseline = compareArtifactWithBaseline(createArtifact(), {
+    version: '1.2.0',
+    checksumSha256: VALID_SHA,
+  });
+  assert.equal(sameBaseline.matchesBaseline, true);
 });
 
-test('TC05: Missing objectKey, deleted MinIO object, or PURGED status returns MISSING_ARTIFACT', () => {
+test('TC05: Missing objectKey, deleted MinIO object, or PURGED status returns MISSING_ARTIFACT; missing provenance returns UNVERIFIED', () => {
   const deletedObj = evaluateArtifactIntegrity(createArtifact({ objectExists: false }));
   assert.equal(deletedObj.status, ARTIFACT_INTEGRITY_STATUS.MISSING_ARTIFACT);
 
@@ -88,6 +113,11 @@ test('TC05: Missing objectKey, deleted MinIO object, or PURGED status returns MI
     createArtifact({ lifecycleStatus: ARTIFACT_LIFECYCLE.PURGED })
   );
   assert.equal(purged.status, ARTIFACT_INTEGRITY_STATUS.MISSING_ARTIFACT);
+
+  const noProvenance = evaluateArtifactIntegrity(
+    createArtifact({ sourceRef: null, linkedJobId: null, linkedMeetingId: null })
+  );
+  assert.equal(noProvenance.status, ARTIFACT_INTEGRITY_STATUS.UNVERIFIED);
 });
 
 test('TC06: Destructive purge is BLOCKED when retention policy is not approved', () => {
@@ -136,7 +166,7 @@ test('TC07: Purge is BLOCKED when legalHold, ACTIVE lifecycle, or retainUntil no
   assert.ok(notExpired.reasons.some((r) => r.includes('retainUntil')));
 });
 
-test('TC08: Purge is BLOCKED for non-admin users (TR02)', () => {
+test('TC08: Purge is BLOCKED for non-admin users and redacts sensitive tokens (TR02)', () => {
   const guard = evaluateRetentionPurgeGuard({
     artifact: createArtifact({
       lifecycleStatus: ARTIFACT_LIFECYCLE.TRASHED,
@@ -149,6 +179,14 @@ test('TC08: Purge is BLOCKED for non-admin users (TR02)', () => {
   });
   assert.equal(guard.allowed, false);
   assert.ok(guard.reasons.some((r) => r.includes('ADMIN')));
+
+  const redacted = redactSensitiveObjectRef(
+    'datasets/eval/v1.0.0/manifest.json?X-Amz-Signature=secret123&token=abc999'
+  );
+  assert.equal(
+    redacted,
+    'datasets/eval/v1.0.0/manifest.json?X-Amz-Signature=[REDACTED]&token=[REDACTED]'
+  );
 });
 
 test('TC09: Purge ALLOWED only when ADMIN + approved policy + TRASHED + expired + no hold', () => {
@@ -180,5 +218,53 @@ test('TC09: Purge ALLOWED only when ADMIN + approved policy + TRASHED + expired 
   assert.equal(snapshot.counts.purgeEligible, 1);
   assert.equal(snapshot.counts.retentionProtected, 3);
   assert.equal(snapshot.items[3].purgeGuard.decision, RETENTION_PURGE_DECISION.ALLOWED);
+});
+
+test('TC10: Service boundary retries transient 5xx once, stops on 404/403, and blocks unapproved purge calls (Mục 4.2)', async () => {
+  let calls = 0;
+  const transientClient = {
+    async get() {
+      calls += 1;
+      if (calls === 1) {
+        const err = new Error('Gateway timeout');
+        err.status = 503;
+        throw err;
+      }
+      return {
+        data: {
+          bucketName: 'smartrec-media',
+          policyApproved: true,
+          policyVersion: 'ret-v1.0',
+          items: [createArtifact()],
+        },
+      };
+    },
+  };
+
+  const recovered = await fetchArtifactVersionsWithClient(
+    { user: { role: 'ADMIN' }, maxRetries: 1 },
+    transientClient
+  );
+  assert.equal(recovered.source, 'api');
+  assert.equal(recovered.attempts, 2);
+  assert.equal(recovered.snapshot.counts.verified, 1);
+
+  await assert.rejects(
+    () =>
+      executeGuardedArtifactPurge(
+        {
+          artifact: createArtifact({
+            lifecycleStatus: ARTIFACT_LIFECYCLE.TRASHED,
+            retainUntil: '2026-10-01T00:00:00Z',
+            purgeAt: '2026-11-01T00:00:00Z',
+          }),
+          policyApproved: false,
+          user: { role: 'ADMIN' },
+          nowMs: FIXED_NOW_MS,
+        },
+        { async delete() { throw new Error('Should not be called'); } }
+      ),
+    (err) => err.code === 'ARTIFACT_PURGE_BLOCKED'
+  );
 });
 

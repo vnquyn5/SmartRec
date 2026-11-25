@@ -276,8 +276,24 @@ export default function ArtifactVersionPanel({
                     </td>
 
                     <td className="py-3 px-4 font-mono whitespace-nowrap">
-                      <div className="text-slate-100 font-semibold">
-                        {item.version ? `v${item.version}` : '—'}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-100 font-semibold">
+                          {item.version ? `v${item.version}` : '—'}
+                        </span>
+                        {item.baselineComparison?.comparable && (
+                          <span
+                            title={item.baselineComparison.summary}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-sans font-semibold border ${
+                              item.baselineComparison.matchesBaseline
+                                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                            }`}
+                          >
+                            {item.baselineComparison.matchesBaseline
+                              ? 'Khớp Baseline'
+                              : 'Lệch Baseline'}
+                          </span>
+                        )}
                       </div>
                       {item.parentVersion && (
                         <div className="text-[10px] text-slate-400">
