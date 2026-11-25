@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -68,6 +69,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(errorResponseDTO);
+    }
+
+    /**
+     * Chuẩn hóa JSON sai cú pháp hoặc sai kiểu dữ liệu thành lỗi validation 400.
+     * Không đưa nội dung request vào message/detail để tránh phản hồi dữ liệu người dùng.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponseDTO> handleUnreadableRequestBody(
+            HttpMessageNotReadableException ex) {
+        ErrorResponseDTO errorResponseDTO = new ErrorResponseDTO();
+        errorResponseDTO.setCode("VALIDATION_ERROR");
+        errorResponseDTO.setMessage("Dữ liệu không hợp lệ");
+        errorResponseDTO.setDetail(List.of("body: kiểm tra cú pháp JSON, kiểu dữ liệu, UUID và định dạng ngày giờ"));
+        errorResponseDTO.setTimestamp(LocalDateTime.now());
+        return ResponseEntity.badRequest().body(errorResponseDTO);
     }
 
     // Business exception
