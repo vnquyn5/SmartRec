@@ -21,6 +21,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import jakarta.persistence.EntityManager;
 
 import com.example.smartrec.entity.ActionItem;
+import com.example.smartrec.entity.Job;
 import com.example.smartrec.entity.MeetingAuditLog;
 import com.example.smartrec.entity.Summary;
 import com.example.smartrec.entity.User;
@@ -68,8 +69,8 @@ public class MeetingAuditLogServiceImpl implements MeetingAuditLogService {
         meetingService.getMeeting(meetingId);
 
         // Dùng khóa của AIResultService và xác minh job thuộc đúng Meeting.
-        jobRepository.findByIdForUpdate(jobId)
-                .filter(job -> meetingId.equals(job.getMeetingId()))
+        Job job = jobRepository.findByIdForUpdate(jobId)
+                .filter(candidate -> meetingId.equals(candidate.getMeetingId()))
                 .orElseThrow(() -> new ResourceNotFoundException("MEETING_JOB_NOT_FOUND",
                         "Không tìm thấy Job thuộc cuộc họp"));
 
@@ -92,15 +93,15 @@ public class MeetingAuditLogServiceImpl implements MeetingAuditLogService {
 
         // Tạo một bản ghi cho mỗi trường có giá trị cũ và mới khác nhau.
         List<MeetingAuditLog> changes = new ArrayList<>();
-        addChange(changes, meetingId, actorId, "SUMMARY", summaryBefore.id(),
+        addChange(changes, job, actorId, "SUMMARY", summaryBefore.id(),
                 "executiveSummary", summaryBefore.executiveSummary(), summaryAfter.executiveSummary());
         itemsBefore.forEach((id, before) -> {
             ActionItemSnapshot after = itemsAfter.get(id);
-            addChange(changes, meetingId, actorId, "ACTION_ITEM", id, "title", before.title(), after.title());
-            addChange(changes, meetingId, actorId, "ACTION_ITEM", id, "assigneeName",
+            addChange(changes, job, actorId, "ACTION_ITEM", id, "title", before.title(), after.title());
+            addChange(changes, job, actorId, "ACTION_ITEM", id, "assigneeName",
                     before.assigneeName(), after.assigneeName());
-            addChange(changes, meetingId, actorId, "ACTION_ITEM", id, "dueDate", before.dueDate(), after.dueDate());
-            addChange(changes, meetingId, actorId, "ACTION_ITEM", id, "deadlineRaw",
+            addChange(changes, job, actorId, "ACTION_ITEM", id, "dueDate", before.dueDate(), after.dueDate());
+            addChange(changes, job, actorId, "ACTION_ITEM", id, "deadlineRaw",
                     before.deadlineRaw(), after.deadlineRaw());
         });
         if (!changes.isEmpty()) {
@@ -171,11 +172,12 @@ public class MeetingAuditLogServiceImpl implements MeetingAuditLogService {
                         "Không tìm thấy người dùng đăng nhập"));
     }
 
-    private void addChange(List<MeetingAuditLog> changes, UUID meetingId, UUID actorId, String entityType,
+    private void addChange(List<MeetingAuditLog> changes, Job job, UUID actorId, String entityType,
             UUID entityId, String field, Object oldValue, Object newValue) {
         if (!Objects.equals(oldValue, newValue)) {
             MeetingAuditLog audit = new MeetingAuditLog();
-            audit.setMeetingId(meetingId);
+            audit.setMeetingId(job.getMeetingId());
+            audit.setJobId(job.getId());
             audit.setEventType(REVIEW_SAVE);
             audit.setEntityType(entityType);
             audit.setEntityId(entityId);

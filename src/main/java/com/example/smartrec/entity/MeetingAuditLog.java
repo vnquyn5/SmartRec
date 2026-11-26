@@ -31,6 +31,10 @@ public class MeetingAuditLog {
     @Column(name = "meeting_id", nullable = false, updatable = false)
     private UUID meetingId;
 
+    // Giữ liên kết với Job tại thời điểm review, kể cả khi Meeting đổi Job hiện hành.
+    @Column(name = "job_id", updatable = false)
+    private UUID jobId;
+
     @Column(name = "event_type", nullable = false, updatable = false, columnDefinition = "TEXT")
     private String eventType;
 

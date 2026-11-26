@@ -38,6 +38,7 @@ import com.example.smartrec.entity.Job;
 import com.example.smartrec.entity.MediaFile;
 import com.example.smartrec.entity.Meeting;
 import com.example.smartrec.entity.MeetingAuditLog;
+import com.example.smartrec.entity.Speaker;
 import com.example.smartrec.entity.Summary;
 import com.example.smartrec.entity.User;
 import com.example.smartrec.enums.JobStatus;
@@ -128,6 +129,7 @@ class MeetingAuditLogServiceIntegrationTest {
         assertThat(audits()).allSatisfy(row -> {
             assertThat(row.getId()).isNotNull();
             assertThat(row.getMeetingId()).isEqualTo(owner.meetingId());
+            assertThat(row.getJobId()).isEqualTo(owner.jobId());
             assertThat(row.getActorId()).isEqualTo(owner.actorId());
             assertThat(row.getEventType()).isEqualTo("HUMAN_REVIEW_SAVE");
             assertThat(row.getCreatedAt()).isBetween(started.minusMillis(1), Instant.now());
@@ -164,6 +166,7 @@ class MeetingAuditLogServiceIntegrationTest {
         assertThat(audits()).allSatisfy(row -> {
             assertThat(row.getActorId()).isEqualTo(owner.actorId());
             assertThat(row.getMeetingId()).isEqualTo(owner.meetingId());
+            assertThat(row.getJobId()).isEqualTo(owner.jobId());
             assertThat(row.getEventType()).isEqualTo("HUMAN_REVIEW_SAVE");
         });
 
@@ -173,9 +176,14 @@ class MeetingAuditLogServiceIntegrationTest {
         assertThat(actionItem().getDueDate()).isEqualTo(Instant.parse("2026-11-29T10:00:00Z"));
 
         task(draft).putNull("dueDate");
+        task(draft).putNull("assigneeName");
         saveReview(draft);
         assertThat(actionItem().getDueDate()).isNull();
-        assertThat(audits()).hasSize(6);
+        assertThat(actionItem().getAssigneeName()).isNull();
+        assertThat(audits()).hasSize(7).extracting(MeetingAuditLog::getFieldName,
+                MeetingAuditLog::getOldValue, MeetingAuditLog::getNewValue).contains(
+                        tuple("dueDate", "2026-11-29T10:00:00Z", null),
+                        tuple("assigneeName", "Reviewer assigned", null));
     }
 
     @Test
@@ -274,6 +282,30 @@ class MeetingAuditLogServiceIntegrationTest {
         assertThat(actionItem().getTaskName()).isEqualTo("AI title");
         assertThat(summary().getExecutiveSummary()).isEqualTo(AI_SUMMARY);
         assertThat(audits()).isEmpty();
+    }
+
+    @Test
+    void reviewCannotClearALinkedSpeakerButCanKeepTheExistingAssignee() throws Exception {
+        UUID speakerId = UUID.randomUUID();
+        tx.executeWithoutResult(status -> {
+            entities.persist(Speaker.builder().id(speakerId).meetingId(owner.meetingId())
+                    .aiLabel("SPEAKER_00").realName("Fixture speaker").build());
+            ActionItem item = actionItem();
+            item.setAssigneeSpeakerId(speakerId);
+            item.setAssigneeName("Fixture speaker");
+        });
+        ObjectNode draft = reviewDraft();
+        task(draft).putNull("assigneeName");
+        rejectReview("MEETING_REVIEW_ASSIGNEE_LINKED", draft);
+        assertThat(summary().getExecutiveSummary()).isEqualTo(AI_SUMMARY);
+        assertThat(audits()).isEmpty();
+
+        task(draft).put("assigneeName", "Fixture speaker");
+        saveReview(draft);
+        assertThat(actionItem().getAssigneeSpeakerId()).isEqualTo(speakerId);
+        assertThat(actionItem().getAssigneeName()).isEqualTo("Fixture speaker");
+        assertThat(audits()).extracting(MeetingAuditLog::getFieldName)
+                .containsExactlyInAnyOrder("executiveSummary", "title");
     }
 
     @Test
@@ -491,6 +523,7 @@ class MeetingAuditLogServiceIntegrationTest {
             jdbc.update("delete from meeting_audit_logs where meeting_id = ?", scope.meetingId());
             jdbc.update("delete from action_items where id = ?", scope.itemId());
             jdbc.update("delete from meeting_summaries where id = ?", scope.summaryId());
+            jdbc.update("delete from speakers where meeting_id = ?", scope.meetingId());
             jdbc.update("delete from processing_jobs where id = ?", scope.jobId());
             jdbc.update("delete from meetings where id = ?", scope.meetingId());
             jdbc.update("delete from media_file where id = ?", scope.mediaId());

@@ -44,6 +44,8 @@ import com.example.smartrec.service.MeetingProcessingService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingSpeakerService;
 import com.example.smartrec.service.impl.MeetingReviewServiceImpl;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -64,6 +66,7 @@ class MeetingReviewSaveControllerTest {
 
     @Autowired MockMvc mvc;
     @Autowired JwtService jwtService;
+    @Autowired ObjectMapper json;
     @MockBean UserRepository users;
     @MockBean PublicShareLinkRepository shareLinks;
     @SpyBean MeetingReviewServiceImpl review;
@@ -129,6 +132,15 @@ class MeetingReviewSaveControllerTest {
     void rejectsUnknownTaskFieldsAndInvalidValues(String fields) throws Exception {
         invalid(body(fields));
         verifyNoInteractions(audit);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"jobId", "summary", "actionItems"})
+    void rejectsMissingRequiredSections(String field) throws Exception {
+        ObjectNode request = (ObjectNode) json.readTree(body(""));
+        request.remove(field);
+        invalid(request.toString());
+        verifyNoInteractions(review);
     }
 
     @Test
