@@ -1,8 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import StorageOverviewCards from '../../components/storage/StorageOverviewCards';
+import StorageGrowthAlertPanel from '../../components/storage/StorageGrowthAlertPanel';
 import StorageChartsPanel from '../../components/storage/StorageChartsPanel';
 import StorageCleanupPanel from '../../components/storage/StorageCleanupPanel';
 import StorageObjectsTable from '../../components/storage/StorageObjectsTable';
+import { useAuth } from '../../features/auth/AuthProvider';
+import {
+  evaluateArtifactRegistrySnapshot,
+  getArtifactVersionsRegistry,
+} from '../../services/artifactRetentionService';
 import {
   deleteOrphanObjects,
   deleteStorageObject,
@@ -22,10 +28,17 @@ const DEFAULT_FILTERS = {
 };
 
 export default function StorageAdminPage() {
+  const { user } = useAuth() || {};
   const [overview, setOverview] = useState(null);
   const [objectsPage, setObjectsPage] = useState(null);
   const [orphans, setOrphans] = useState([]);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [artifactState, setArtifactState] = useState(() => ({
+    source: 'unverified',
+    snapshot: evaluateArtifactRegistrySnapshot(null),
+    error: null,
+  }));
+  const [loadingArtifacts, setLoadingArtifacts] = useState(false);
 
   const [dataSource, setDataSource] = useState('api');
   const [loadingOverview, setLoadingOverview] = useState(true);
@@ -79,9 +92,20 @@ export default function StorageAdminPage() {
     }
   }, [filters, showNotice]);
 
+  const loadArtifactVersions = useCallback(async () => {
+    setLoadingArtifacts(true);
+    try {
+      const result = await getArtifactVersionsRegistry({ user });
+      setArtifactState(result);
+    } finally {
+      setLoadingArtifacts(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     loadOverviewAndOrphans();
-  }, [loadOverviewAndOrphans]);
+    loadArtifactVersions();
+  }, [loadOverviewAndOrphans, loadArtifactVersions]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -91,7 +115,7 @@ export default function StorageAdminPage() {
   }, [loadObjects]);
 
   const refreshAll = async () => {
-    await Promise.all([loadOverviewAndOrphans(), loadObjects()]);
+    await Promise.all([loadOverviewAndOrphans(), loadObjects(), loadArtifactVersions()]);
   };
 
   const handleRunCleanup = async (taskType) => {
@@ -152,7 +176,7 @@ export default function StorageAdminPage() {
   const minioHealthy = overview?.minioConnected && overview?.bucketHealthy;
 
   return (
-    <div className="min-h-full bg-[#070b19] text-slate-100 p-4 sm:p-6 flex flex-col gap-5">
+    <div className="min-h-full w-full bg-[#070b19] text-slate-100 pb-6 flex flex-col gap-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#162038] pb-4">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
@@ -223,6 +247,14 @@ export default function StorageAdminPage() {
 
       <StorageOverviewCards overview={overview} loading={loadingOverview} />
 
+      <StorageGrowthAlertPanel
+        overview={overview}
+        orphans={orphans}
+        loading={loadingOverview || loadingOrphans}
+        dataSource={dataSource}
+        user={user}
+      />
+
       <StorageChartsPanel overview={overview} />
 
       <StorageCleanupPanel
@@ -235,6 +267,9 @@ export default function StorageAdminPage() {
       <StorageObjectsTable
         objectsPage={objectsPage}
         orphans={orphans}
+        artifactState={artifactState}
+        loadingArtifacts={loadingArtifacts}
+        onRefreshArtifacts={loadArtifactVersions}
         filters={filters}
         loadingObjects={loadingObjects}
         loadingOrphans={loadingOrphans}

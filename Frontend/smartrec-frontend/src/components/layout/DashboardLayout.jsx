@@ -10,6 +10,7 @@ const DashboardLayout = () => {
   const isUploadPage = pathname === "/upload";
   const isHistoryPage = pathname === "/history";
   const isTrashPage = pathname === "/trash";
+  const isStorageAdmin = pathname.startsWith("/admin/storage");
 
   return (
     <PageHeaderProvider key={pathname} pathname={pathname}>
@@ -17,7 +18,7 @@ const DashboardLayout = () => {
         <Sidebar />
         <div className="dashboard-main">
           <TopBar hideSearch />
-          <div className={`dashboard-content${isMeetingDetails ? " meeting-details-content" : ""}${isUploadPage ? " upload-page-content" : ""}${isHistoryPage ? " history-scroll-content" : ""}${isTrashPage ? " trash-scroll-content" : ""}`}>
+          <div className={`dashboard-content${isMeetingDetails ? " meeting-details-content" : ""}${isUploadPage ? " upload-page-content" : ""}${isHistoryPage ? " history-scroll-content" : ""}${isTrashPage ? " trash-scroll-content" : ""}${isStorageAdmin ? " !px-3 sm:!px-4 !pt-5 !pb-10 !max-w-none" : ""}`}>
             <Outlet />
           </div>
         </div>
