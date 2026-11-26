@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import StorageOverviewCards from '../../components/storage/StorageOverviewCards';
+import StorageGrowthAlertPanel from '../../components/storage/StorageGrowthAlertPanel';
 import StorageChartsPanel from '../../components/storage/StorageChartsPanel';
 import StorageCleanupPanel from '../../components/storage/StorageCleanupPanel';
 import StorageObjectsTable from '../../components/storage/StorageObjectsTable';
@@ -245,6 +246,14 @@ export default function StorageAdminPage() {
       )}
 
       <StorageOverviewCards overview={overview} loading={loadingOverview} />
+
+      <StorageGrowthAlertPanel
+        overview={overview}
+        orphans={orphans}
+        loading={loadingOverview || loadingOrphans}
+        dataSource={dataSource}
+        user={user}
+      />
 
       <StorageChartsPanel overview={overview} />
 
