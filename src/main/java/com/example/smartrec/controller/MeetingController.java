@@ -34,6 +34,7 @@ import com.example.smartrec.service.MeetingReviewService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
 import com.example.smartrec.service.MeetingSpeakerService;
+import com.example.smartrec.service.MeetingWordExportService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -56,6 +57,7 @@ public class MeetingController {
     private final MeetingSpeakerService meetingSpeakerService;
     private final MeetingProcessingService meetingProcessingService;
     private final MeetingReviewService meetingReviewService;
+    private final MeetingWordExportService meetingWordExportService;
 
     @GetMapping
     @Operation(summary = "List meeting files", description = "Returns the authenticated user's meeting files with pagination, status filtering and keyword search.")
@@ -131,6 +133,35 @@ public class MeetingController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment()
                                 .filename(file.fileName() == null ? "meeting-file" : file.fileName())
+                                .build()
+                                .toString())
+                .body(new InputStreamResource(file.inputStream()));
+    }
+
+    @GetMapping("/{id}/export-word")
+    @Operation(summary = "Export the reviewed meeting report as a Word document")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Reviewed meeting report returned", content = @Content(
+                    mediaType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    schema = @Schema(type = "string", format = "binary"))),
+            @ApiResponse(responseCode = "400", description = "Invalid Meeting ID", content = @Content),
+            @ApiResponse(responseCode = "401", description = "Invalid authentication", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Authentication required or Meeting access denied", content = @Content),
+            @ApiResponse(responseCode = "404", description = "Meeting or reviewed summary not found", content = @Content),
+            @ApiResponse(responseCode = "409", description = "Review evidence or reviewed data is incomplete", content = @Content),
+            @ApiResponse(responseCode = "500", description = "Word template is missing or invalid", content = @Content)
+    })
+    public ResponseEntity<InputStreamResource> exportWord(@PathVariable UUID id) {
+        MeetingDownloadFile file = meetingWordExportService.exportWord(id);
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.mimeType()));
+        if (file.fileSizeBytes() != null) {
+            responseBuilder.contentLength(file.fileSizeBytes());
+        }
+        return responseBuilder
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment()
+                                .filename(file.fileName())
                                 .build()
                                 .toString())
                 .body(new InputStreamResource(file.inputStream()));

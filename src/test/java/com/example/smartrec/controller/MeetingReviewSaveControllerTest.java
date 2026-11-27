@@ -7,11 +7,14 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Optional;
@@ -27,12 +30,15 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
 import com.example.smartrec.config.SecurityConfig;
 import com.example.smartrec.entity.User;
+import com.example.smartrec.exception.BusinessException;
 import com.example.smartrec.model.dto.MeetingReviewSaveRequest;
 import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.PublicShareLinkRepository;
@@ -43,6 +49,8 @@ import com.example.smartrec.service.MeetingAuditLogService;
 import com.example.smartrec.service.MeetingProcessingService;
 import com.example.smartrec.service.MeetingService;
 import com.example.smartrec.service.MeetingSpeakerService;
+import com.example.smartrec.service.MeetingService.MeetingDownloadFile;
+import com.example.smartrec.service.MeetingWordExportService;
 import com.example.smartrec.service.impl.MeetingReviewServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -63,6 +71,7 @@ class MeetingReviewSaveControllerTest {
     private static final UUID JOB = UUID.randomUUID();
     private static final UUID TASK = UUID.randomUUID();
     private static final String URL = "/api/v1/meetings/" + MEETING + "/review-save";
+    private static final String EXPORT_URL = "/api/v1/meetings/" + MEETING + "/export-word";
 
     @Autowired MockMvc mvc;
     @Autowired JwtService jwtService;
@@ -77,6 +86,7 @@ class MeetingReviewSaveControllerTest {
     @MockBean MeetingService meetings;
     @MockBean MeetingSpeakerService speakers;
     @MockBean MeetingProcessingService processing;
+    @MockBean MeetingWordExportService wordExport;
 
     private String bearer;
 
@@ -100,6 +110,52 @@ class MeetingReviewSaveControllerTest {
         assertThat(task.getAssigneeName()).isNull();
         assertThat(task.getDeadlineRaw().isNull()).isTrue();
         assertThat(task.getDueDate().textValue()).isEqualTo("2026-11-27T17:00:00+07:00");
+    }
+
+    @Test
+    void exportsReviewedMeetingAsWordAttachment() throws Exception {
+        String mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        byte[] document = "docx-content".getBytes(StandardCharsets.UTF_8);
+        when(wordExport.exportWord(MEETING)).thenReturn(new MeetingDownloadFile(
+                "meeting-report-" + MEETING + ".docx", mimeType, (long) document.length,
+                new ByteArrayInputStream(document)));
+
+        mvc.perform(get(EXPORT_URL).contextPath("/api/v1")
+                        .header("Authorization", bearer))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(mimeType))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"meeting-report-" + MEETING + ".docx\""))
+                .andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, document.length))
+                .andExpect(content().bytes(document));
+
+        verify(wordExport).exportWord(MEETING);
+    }
+
+    @Test
+    void rejectsExportWithoutOwnerJwtOrValidMeetingId() throws Exception {
+        var guest = jwtService.generateGuestToken(UUID.randomUUID(), MEETING, new Date(System.currentTimeMillis() + 60_000));
+        mvc.perform(get(EXPORT_URL).contextPath("/api/v1")).andExpect(status().isForbidden());
+        mvc.perform(get(EXPORT_URL).contextPath("/api/v1").header("Authorization", "Bearer invalid"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get(EXPORT_URL).contextPath("/api/v1").header("Authorization", "Bearer " + guest))
+                .andExpect(status().isForbidden());
+        mvc.perform(get(EXPORT_URL.replace(MEETING.toString(), "invalid-id")).contextPath("/api/v1")
+                        .header("Authorization", bearer))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_PARAMETER_FORMAT"));
+        verifyNoInteractions(wordExport);
+    }
+
+    @Test
+    void returnsReviewConflictAsJsonWithoutDownloadHeader() throws Exception {
+        when(wordExport.exportWord(MEETING)).thenThrow(new BusinessException(HttpStatus.CONFLICT,
+                "MEETING_WORD_EXPORT_REVIEW_NOT_CONFIRMED", "No Review-Save evidence"));
+
+        mvc.perform(get(EXPORT_URL).contextPath("/api/v1").header("Authorization", bearer))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("MEETING_WORD_EXPORT_REVIEW_NOT_CONFIRMED"))
+                .andExpect(header().doesNotExist(HttpHeaders.CONTENT_DISPOSITION));
     }
 
     @Test
