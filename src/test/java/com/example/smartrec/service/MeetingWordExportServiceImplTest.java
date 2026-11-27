@@ -15,10 +15,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ByteArrayResource;
@@ -38,6 +38,7 @@ import com.example.smartrec.repository.JobRepository;
 import com.example.smartrec.repository.MeetingAuditLogRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.service.impl.MeetingWordExportServiceImpl;
+import com.example.smartrec.service.impl.ReviewedMeetingReportReader;
 import com.example.smartrec.service.impl.WordExporterServiceImpl;
 
 @ExtendWith(MockitoExtension.class)
@@ -54,7 +55,15 @@ class MeetingWordExportServiceImplTest {
     @Mock SummaryRepository summaryRepository;
     @Mock ActionItemRepository actionItemRepository;
     @Mock WordExporterService wordExporterService;
-    @InjectMocks MeetingWordExportServiceImpl service;
+    MeetingWordExportServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        // Chạy logic đọc dữ liệu dùng chung để test hồi quy Word kiểm tra cả quyền và điều kiện review.
+        var reportReader = new ReviewedMeetingReportReader(meetingService, jobRepository, auditLogRepository,
+                summaryRepository, actionItemRepository);
+        service = new MeetingWordExportServiceImpl(reportReader, wordExporterService);
+    }
 
     @Test
     void exportsPersistedVersionWithReviewEvidenceAndIgnoresNewerUnreviewedActiveJob() throws IOException {

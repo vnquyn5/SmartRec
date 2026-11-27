@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -47,8 +48,10 @@ import com.example.smartrec.model.dto.MeetingReviewSaveRequest;
 import com.example.smartrec.repository.ActionItemRepository;
 import com.example.smartrec.repository.SummaryRepository;
 import com.example.smartrec.service.impl.MeetingAuditLogServiceImpl;
+import com.example.smartrec.service.impl.MeetingReportExportServiceImpl;
 import com.example.smartrec.service.impl.MeetingReviewServiceImpl;
 import com.example.smartrec.service.impl.MeetingServiceImpl;
+import com.example.smartrec.service.impl.ReviewedMeetingReportReader;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -65,7 +68,8 @@ import jakarta.persistence.EntityManager;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfSystemProperty(named = "smartrec.integration", matches = "true")
-@Import({MeetingAuditLogServiceImpl.class, MeetingServiceImpl.class, MeetingReviewServiceImpl.class})
+@Import({MeetingAuditLogServiceImpl.class, MeetingServiceImpl.class, MeetingReviewServiceImpl.class,
+        MeetingReportExportServiceImpl.class, ReviewedMeetingReportReader.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MeetingAuditLogServiceIntegrationTest {
     private static final Instant AI_DUE_DATE = Instant.parse("2026-11-27T10:00:00Z");
@@ -76,6 +80,7 @@ class MeetingAuditLogServiceIntegrationTest {
 
     @Autowired MeetingAuditLogService service;
     @Autowired MeetingReviewService review;
+    @Autowired MeetingReportExportService reportExport;
     @Autowired SummaryRepository summaries;
     @Autowired ActionItemRepository actionItems;
     @Autowired EntityManager entities;
@@ -184,6 +189,23 @@ class MeetingAuditLogServiceIntegrationTest {
                 MeetingAuditLog::getOldValue, MeetingAuditLog::getNewValue).contains(
                         tuple("dueDate", "2026-11-29T10:00:00Z", null),
                         tuple("assigneeName", "Reviewer assigned", null));
+    }
+
+    @Test
+    void exportsTheCommittedReviewFromPostgres() throws Exception {
+        ObjectNode draft = reviewDraft();
+        draft.withObject("/summary").put("executiveSummary", "Đã chốt kế hoạch");
+        task(draft).put("title", "Gửi tài liệu").put("assigneeName", "Nguyễn An")
+                .put("dueDate", "2026-11-29T17:00:00+07:00");
+        // Review Save commit trước khi export đọc lại Summary, Action Items và audit từ PostgreSQL.
+        saveReview(draft);
+
+        var download = reportExport.exportReport(owner.meetingId(), "csv");
+        try (var stream = download.inputStream()) {
+            assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8))
+                    .contains("Đã chốt kế hoạch", "Gửi tài liệu", "Nguyễn An", "2026-11-29T10:00:00Z")
+                    .doesNotContain(AI_SUMMARY, "AI title", "Friday");
+        }
     }
 
     @Test
